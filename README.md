@@ -1,144 +1,242 @@
-# Payments Control System — Section 1.1
+# Payments Control System
 
-**Entities and Organisational Structure** — full-stack implementation for the SOW.
+Full-stack payments control and approval platform covering SOW §1–§8.
 
-- Backend: NestJS 10 + TypeORM + PostgreSQL + JWT (`backend/`)
-- Frontend: Next.js 14 App Router + Shadcn UI + Tailwind + React Query (`frontend/`)
-- Architecture: see [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Backend**: NestJS 10 + TypeORM 0.3 + PostgreSQL + JWT (`backend/`)
+- **Frontend**: Next.js 14 App Router + Shadcn UI + Tailwind CSS + React Query (`frontend/`)
+- **Architecture**: see [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ---
 
-## Quick start
+## Quick start (fresh system)
 
-### 1. PostgreSQL
+### Prerequisites
+
+- Node.js 20+
+- PostgreSQL 14+
+- A database named `pcs` (or set `DB_NAME` in `.env`)
 
 ```bash
 createdb pcs
-psql -d pcs -f backend/src/database/schema.sql
 ```
 
-This creates every table, index, FK and seeds the system roles and a starter set of currencies.
-
-### 2. Backend
+### 1. Backend — install & configure
 
 ```bash
 cd backend
-cp .env.example .env          # edit DB_* and JWT_SECRET
+cp .env.example .env        # fill in DB_*, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
 npm install
-npm run seed                  # creates admin@pcs.local / ChangeMe123! (platform admin)
-npm run start:dev             # http://localhost:4000/api/v1
 ```
 
-Swagger UI: `http://localhost:4000/api/v1/docs`.
+### 2. Run migrations
 
-### 3. Frontend
+Applies every schema change in the correct order — base schema, sections 6-8,
+approval matrices, sanctioned countries, and section 5 payroll tables:
+
+```bash
+npm run migration:run
+```
+
+### 3. Seed the database
+
+**Minimal** — creates the platform admin user only:
+
+```bash
+npm run seed
+# Default credentials: admin@pcs.local / ChangeMe123!
+# Override: ADMIN_EMAIL=you@company.com ADMIN_PASSWORD=Secret123 npm run seed
+```
+
+**Full** — admin user + demo organisations, users, banks, approval matrices,
+and beneficiary accounts (useful for local development):
+
+```bash
+npm run seed:all
+```
+
+**One-shot setup** — migrations + full seed in a single command:
+
+```bash
+npm run db:setup
+```
+
+### 4. Start the backend
+
+```bash
+npm run start:dev           # http://localhost:4000/api/v1
+```
+
+Swagger UI: `http://localhost:4000/api/v1/docs`
+
+### 5. Frontend
 
 ```bash
 cd frontend
-cp .env.example .env.local
+cp .env.example .env.local  # set NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
 npm install
-npm run dev                   # http://localhost:3000
+npm run dev                 # http://localhost:3000
 ```
 
-Open `http://localhost:3000`, sign in with the seeded credentials, and start with **Groups → Legal Entities → Countries → Business Units → Departments**, then assign roles under **User Role Assignment**.
+Sign in with the seeded admin credentials, then configure **Groups → Legal
+Entities → Countries → Business Units → Departments**, assign roles under
+**User Role Assignment**, and set up **Banks → Currencies → Payment Types**.
 
 ---
 
-## API reference (Section 1.1)
+## npm scripts reference (backend)
 
-All endpoints sit under `/api/v1` and require `Authorization: Bearer <jwt>` except `POST /auth/login`.
+| Script | What it does |
+|--------|--------------|
+| `npm run migration:run` | Applies all pending TypeORM migrations |
+| `npm run migration:revert` | Reverts the most recent migration |
+| `npm run migration:generate` | Generates a new migration from entity diff |
+| `npm run seed` | Seeds platform admin user (idempotent) |
+| `npm run seed:all` | Seeds admin + dummy organisations + beneficiary accounts |
+| `npm run db:setup` | `migration:run` then `seed:all` — full fresh-system setup |
+| `npm run start:dev` | NestJS hot-reload dev server |
+| `npm run build` | Compile to `dist/` |
+| `npm run lint` | ESLint with auto-fix |
+
+---
+
+## Migration order
+
+The migrations in `backend/src/database/migrations/` run in timestamp order:
+
+| Timestamp | Migration | Covers |
+|-----------|-----------|--------|
+| 1700000000000 | InitialSchema | Base schema: currencies, groups, legal entities, users, roles, payment types, payment requests, etc. (schema.sql §1–§4) |
+| 1701000000000 | Section6BeneficiaryAccounts | `beneficiary_accounts`, `beneficiary_account_change_requests`, FK back-fill |
+| 1702000000000 | Section7ExceptionReports | `exception_reports`, `exception_report_items` |
+| 1703000000000 | Section8VendorPaymentFields | `invoice_number`, `due_date` columns on `payment_requests` |
+| 1748000000000 | AddApprovalMatrices | `approval_matrices`, `approval_matrix_bands`, `approval_matrix_steps` |
+| 1749000000000 | AddSanctionedCountries | `sanctioned_countries` |
+| 1750000000000 | Section5PayrollAndEbac | `payroll_batches`, `payroll_batch_items`, `employee_bank_account_changes` |
+
+> **Note for existing installations**: if you applied `schema.sql` and the
+> section SQL files manually before migrations existed, do **not** run
+> `migration:run` against that database — it will attempt to recreate tables
+> that already exist. Use migrations only for fresh databases.
+
+---
+
+## API reference
+
+All endpoints are under `/api/v1` and require `Authorization: Bearer <jwt>`
+except `POST /auth/login`.
 
 ### Auth
 
-| Method | Path           | Body / Notes                                  |
-| ------ | -------------- | --------------------------------------------- |
-| POST   | `/auth/login`  | `{ email, password }` → `{ accessToken, … }`  |
-| GET    | `/auth/me`     | Returns the current `AuthenticatedUser`       |
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/auth/login` | `{ email, password }` → `{ accessToken, … }` |
+| GET | `/auth/me` | Returns the current `AuthenticatedUser` |
 
-### Groups (SUPER_ADMIN-only writes)
+### Organisation structure
 
-```http
-POST /api/v1/groups
-Content-Type: application/json
-Authorization: Bearer <jwt>
+| Resource | Base path | Notes |
+|----------|-----------|-------|
+| Groups | `/groups` | SUPER_ADMIN writes; `?search=` filter |
+| Legal Entities | `/legal-entities` | `?groupId=` filter |
+| Countries | `/countries` | `?legalEntityId=` |
+| Business Units | `/business-units` | `?countryId=` |
+| Departments | `/departments` | `?businessUnitId=` |
 
-{ "name": "Acme Holdings", "code": "ACME", "description": "Parent group" }
-```
-
-| Method | Path             | Notes                                  |
-| ------ | ---------------- | -------------------------------------- |
-| GET    | `/groups`        | `?page=1&limit=20&search=acme`         |
-| GET    | `/groups/:id`    | Includes `legalEntities[]`             |
-| PUT    | `/groups/:id`    | Partial update of name/code/description|
-| DELETE | `/groups/:id`    | Fails if legal entities still attached |
-
-### Legal Entities
-
-```json
-POST /api/v1/legal-entities
-{
-  "groupId": "5b6c…",
-  "name": "Acme India Pvt Ltd",
-  "code": "ACME-IN",
-  "registeredCountry": "IN",
-  "baseCurrencyId": "94…",
-  "taxIdentifier": "29ABCDE1234F1Z5"
-}
-```
-
-`GET /legal-entities?groupId=…` filters to one group.
-
-### Countries / Business Units / Departments
-
-```json
-POST /api/v1/countries          { "legalEntityId": "…", "name": "India", "isoCode": "IN" }
-POST /api/v1/business-units     { "countryId": "…", "name": "Retail Banking", "code": "RETAIL" }
-POST /api/v1/departments        { "businessUnitId": "…", "name": "Treasury", "code": "TREASURY" }
-```
-
-Each supports `GET / GET :id / PUT / DELETE` and respects:
-
-- Unique name & code within the parent
-- Deletion blocked while children exist
-- Audit columns (`created_at`, `updated_at`, `created_by`, `updated_by`)
-- Soft delete (`deleted_at`)
+All support `GET / GET :id / PUT / DELETE` with soft-delete and audit columns.
 
 ### Users & Roles
 
-```http
-POST /api/v1/users
-{ "email": "jane@acme.com", "fullName": "Jane Doe", "password": "S3cure!pass" }
-
-GET  /api/v1/roles              # list system + custom roles
-POST /api/v1/roles              { "code": "CUSTOM_ROLE", "name": "Custom" }
+```
+POST /users                   { email, fullName, password }
+GET  /roles                   list system + custom roles
+POST /roles                   { code, name }
+POST /user-entity-roles       { userId, legalEntityId, roleId, effectiveFrom }
+GET  /user-entity-roles/user/:id
+PUT  /user-entity-roles/:id   { isActive: false }
+DELETE /user-entity-roles/:id
 ```
 
-### User Entity Roles (the mapping)
+### Payment Requests
 
-```http
-POST /api/v1/user-entity-roles
-{
-  "userId":         "…uuid…",
-  "legalEntityId":  "…uuid…",
-  "roleId":         "…uuid (APPROVER)…",
-  "effectiveFrom":  "2026-05-24"
-}
-
-GET    /api/v1/user-entity-roles/user/:id
-PUT    /api/v1/user-entity-roles/:id          { "isActive": false }
-DELETE /api/v1/user-entity-roles/:id
+```
+POST /payment-requests        create (DRAFT)
+GET  /payment-requests        paginated list
+GET  /payment-requests/:id    detail with approvals + documents
+POST /payment-requests/:id/submit
+POST /payment-requests/:id/approve
+POST /payment-requests/:id/reject   { reason }
+POST /payment-requests/:id/cancel
+POST /payment-requests/:id/mark-paid
+POST /payment-requests/:id/upload-pop  (multipart: file)
 ```
 
-A given `(user, legal entity, role)` triple is unique. A user can hold any combination
-across entities — e.g. `APPROVER` in India + `FINANCE_HEAD` in UAE.
+### Payroll Batches (§5)
 
-### Audit log
-
-```http
-GET /api/v1/audit-logs/:entityType/:entityId
+```
+POST /payroll-batches/upload  multipart: file + periodLabel + currencyCode + legalEntityId
+GET  /payroll-batches         paginated list; ?legalEntityId= ?status=
+GET  /payroll-batches/:id     detail with items
+POST /payroll-batches/:id/submit
+POST /payroll-batches/:id/approve
+POST /payroll-batches/:id/reject   { reason }
+POST /payroll-batches/:id/cancel   { reason }
 ```
 
-Returns up to 200 most recent entries for a single record (Group, LegalEntity, …).
+### Employee Bank Account Changes (§5.4)
+
+```
+POST /employee-bank-account-changes             create ADD/MODIFY/DEACTIVATE
+GET  /employee-bank-account-changes             paginated list; ?employeeId= ?status=
+GET  /employee-bank-account-changes/:id         detail
+POST /employee-bank-account-changes/:id/verify  checker step (userId ≠ requestedBy)
+POST /employee-bank-account-changes/:id/approve applies change to employee record
+POST /employee-bank-account-changes/:id/reject  { reason }
+POST /employee-bank-account-changes/:id/cancel
+```
+
+### Beneficiary Accounts (§6)
+
+```
+POST /beneficiary-accounts
+GET  /beneficiary-accounts        ?counterpartyId= ?employeeId= ?status=
+GET  /beneficiary-accounts/:id
+POST /beneficiary-account-change-requests
+GET  /beneficiary-account-change-requests
+GET  /beneficiary-account-change-requests/:id
+POST /beneficiary-account-change-requests/:id/verify
+POST /beneficiary-account-change-requests/:id/approve
+POST /beneficiary-account-change-requests/:id/reject
+POST /beneficiary-account-change-requests/:id/cancel
+```
+
+### Exception Reports (§7)
+
+```
+GET /exception-reports          paginated list
+GET /exception-reports/:id      detail with items
+POST /exception-reports/generate  (manual trigger; cron runs nightly at 23:55)
+```
+
+### Vendor Payments (§8)
+
+Payment requests with `paymentTypeCode=VENDOR_PAYMENT` require `invoiceNumber`
+and `dueDate` in the payload.
+
+### Other masters
+
+```
+GET  /currencies
+GET  /banks
+POST /banks              { name, swiftBic, countryCode }
+GET  /counterparties
+POST /counterparties
+GET  /payment-types
+POST /approval-matrices
+GET  /approval-matrices
+GET  /sanctioned-countries
+POST /sanctioned-countries
+GET  /uploads/file       (POST multipart — returns { url })
+```
 
 ---
 
@@ -146,106 +244,142 @@ Returns up to 200 most recent entries for a single record (Group, LegalEntity, �
 
 ```
 payments-control-system/
-├── ARCHITECTURE.md
 ├── README.md
+├── ARCHITECTURE.md
 ├── backend/
-│   ├── nest-cli.json
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── .env.example
 │   └── src/
-│       ├── main.ts
-│       ├── app.module.ts
-│       ├── config/                # app, database, jwt
-│       ├── common/
-│       │   ├── entities/base.entity.ts
-│       │   ├── decorators/        # roles, current-user, public, audit
-│       │   ├── enums/             # role.enum, audit-action.enum
-│       │   ├── guards/            # jwt-auth, roles
-│       │   ├── filters/           # http-exception
-│       │   ├── interceptors/      # audit
-│       │   └── dto/               # pagination
+│       ├── config/                  app, database, jwt
+│       ├── common/                  guards, decorators, filters, interceptors, dto
 │       ├── database/
-│       │   ├── schema.sql         # canonical DDL
-│       │   ├── data-source.ts     # for TypeORM CLI / seed
-│       │   ├── seed.ts            # bootstrap admin
+│       │   ├── schema.sql           canonical DDL reference (do not execute directly on new systems)
+│       │   ├── data-source.ts       TypeORM CLI DataSource
+│       │   ├── seed.ts              admin user seeder (--all flag adds dummy data)
+│       │   ├── seed_dummy.sql       demo organisations, users, banks, matrices
+│       │   ├── seed_beneficiary_accounts.sql  demo beneficiary accounts
+│       │   ├── migration_section6.sql  (source for 1701 migration)
+│       │   ├── migration_section7.sql  (source for 1702 migration)
+│       │   ├── migration_section8.sql  (source for 1703 migration)
 │       │   └── migrations/
+│       │       ├── 1700000000000-InitialSchema.ts
+│       │       ├── 1701000000000-Section6BeneficiaryAccounts.ts
+│       │       ├── 1702000000000-Section7ExceptionReports.ts
+│       │       ├── 1703000000000-Section8VendorPaymentFields.ts
+│       │       ├── 1748000000000-AddApprovalMatrices.ts
+│       │       ├── 1749000000000-AddSanctionedCountries.ts
+│       │       └── 1750000000000-Section5PayrollAndEbac.ts
 │       └── modules/
-│           ├── auth/              # login, JWT strategy
-│           ├── users/             # CRUD + me
-│           ├── roles/             # CRUD
-│           ├── user-entity-roles/ # assignment + revocation
-│           ├── groups/            # CRUD + repository
-│           ├── legal-entities/    # CRUD
-│           ├── countries/         # CRUD
-│           ├── business-units/    # CRUD
-│           ├── departments/       # CRUD
-│           ├── currencies/        # GET (master)
-│           └── audit-logs/        # query
+│           ├── auth/
+│           ├── users/
+│           ├── roles/
+│           ├── user-entity-roles/
+│           ├── groups/
+│           ├── legal-entities/
+│           ├── countries/
+│           ├── business-units/
+│           ├── departments/
+│           ├── currencies/
+│           ├── banks/
+│           ├── counterparties/
+│           ├── payment-types/
+│           ├── payment-requests/
+│           ├── payroll-batches/
+│           ├── employee-bank-account-changes/
+│           ├── beneficiary-accounts/
+│           ├── exception-reports/
+│           ├── approval-matrices/
+│           ├── sanctioned-countries/
+│           ├── uploads/
+│           └── audit-logs/
 └── frontend/
     ├── package.json
-    ├── tsconfig.json
-    ├── next.config.js
-    ├── tailwind.config.ts
-    ├── postcss.config.js
     ├── .env.example
     └── src/
         ├── app/
-        │   ├── layout.tsx
-        │   ├── globals.css
-        │   ├── page.tsx                       # → /dashboard
-        │   ├── login/page.tsx
+        │   ├── login/
         │   └── (protected)/
-        │       ├── layout.tsx                 # AppShell
-        │       ├── dashboard/page.tsx
-        │       ├── groups/{page,group-form}.tsx
-        │       ├── legal-entities/{page,legal-entity-form}.tsx
-        │       ├── countries/page.tsx
-        │       ├── business-units/page.tsx
-        │       ├── departments/page.tsx
-        │       ├── users/page.tsx
-        │       └── user-roles/page.tsx
+        │       ├── dashboard/
+        │       ├── groups/
+        │       ├── legal-entities/
+        │       ├── countries/
+        │       ├── business-units/
+        │       ├── departments/
+        │       ├── users/
+        │       ├── user-roles/
+        │       ├── banks/
+        │       ├── currencies/
+        │       ├── counterparties/
+        │       ├── payment-types/
+        │       ├── payment-requests/
+        │       ├── payroll-batches/
+        │       ├── employee-bank-account-changes/
+        │       ├── beneficiary-accounts/
+        │       ├── exception-reports/
+        │       ├── approval-matrices/
+        │       ├── sanctioned-countries/
+        │       ├── reimbursements/new/
+        │       └── fnf-settlements/new/
         ├── components/
-        │   ├── ui/                # button, input, label, dialog, card, table, toast, select, textarea
-        │   ├── layout/            # sidebar, breadcrumbs, app-shell, providers
-        │   └── shared/            # page-header, data-table-pagination, confirm-delete
-        ├── hooks/use-auth.tsx
-        ├── lib/{api,utils}.ts
+        │   ├── ui/
+        │   ├── layout/
+        │   └── shared/
+        ├── hooks/
+        ├── lib/
         └── types/domain.ts
 ```
 
 ---
 
-## Setup checklist
+## Setup checklist (fresh system)
 
-- [x] PostgreSQL 14+ running locally
-- [x] `pcs` database created
-- [x] Apply `backend/src/database/schema.sql`
-- [x] Backend `.env` filled in
-- [x] `npm install` in `backend/`
-- [x] `npm run seed`
-- [x] `npm run start:dev`
-- [x] Frontend `.env.local` filled in
-- [x] `npm install` in `frontend/`
-- [x] `npm run dev`
-- [x] Sign in at `http://localhost:3000` with seeded admin credentials
+- [ ] PostgreSQL 14+ running
+- [ ] `createdb pcs` (or set `DB_NAME`)
+- [ ] `cd backend && cp .env.example .env` — fill in `DB_*`, `JWT_SECRET`
+- [ ] `npm install` in `backend/`
+- [ ] `npm run db:setup` — runs all migrations then seeds admin + demo data
+- [ ] `npm run start:dev`
+- [ ] `cd frontend && cp .env.example .env.local` — set `NEXT_PUBLIC_API_URL`
+- [ ] `npm install` in `frontend/`
+- [ ] `npm run dev`
+- [ ] Sign in at `http://localhost:3000` with seeded credentials
 
 ---
 
-## Security & compliance notes
+## Environment variables (backend)
 
-- JWT bearer auth (HS256 by default; switch to RS256 for production by providing public/private key files).
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_USERNAME` | `postgres` | Database user |
+| `DB_PASSWORD` | `postgres` | Database password |
+| `DB_NAME` | `pcs` | Database name |
+| `DB_SCHEMA` | `public` | Schema |
+| `JWT_SECRET` | _(required)_ | HS256 signing secret |
+| `JWT_EXPIRATION` | `86400` | Token lifetime in seconds |
+| `ADMIN_EMAIL` | `admin@pcs.local` | Bootstrap admin email |
+| `ADMIN_PASSWORD` | `ChangeMe123!` | Bootstrap admin password |
+| `PAYROLL_VARIANCE_THRESHOLD_PCT` | `10` | Payroll net variance % that sets `variance_flag` |
+| `EBAC_COOLING_OFF_HOURS` | `24` | Hours before a new beneficiary account becomes ACTIVE |
+| `PORT` | `4000` | HTTP port |
+| `CORS_ORIGIN` | `http://localhost:3000` | Allowed CORS origin |
+
+---
+
+## Security notes
+
+- JWT bearer auth (HS256; switch to RS256 for production).
 - `SUPER_ADMIN`-gated org-structure mutations via `@Roles` + `RolesGuard`.
-- `is_platform_admin` flag on `users` is the bootstrap escape-hatch — revoke once real `user_entity_roles` are in place.
-- Every state-changing call on a tagged controller writes to `audit_logs` (user, before/after, IP, UA, timestamp).
-- Soft deletes via `deleted_at` — `TypeORM` queries filter automatically.
+- `is_platform_admin` flag is the bootstrap escape-hatch — revoke once real
+  `user_entity_roles` are in place.
+- Every state-changing call writes to `audit_logs` (user, before/after, IP, UA, timestamp).
+- Soft deletes via `deleted_at` — TypeORM queries filter automatically.
 - `class-validator` whitelisting rejects unknown payload fields.
-- `helmet`, CORS allowlist, query-failed FK/uniqueness mapping to typed HTTP errors.
-- Passwords hashed with `bcrypt` cost 12; the `passwordHash` column is `select: false` and only loaded by `findByEmailWithPassword`.
-
----
-
-## Roadmap (subsequent SOW sections)
-
-This module establishes the foundation. Sections 1.2 (Payment Types), 1.3 (Counterparty Master), 1.5
-(Approval Matrix) and beyond extend the same patterns — services, controllers, audit, RBAC — already in place.
+- `helmet`, CORS allowlist, FK/uniqueness errors mapped to typed HTTP responses.
+- Passwords hashed with `bcrypt` cost 12; `passwordHash` column has `select: false`.
+- Payroll maker-checker: batch uploader cannot approve their own batch.
+- EBAC maker-checker: requester cannot verify or approve their own change request.
+- Anomaly detection on beneficiary account changes: name mismatch, bank redirection,
+  multiple changes within 30 days, terminated employee, open payroll batch.
