@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PGPASSWORD=asdf1234 psql -U postgres -d pcs -c \"\\\\d employees\")",
+      "Bash(/d/payments-control-system/backend/.env:*)",
+      "Bash(ls -la /d/payments-control-system/frontend/src/app/\\\\\\(protected\\\\\\)/)",
+      "Bash(ls -la \"/d/payments-control-system/frontend/src/app/\\(protected\\)/payment-requests/\")",
+      "Bash(ls -la \"/d/payments-control-system/frontend/src/app/\\(protected\\)/counterparties/\")",
+      "Bash(grep -A5 \"seed.*sanctioned\\\\|seed.*fx\\\\|seed.*payment.type\" /d/payments-control-system/backend/src/database/seed*.sql)",
+      "Bash(xargs grep -l \"sanctioned\")"
+    ]
+  }
+}

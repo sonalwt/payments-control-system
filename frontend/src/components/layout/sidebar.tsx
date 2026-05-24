@@ -27,6 +27,14 @@ import {
   Landmark,
   CreditCard,
   Banknote,
+  FileStack,
+  BookUser,
+  ClipboardList,
+  UploadCloud,
+  Receipt,
+  HandCoins,
+  UsersRound,
+  Layers2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -42,6 +50,8 @@ interface NavGroup {
   label: string;
   icon: Icon;
   items: NavItem[];
+  /** Role codes that may see this group. Empty = everyone. */
+  allowedRoles?: string[];
 }
 
 const DASHBOARD: NavItem = {
@@ -52,8 +62,18 @@ const DASHBOARD: NavItem = {
 
 const GROUPS: NavGroup[] = [
   {
-    label: 'User Setting',
+    label: 'Payments',
+    icon: FileStack,
+    // All authenticated users can see Payment Requests.
+    items: [
+      { href: '/payment-requests', label: 'Payment Requests', icon: FileStack },
+    ],
+  },
+  {
+    label: 'User Settings',
     icon: Settings,
+    // Only platform / super admins manage users, entities, and org structure.
+    allowedRoles: ['SUPER_ADMIN'],
     items: [
       { href: '/groups', label: 'Groups', icon: Layers },
       { href: '/legal-entities', label: 'Legal Entities', icon: Building2 },
@@ -67,10 +87,13 @@ const GROUPS: NavGroup[] = [
   {
     label: 'Masters',
     icon: Database,
+    // Admins, Finance Heads, and Initiators (who register beneficiary accounts).
+    allowedRoles: ['SUPER_ADMIN', 'FINANCE_HEAD', 'INITIATOR'],
     items: [
       { href: '/payment-types', label: 'Payment Types', icon: Wallet },
       { href: '/counterparties', label: 'Counterparties', icon: Contact2 },
       { href: '/employees', label: 'Employees', icon: UserSquare2 },
+      { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: BookUser },
       { href: '/approval-matrices', label: 'Approval Matrices', icon: ListTree },
       { href: '/sanctioned-countries', label: 'Sanctioned Countries', icon: Ban },
     ],
@@ -78,11 +101,34 @@ const GROUPS: NavGroup[] = [
   {
     label: 'Banking',
     icon: Banknote,
+    // Admins, Finance Heads, and Payments Makers/Checkers who handle bank operations.
+    allowedRoles: ['SUPER_ADMIN', 'FINANCE_HEAD', 'PAYMENTS_MAKER', 'PAYMENTS_CHECKER'],
     items: [
       { href: '/currencies', label: 'Currencies', icon: Coins },
       { href: '/fx-rates', label: 'FX Rates', icon: TrendingUp },
       { href: '/banks', label: 'Banks', icon: Landmark },
       { href: '/bank-accounts', label: 'Bank Accounts', icon: CreditCard },
+      { href: '/statement-uploads', label: 'Statement Uploads', icon: UploadCloud },
+    ],
+  },
+  {
+    label: 'Payroll',
+    icon: UsersRound,
+    allowedRoles: ['SUPER_ADMIN', 'FINANCE_HEAD', 'PAYROLL_ADMIN', 'INITIATOR'],
+    items: [
+      { href: '/payroll-batches', label: 'Payroll Batches', icon: Layers2 },
+      { href: '/employee-bank-account-changes', label: 'Bank Account Changes', icon: HandCoins },
+      { href: '/reimbursements/new', label: 'New Reimbursement', icon: Receipt },
+      { href: '/fnf-settlements/new', label: 'New FnF Settlement', icon: HandCoins },
+    ],
+  },
+  {
+    label: 'Reports',
+    icon: ClipboardList,
+    // Admins, Approvers, Finance Heads, and Payments staff.
+    allowedRoles: ['SUPER_ADMIN', 'APPROVER', 'FINANCE_HEAD', 'PAYMENTS_MAKER', 'PAYMENTS_CHECKER'],
+    items: [
+      { href: '/exception-reports', label: 'Exception Reports', icon: ClipboardList },
     ],
   },
 ];
@@ -95,6 +141,13 @@ export function Sidebar(): React.ReactElement {
   const pathname = usePathname();
   const { user, logout } = useAuth();
 
+  const userRoles: string[] = user?.roles ?? [];
+
+  // A group is visible if it has no role restriction OR the user holds at least one allowed role.
+  const visibleGroups = GROUPS.filter(
+    (g) => !g.allowedRoles || g.allowedRoles.some((r) => userRoles.includes(r)),
+  );
+
   return (
     <aside className="flex h-screen w-64 flex-col border-r bg-card">
       <div className="border-b px-6 py-5">
@@ -103,7 +156,7 @@ export function Sidebar(): React.ReactElement {
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
         <NavLink item={DASHBOARD} active={isItemActive(pathname, DASHBOARD.href)} />
-        {GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <NavGroupSection key={group.label} group={group} pathname={pathname} />
         ))}
       </nav>

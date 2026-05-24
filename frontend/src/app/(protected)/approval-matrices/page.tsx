@@ -128,15 +128,15 @@ export default function ApprovalMatricesPage(): React.ReactElement {
 
   const { data: paymentTypes } = useQuery({
     queryKey: ['payment-types-all'],
-    queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?page=1&limit=200'),
+    queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?page=1&limit=100'),
   });
   const { data: currencies } = useQuery({
     queryKey: ['currencies-all'],
-    queryFn: () => api.get<Currency[]>('/currencies'),
+    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
   });
   const { data: users } = useQuery({
     queryKey: ['users-all-min'],
-    queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=200'),
+    queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=100'),
   });
   const { data: roles } = useQuery({
     queryKey: ['roles-all'],
@@ -205,7 +205,7 @@ export default function ApprovalMatricesPage(): React.ReactElement {
   });
 
   const paymentTypeOpts = paymentTypes?.data ?? [];
-  const currencyOpts = currencies ?? [];
+  const currencyOpts = currencies?.data ?? [];
   const userOpts = users?.data ?? [];
   const roleOpts = roles ?? [];
 

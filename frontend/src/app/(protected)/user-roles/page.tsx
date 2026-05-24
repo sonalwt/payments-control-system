@@ -43,11 +43,11 @@ export default function UserRolesPage(): React.ReactElement {
 
   const { data: users } = useQuery({
     queryKey: ['users-all'],
-    queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=200'),
+    queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=100'),
   });
   const { data: legalEntities } = useQuery({
     queryKey: ['les-all'],
-    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=100'),
   });
   const { data: roles } = useQuery({
     queryKey: ['roles-all'],

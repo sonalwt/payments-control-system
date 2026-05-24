@@ -77,7 +77,7 @@ export function EmployeeForm({
   });
   const { data: currencies } = useQuery({
     queryKey: ['currencies-all'],
-    queryFn: () => api.get<Currency[]>('/currencies'),
+    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
   });
 
   const {
@@ -109,7 +109,7 @@ export function EmployeeForm({
     label: `${e.code} — ${e.name}`,
     value: e.id,
   }));
-  const currencyOptions = (currencies ?? []).map((c) => ({
+  const currencyOptions = (currencies?.data ?? []).map((c) => ({
     label: `${c.code} — ${c.name}`,
     value: c.id,
   }));
