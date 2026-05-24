@@ -22,6 +22,11 @@ import {
   ChevronRight,
   Settings,
   Database,
+  Coins,
+  TrendingUp,
+  Landmark,
+  CreditCard,
+  Banknote,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -68,6 +73,16 @@ const GROUPS: NavGroup[] = [
       { href: '/employees', label: 'Employees', icon: UserSquare2 },
       { href: '/approval-matrices', label: 'Approval Matrices', icon: ListTree },
       { href: '/sanctioned-countries', label: 'Sanctioned Countries', icon: Ban },
+    ],
+  },
+  {
+    label: 'Banking',
+    icon: Banknote,
+    items: [
+      { href: '/currencies', label: 'Currencies', icon: Coins },
+      { href: '/fx-rates', label: 'FX Rates', icon: TrendingUp },
+      { href: '/banks', label: 'Banks', icon: Landmark },
+      { href: '/bank-accounts', label: 'Bank Accounts', icon: CreditCard },
     ],
   },
 ];

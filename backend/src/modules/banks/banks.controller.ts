@@ -14,9 +14,9 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { CurrenciesService } from './currencies.service';
-import { CreateCurrencyDto } from './dto/create-currency.dto';
-import { UpdateCurrencyDto } from './dto/update-currency.dto';
+import { BanksService } from './banks.service';
+import { CreateBankDto } from './dto/create-bank.dto';
+import { UpdateBankDto } from './dto/update-bank.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -29,19 +29,19 @@ import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 import { AuditInterceptor } from '../../common/interceptors/audit.interceptor';
 import { Audit } from '../../common/decorators/audit.decorator';
 
-@ApiTags('Currencies')
+@ApiTags('Banks')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @UseInterceptors(AuditInterceptor)
-@Audit('Currency')
-@Controller('currencies')
-export class CurrenciesController {
-  constructor(private readonly service: CurrenciesService) {}
+@Audit('Bank')
+@Controller('banks')
+export class BanksController {
+  constructor(private readonly service: BanksService) {}
 
   @Post()
   @Roles(RoleCode.SUPER_ADMIN)
   create(
-    @Body() dto: CreateCurrencyDto,
+    @Body() dto: CreateBankDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.create(dto, user.id);
@@ -49,7 +49,11 @@ export class CurrenciesController {
 
   @Get()
   findAll(
-    @Query() query: PaginationQueryDto & { isActive?: 'true' | 'false' },
+    @Query()
+    query: PaginationQueryDto & {
+      countryCode?: string;
+      isActive?: 'true' | 'false';
+    },
   ) {
     return this.service.findAll(query);
   }
@@ -63,7 +67,7 @@ export class CurrenciesController {
   @Roles(RoleCode.SUPER_ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: UpdateCurrencyDto,
+    @Body() dto: UpdateBankDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.update(id, dto, user.id);
