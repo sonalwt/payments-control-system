@@ -17,6 +17,11 @@ import { CountriesModule } from './modules/countries/countries.module';
 import { BusinessUnitsModule } from './modules/business-units/business-units.module';
 import { DepartmentsModule } from './modules/departments/departments.module';
 import { CurrenciesModule } from './modules/currencies/currencies.module';
+import { PaymentTypesModule } from './modules/payment-types/payment-types.module';
+import { CounterpartiesModule } from './modules/counterparties/counterparties.module';
+import { EmployeesModule } from './modules/employees/employees.module';
+import { ApprovalMatricesModule } from './modules/approval-matrices/approval-matrices.module';
+import { SanctionedCountriesModule } from './modules/sanctioned-countries/sanctioned-countries.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 
 @Module({
@@ -50,6 +55,11 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
     BusinessUnitsModule,
     DepartmentsModule,
     CurrenciesModule,
+    PaymentTypesModule,
+    CounterpartiesModule,
+    EmployeesModule,
+    ApprovalMatricesModule,
+    SanctionedCountriesModule,
     AuditLogsModule,
   ],
 })
