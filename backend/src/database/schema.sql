@@ -630,3 +630,205 @@ CREATE INDEX idx_sanctioned_countries_deleted_at
 CREATE TRIGGER trg_sanctioned_countries_touch
     BEFORE UPDATE ON sanctioned_countries
     FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+-- =====================================================================
+-- Section 2.1 — Currency Master (extension)
+-- The base `currencies` table is created above (used by §1.1 forward
+-- references). Section 2.1 enriches it with ISO 4217 numeric code, minor
+-- unit, display symbol, system flag (seeded rows cannot be deleted),
+-- soft-delete, and acting-user audit columns — bringing it in line with
+-- every other master in the system.
+-- =====================================================================
+
+ALTER TABLE currencies
+    ADD COLUMN IF NOT EXISTS numeric_code  CHAR(3),
+    ADD COLUMN IF NOT EXISTS minor_unit    SMALLINT NOT NULL DEFAULT 2,
+    ADD COLUMN IF NOT EXISTS symbol        VARCHAR(8),
+    ADD COLUMN IF NOT EXISTS is_system     BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS deleted_at    TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS created_by    UUID,
+    ADD COLUMN IF NOT EXISTS updated_by    UUID;
+
+DO $$ BEGIN
+    ALTER TABLE currencies
+        ADD CONSTRAINT chk_currency_code CHECK (code ~ '^[A-Z]{3}$');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_currencies_active     ON currencies(is_active);
+CREATE INDEX IF NOT EXISTS idx_currencies_deleted_at ON currencies(deleted_at) WHERE deleted_at IS NULL;
+
+-- Mark seeded currencies as system so they cannot be deleted via the API.
+UPDATE currencies
+   SET is_system = TRUE
+ WHERE code IN ('USD','EUR','GBP','INR','AED','SGD','CNY')
+   AND is_system = FALSE;
+
+-- Enrich seeded rows with numeric code & minor unit (idempotent).
+UPDATE currencies SET numeric_code = '840', minor_unit = 2, symbol = '$'   WHERE code = 'USD' AND numeric_code IS NULL;
+UPDATE currencies SET numeric_code = '978', minor_unit = 2, symbol = '€'   WHERE code = 'EUR' AND numeric_code IS NULL;
+UPDATE currencies SET numeric_code = '826', minor_unit = 2, symbol = '£'   WHERE code = 'GBP' AND numeric_code IS NULL;
+UPDATE currencies SET numeric_code = '356', minor_unit = 2, symbol = '₹'   WHERE code = 'INR' AND numeric_code IS NULL;
+UPDATE currencies SET numeric_code = '784', minor_unit = 2, symbol = 'د.إ' WHERE code = 'AED' AND numeric_code IS NULL;
+UPDATE currencies SET numeric_code = '702', minor_unit = 2, symbol = 'S$'  WHERE code = 'SGD' AND numeric_code IS NULL;
+UPDATE currencies SET numeric_code = '156', minor_unit = 2, symbol = '¥'   WHERE code = 'CNY' AND numeric_code IS NULL;
+
+-- =====================================================================
+-- Section 2.2 — Foreign Exchange Rates
+-- Daily quotes fetched from OANDA Exchange Rates API (default provider),
+-- abstracted behind FxRatesService.IRatesProvider so the source can be
+-- substituted without rework. USD is the default base (group reporting
+-- currency, §2.1). When the feed is unavailable the system holds the
+-- previous day's rate (`source = STALE_HELD`); admins may override with
+-- `source = MANUAL_OVERRIDE` and the reason is captured.
+-- =====================================================================
+
+CREATE TABLE fx_rates (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    base_currency_code    CHAR(3)        NOT NULL,
+    quote_currency_code   CHAR(3)        NOT NULL,
+    rate                  DECIMAL(20,10) NOT NULL,
+    as_of_date            DATE           NOT NULL,
+    source                VARCHAR(20)    NOT NULL,
+    fetched_at            TIMESTAMPTZ    NOT NULL DEFAULT now(),
+    provider_name         VARCHAR(50),
+    override_reason       TEXT,
+    created_at            TIMESTAMPTZ    NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ    NOT NULL DEFAULT now(),
+    deleted_at            TIMESTAMPTZ,
+    created_by            UUID,
+    updated_by            UUID,
+    CONSTRAINT chk_fx_rate_positive CHECK (rate > 0),
+    CONSTRAINT chk_fx_rate_source   CHECK (source IN ('OANDA','MANUAL_OVERRIDE','STALE_HELD')),
+    CONSTRAINT chk_fx_rate_base     CHECK (base_currency_code  ~ '^[A-Z]{3}$'),
+    CONSTRAINT chk_fx_rate_quote    CHECK (quote_currency_code ~ '^[A-Z]{3}$'),
+    CONSTRAINT uq_fx_rate_base_quote_asof UNIQUE (base_currency_code, quote_currency_code, as_of_date)
+);
+CREATE INDEX idx_fx_rates_quote_date ON fx_rates(quote_currency_code, as_of_date);
+CREATE INDEX idx_fx_rates_asof       ON fx_rates(as_of_date);
+
+CREATE TRIGGER trg_fx_rates_touch
+    BEFORE UPDATE ON fx_rates
+    FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+-- =====================================================================
+-- Section 2.3 — Bank Master
+-- Banks with which the group holds relationships. (name, country_code)
+-- is unique within the live set so the same bank in two countries
+-- carries its own SWIFT/BIC and address.
+-- =====================================================================
+
+CREATE TABLE banks (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name          VARCHAR(150) NOT NULL,
+    short_name    VARCHAR(50),
+    country_code  CHAR(2)      NOT NULL,
+    swift_bic     VARCHAR(11),
+    address       TEXT,
+    is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    deleted_at    TIMESTAMPTZ,
+    created_by    UUID,
+    updated_by    UUID,
+    CONSTRAINT chk_banks_country CHECK (country_code ~ '^[A-Z]{2}$'),
+    CONSTRAINT chk_banks_swift   CHECK (swift_bic IS NULL OR swift_bic ~ '^[A-Z0-9]{8}([A-Z0-9]{3})?$'),
+    CONSTRAINT uq_banks_name_country UNIQUE (name, country_code)
+);
+CREATE INDEX idx_banks_country    ON banks(country_code)        WHERE deleted_at IS NULL;
+CREATE INDEX idx_banks_active     ON banks(is_active)           WHERE deleted_at IS NULL;
+CREATE INDEX idx_banks_deleted_at ON banks(deleted_at)          WHERE deleted_at IS NULL;
+
+CREATE TRIGGER trg_banks_touch
+    BEFORE UPDATE ON banks
+    FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+-- =====================================================================
+-- Section 2.4 — Account Master
+-- One row per group-owned bank account; (bank, account_number) is unique
+-- among live rows. `account_type` discriminates behaviour:
+--   CURRENT    : operational. Must carry minimum_balance; min-balance
+--                control (§2.5) blocks any release that would push the
+--                balance below it.
+--   COLLATERAL : letter-of-credit only; never selectable for TT.
+--   DEPOSIT    : term deposit, held for visibility only. Balance mutated
+--                only by explicit admin override (interest accrual /
+--                renewal / redemption); no workflow event touches it.
+-- `is_chairman_designated` segregates the chairman-payment accounts
+-- (§9.2) from the standard maker's source-account picker.
+-- =====================================================================
+
+CREATE TABLE bank_accounts (
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nickname                 VARCHAR(120) NOT NULL,
+    legal_entity_id          UUID NOT NULL REFERENCES legal_entities(id) ON DELETE RESTRICT,
+    bank_id                  UUID NOT NULL REFERENCES banks(id)          ON DELETE RESTRICT,
+    currency_id              UUID NOT NULL REFERENCES currencies(id)     ON DELETE RESTRICT,
+    account_number           VARCHAR(50)  NOT NULL,
+    iban                     VARCHAR(34),
+    account_type             VARCHAR(12)  NOT NULL,
+    branch_name              VARCHAR(120),
+    branch_code              VARCHAR(30),
+    balance                  DECIMAL(20,4) NOT NULL DEFAULT 0,
+    balance_as_of            TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    balance_source           VARCHAR(30)   NOT NULL DEFAULT 'SEEDED',
+    minimum_balance          DECIMAL(20,4),
+    is_chairman_designated   BOOLEAN       NOT NULL DEFAULT FALSE,
+    is_active                BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at               TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    deleted_at               TIMESTAMPTZ,
+    created_by               UUID,
+    updated_by               UUID,
+    CONSTRAINT chk_bank_account_type CHECK (account_type IN ('CURRENT','COLLATERAL','DEPOSIT')),
+    CONSTRAINT chk_balance_source    CHECK (balance_source IN (
+        'SEEDED','SYSTEM_COMPUTED','STATEMENT_RECONCILED','MANUAL_OVERRIDE'
+    )),
+    -- Minimum balance is mandatory for CURRENT and must be NULL for the
+    -- non-operational account types. Enforced at the DB layer to keep the
+    -- invariant true even if the API is bypassed.
+    CONSTRAINT chk_bank_account_min_balance CHECK (
+        (account_type = 'CURRENT'  AND minimum_balance IS NOT NULL)
+     OR (account_type IN ('COLLATERAL','DEPOSIT') AND minimum_balance IS NULL)
+    ),
+    CONSTRAINT uq_bank_account_number_per_bank UNIQUE (bank_id, account_number)
+);
+CREATE INDEX idx_bank_accounts_entity     ON bank_accounts(legal_entity_id)     WHERE deleted_at IS NULL;
+CREATE INDEX idx_bank_accounts_bank       ON bank_accounts(bank_id)             WHERE deleted_at IS NULL;
+CREATE INDEX idx_bank_accounts_currency   ON bank_accounts(currency_id)         WHERE deleted_at IS NULL;
+CREATE INDEX idx_bank_accounts_type       ON bank_accounts(account_type)        WHERE deleted_at IS NULL;
+CREATE INDEX idx_bank_accounts_active     ON bank_accounts(is_active)           WHERE deleted_at IS NULL;
+CREATE INDEX idx_bank_accounts_deleted_at ON bank_accounts(deleted_at)          WHERE deleted_at IS NULL;
+
+CREATE TRIGGER trg_bank_accounts_touch
+    BEFORE UPDATE ON bank_accounts
+    FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+-- =====================================================================
+-- Section 2.5 — Balance Maintenance (append-only movement ledger)
+-- Every change to an account's recorded balance is captured here, with
+-- the kind, before/after values, signed delta, and originating reference
+-- (payment_request_id, receipt_id, statement_upload_id — forward refs).
+-- The audit_logs table holds the cross-system audit row; this table
+-- exists for ergonomic per-account drill-down on the dashboard.
+-- =====================================================================
+
+CREATE TABLE balance_changes (
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id             UUID NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+    kind                   VARCHAR(25) NOT NULL,
+    previous_balance       DECIMAL(20,4) NOT NULL,
+    new_balance            DECIMAL(20,4) NOT NULL,
+    delta                  DECIMAL(20,4) NOT NULL,
+    reason                 TEXT,
+    payment_request_id     UUID,  -- forward ref (lifecycle module)
+    receipt_id             UUID,  -- forward ref (§7)
+    statement_upload_id    UUID,  -- forward ref (§8)
+    changed_by             UUID,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_balance_change_kind CHECK (kind IN (
+        'PAYMENT_DEBIT','RECEIPT_CREDIT','STATEMENT_RESET',
+        'MANUAL_OVERRIDE','PAYMENT_CORRECTION'
+    ))
+);
+CREATE INDEX idx_balance_changes_account_time ON balance_changes(account_id, created_at DESC);
+CREATE INDEX idx_balance_changes_kind         ON balance_changes(kind);

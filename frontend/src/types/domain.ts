@@ -15,11 +15,14 @@ export interface AuditFields {
   updatedBy?: string | null;
 }
 
-export interface Currency {
-  id: string;
+export interface Currency extends AuditFields {
   code: string;
   name: string;
+  numericCode?: string | null;
+  minorUnit: number;
+  symbol?: string | null;
   isActive: boolean;
+  isSystem: boolean;
 }
 
 export interface Group extends AuditFields {
@@ -252,6 +255,110 @@ export interface PaymentType extends AuditFields {
   version: number;
   effectiveFrom: string;
   effectiveTo?: string | null;
+}
+
+// =====================================================================
+// Section 2 — Currency, Bank, and Account Master
+// =====================================================================
+
+export type FxRateSource = 'OANDA' | 'MANUAL_OVERRIDE' | 'STALE_HELD';
+
+export interface FxRate extends AuditFields {
+  baseCurrencyCode: string;
+  quoteCurrencyCode: string;
+  rate: string;
+  asOfDate: string;
+  source: FxRateSource;
+  fetchedAt: string;
+  providerName?: string | null;
+  overrideReason?: string | null;
+}
+
+export interface ResolvedFxRate {
+  baseCurrencyCode: string;
+  quoteCurrencyCode: string;
+  rate: string;
+  asOfDate: string;
+  effectiveAsOfDate: string;
+  source: FxRateSource;
+  isStale: boolean;
+  lastUpdated: string;
+  providerName: string | null;
+  overrideReason: string | null;
+}
+
+export interface Bank extends AuditFields {
+  name: string;
+  shortName?: string | null;
+  countryCode: string;
+  swiftBic?: string | null;
+  address?: string | null;
+  isActive: boolean;
+}
+
+export type BankAccountType = 'CURRENT' | 'COLLATERAL' | 'DEPOSIT';
+export type BalanceSource =
+  | 'SEEDED'
+  | 'SYSTEM_COMPUTED'
+  | 'STATEMENT_RECONCILED'
+  | 'MANUAL_OVERRIDE';
+
+export interface BankAccount extends AuditFields {
+  nickname: string;
+  legalEntityId: string;
+  legalEntity?: LegalEntity;
+  bankId: string;
+  bank?: Bank;
+  currencyId: string;
+  currency?: Currency;
+  accountNumber: string;
+  iban?: string | null;
+  accountType: BankAccountType;
+  branchName?: string | null;
+  branchCode?: string | null;
+  balance: string;
+  balanceAsOf: string;
+  balanceSource: BalanceSource;
+  minimumBalance?: string | null;
+  isChairmanDesignated: boolean;
+  isActive: boolean;
+}
+
+export type BalanceChangeKind =
+  | 'PAYMENT_DEBIT'
+  | 'RECEIPT_CREDIT'
+  | 'STATEMENT_RESET'
+  | 'MANUAL_OVERRIDE'
+  | 'PAYMENT_CORRECTION';
+
+export interface BalanceChange {
+  id: string;
+  accountId: string;
+  kind: BalanceChangeKind;
+  previousBalance: string;
+  newBalance: string;
+  delta: string;
+  reason?: string | null;
+  paymentRequestId?: string | null;
+  receiptId?: string | null;
+  statementUploadId?: string | null;
+  changedBy?: string | null;
+  createdAt: string;
+}
+
+export interface IndicativeEquivalent {
+  isCrossCurrency: boolean;
+  sourceAccountId: string;
+  sourceCurrencyCode: string;
+  paymentCurrencyCode: string;
+  paymentAmount: string;
+  indicativeSourceAmount: string;
+  rateUsed: string;
+  rateAsOfDate: string;
+  rateIsStale: boolean;
+  disclosureNote: string;
+  minimumBalanceOk: boolean;
+  minimumBalanceMessage?: string;
 }
 
 export interface SanctionedCountry extends AuditFields {
