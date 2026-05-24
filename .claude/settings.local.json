@@ -7,7 +7,8 @@
       "Bash(ls -la \"/d/payments-control-system/frontend/src/app/\\(protected\\)/payment-requests/\")",
       "Bash(ls -la \"/d/payments-control-system/frontend/src/app/\\(protected\\)/counterparties/\")",
       "Bash(grep -A5 \"seed.*sanctioned\\\\|seed.*fx\\\\|seed.*payment.type\" /d/payments-control-system/backend/src/database/seed*.sql)",
-      "Bash(xargs grep -l \"sanctioned\")"
+      "Bash(xargs grep -l \"sanctioned\")",
+      "Bash(grep -r \"DB_\" /d/payments-control-system/backend/.env*)"
     ]
   }
 }

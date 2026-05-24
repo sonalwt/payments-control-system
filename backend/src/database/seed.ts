@@ -1,4 +1,6 @@
 import 'reflect-metadata';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as bcrypt from 'bcrypt';
 import dataSource from './data-source';
 import { User } from '../modules/users/user.entity';
@@ -7,13 +9,19 @@ import { UserEntityRole } from '../modules/user-entity-roles/user-entity-role.en
 import { LegalEntity } from '../modules/legal-entities/legal-entity.entity';
 
 /**
- * Idempotent bootstrap: seeds a SUPER_ADMIN user. If a legal entity exists,
- * the user is assigned SUPER_ADMIN against the first one. Otherwise the
- * user is created but assignment is skipped — assignments can be made via
- * /user-entity-roles once entities exist.
+ * Idempotent seed runner.
+ *
+ * Default (no flags):
+ *   Creates the platform SUPER_ADMIN user and assigns the role against the
+ *   first legal entity (if one exists).
+ *
+ * With --all flag (via npm run seed:all):
+ *   Also seeds dummy organisations, users, banks, approval matrices and
+ *   beneficiary accounts from the SQL seed files.
  *
  * Usage:
  *   ADMIN_EMAIL=admin@pcs.local ADMIN_PASSWORD=ChangeMe123! npm run seed
+ *   ADMIN_EMAIL=admin@pcs.local ADMIN_PASSWORD=ChangeMe123! npm run seed:all
  */
 async function run(): Promise<void> {
   await dataSource.initialize();
@@ -27,7 +35,7 @@ async function run(): Promise<void> {
 
   const adminRole = await roles.findOne({ where: { code: 'SUPER_ADMIN' } });
   if (!adminRole) {
-    throw new Error('SUPER_ADMIN role missing — apply schema.sql first');
+    throw new Error('SUPER_ADMIN role missing — run npm run migration:run first');
   }
 
   let user = await users.findOne({ where: { email } });
@@ -72,6 +80,27 @@ async function run(): Promise<void> {
   } else {
     // eslint-disable-next-line no-console
     console.log('No legal entity yet — assignment skipped.');
+  }
+
+  // ── Optional: full dummy data ──────────────────────────────────────────
+  if (process.argv.includes('--all')) {
+    const dbDir = path.join(__dirname);
+    const sqlFiles = ['seed_dummy.sql', 'seed_beneficiary_accounts.sql'];
+
+    for (const file of sqlFiles) {
+      const filePath = path.join(dbDir, file);
+      if (!fs.existsSync(filePath)) {
+        // eslint-disable-next-line no-console
+        console.warn(`Seed file not found, skipping: ${file}`);
+        continue;
+      }
+      const sql = fs.readFileSync(filePath, 'utf8');
+      // eslint-disable-next-line no-console
+      console.log(`Running ${file}...`);
+      await dataSource.query(sql);
+      // eslint-disable-next-line no-console
+      console.log(`  done: ${file}`);
+    }
   }
 
   await dataSource.destroy();
