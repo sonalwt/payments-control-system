@@ -368,6 +368,212 @@ export interface SanctionedCountry extends AuditFields {
   isActive: boolean;
 }
 
+// =====================================================================
+// Section 3 — Payment Lifecycle
+// =====================================================================
+
+export type PaymentRequestStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'AWAITING_PAYMENT_CONFIRMATION'
+  | 'PAID'
+  | 'REJECTED'
+  | 'WITHDRAWN'
+  | 'CANCELLED';
+
+export type ApprovalDecision = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface PaymentRequestApproval {
+  id: string;
+  paymentRequestId: string;
+  stepOrder: number;
+  approverType: 'USER' | 'ROLE';
+  approverUserId?: string | null;
+  approverRoleId?: string | null;
+  /** Resolved display name for ROLE-type steps (e.g. "Approver") */
+  approverRoleName?: string | null;
+  /** Resolved email for USER-type steps */
+  approverUserEmail?: string | null;
+  /** Resolved full name for USER-type steps */
+  approverUserName?: string | null;
+  isOptional: boolean;
+  decision: ApprovalDecision;
+  decidedBy?: string | null;
+  decidedAt?: string | null;
+  comments?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentRequestDocument {
+  id: string;
+  paymentRequestId: string;
+  documentCode: string;
+  documentLabel?: string | null;
+  fileName: string;
+  fileUrl: string;
+  fileSizeBytes?: number | null;
+  mimeType?: string | null;
+  uploadedBy?: string | null;
+  uploadedAt: string;
+  createdAt: string;
+}
+
+// -----------------------------------------------------------------------
+// Section 6 — Beneficiary Master
+// -----------------------------------------------------------------------
+
+export type BeneficiaryAccountStatus = 'PENDING_ACTIVATION' | 'ACTIVE' | 'INACTIVE';
+export type ChangeRequestType = 'ADD' | 'MODIFY' | 'DEACTIVATE';
+export type ChangeRequestStatus =
+  | 'PENDING_VERIFICATION'
+  | 'VERIFIED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+export interface BeneficiaryAccount extends AuditFields {
+  counterpartyId?: string | null;
+  counterparty?: Counterparty | null;
+  employeeId?: string | null;
+  employee?: Employee | null;
+  accountHolderName: string;
+  accountNumber: string;
+  bankId: string;
+  bank?: Bank;
+  bankName?: string | null;
+  branchName?: string | null;
+  swiftBic?: string | null;
+  iban?: string | null;
+  currencyId: string;
+  currency?: Currency;
+  countryCode: string;
+  status: BeneficiaryAccountStatus;
+  coolingOffUntil?: string | null;
+  /** §1.3 — Direction tag: pay-to (outgoing), receive-from (incoming), or both. */
+  accountDirection: 'PAY_TO' | 'RECEIVE_FROM' | 'BOTH';
+}
+
+export interface BeneficiaryAccountChangeRequest extends AuditFields {
+  beneficiaryAccountId?: string | null;
+  beneficiaryAccount?: BeneficiaryAccount | null;
+  changeType: ChangeRequestType;
+  status: ChangeRequestStatus;
+  proposedData: Record<string, unknown>;
+  documents: Array<{ documentCode: string; fileName: string; fileUrl: string; mimeType?: string }>;
+  requestedBy: string;
+  requester?: { id: string; fullName: string; email: string };
+  verifiedBy?: string | null;
+  verifier?: { id: string; fullName: string; email: string } | null;
+  verifiedAt?: string | null;
+  verificationNotes?: string | null;
+  callbackEvidence?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  rejectedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
+}
+
+// -----------------------------------------------------------------------
+
+export interface PaymentRequest extends AuditFields {
+  requestNumber: string;
+  paymentTypeCode: string;
+  legalEntityId: string;
+  legalEntity?: LegalEntity;
+  counterpartyId?: string | null;
+  counterparty?: Counterparty | null;
+  employeeId?: string | null;
+  employee?: Employee | null;
+  currencyCode: string;
+  amount: string;
+  amountMinor: number;
+  purposeDescription?: string | null;
+  invoiceNumber?: string | null;
+  dueDate?: string | null;
+  sourceAccountId?: string | null;
+  sourceAccount?: BankAccount | null;
+  isCrossCurrency: boolean;
+  indicativeSourceAmount?: string | null;
+  bankReference?: string | null;
+  valueDate?: string | null;
+  proofOfPaymentUrl?: string | null;
+  status: PaymentRequestStatus;
+  submittedAt?: string | null;
+  approvedAt?: string | null;
+  paidAt?: string | null;
+  matrixId?: string | null;
+  matrixVersion?: number | null;
+  currentStepOrder?: number | null;
+  rejectionReason?: string | null;
+  cancellationReason?: string | null;
+  makerNotes?: string | null;
+  beneficiaryAccountId?: string | null;
+  beneficiaryAccount?: BeneficiaryAccount | null;
+  /** §4.2 — Snapshot of counterparty/employee frozen at submission time. */
+  counterpartySnapshot?: Record<string, unknown> | null;
+  /** §4.2 — Snapshot of beneficiary account frozen at submission time. */
+  beneficiarySnapshot?: Record<string, unknown> | null;
+  /**
+   * §4.2/§6.5 — True when the beneficiary or counterparty country was on the
+   * sanctioned-country list at the time of submission.
+   */
+  sanctionWarning?: boolean;
+  /**
+   * §2.5/§2.6 — True once this request's debit has been reconciled against an
+   * uploaded bank statement. Post-execution amount correction is blocked.
+   */
+  isAmountLocked?: boolean;
+  approvals?: PaymentRequestApproval[];
+  documents?: PaymentRequestDocument[];
+}
+
+// -----------------------------------------------------------------------
+// Section 7 — Proof-of-Payment Exception Reports
+// -----------------------------------------------------------------------
+
+export interface ExceptionReportItem {
+  id: string;
+  reportId: string;
+  paymentRequestId: string;
+  requestNumber: string;
+  legalEntityName?: string | null;
+  currencyCode: string;
+  amount: string;
+  paidAt: string;
+  createdAt: string;
+}
+
+export interface ExceptionReport {
+  id: string;
+  reportDate: string;
+  totalMissing: number;
+  generatedAt: string;
+  createdAt: string;
+  items?: ExceptionReportItem[];
+}
+
+// -----------------------------------------------------------------------
+// Section 8 — Bank Statement Uploads
+// -----------------------------------------------------------------------
+
+export interface StatementUpload {
+  id: string;
+  bankAccountId: string;
+  bankAccount?: BankAccount;
+  statementDate: string;
+  openingBalance: string;
+  closingBalance: string;
+  fileUrl: string;
+  rowCount: number;
+  notes?: string | null;
+  uploadedBy: string;
+  uploader?: { id: string; fullName: string; email: string } | null;
+  createdAt: string;
+}
+
 export interface AuthMe {
   id: string;
   email: string;
@@ -380,4 +586,95 @@ export interface LoginResponse {
   accessToken: string;
   expiresIn: string;
   user: { id: string; email: string; fullName: string; roles: string[] };
+}
+
+// =====================================================================
+// Section 5 — Payroll Batches
+// =====================================================================
+
+export type PayrollBatchStatus =
+  | 'VALIDATION_FAILED'
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+export interface PayrollBatchItem {
+  id: string;
+  batchId: string;
+  employeeId: string;
+  employee?: Employee;
+  beneficiaryAccountId?: string | null;
+  beneficiaryAccount?: BeneficiaryAccount | null;
+  grossAmountMinor: number;
+  netAmountMinor: number;
+  deductionsMinor: number;
+  payslipUrl?: string | null;
+  varianceFlag: boolean;
+  previousNetMinor?: number | null;
+  variancePct?: number | null;
+  paymentRequestId?: string | null;
+  createdAt: string;
+}
+
+export interface PayrollBatch extends AuditFields {
+  batchNumber: string;
+  legalEntityId: string;
+  legalEntity?: LegalEntity;
+  periodLabel: string;
+  currencyCode: string;
+  totalGrossMinor: number;
+  totalNetMinor: number;
+  employeeCount: number;
+  varianceFlag: boolean;
+  headcountDelta?: number | null;
+  sanityNotes?: string | null;
+  status: PayrollBatchStatus;
+  fileUrl: string;
+  uploadedBy?: string | null;
+  submittedAt?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  rejectedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
+  items?: PayrollBatchItem[];
+}
+
+// =====================================================================
+// Section 5 — Employee Bank Account Change Control
+// =====================================================================
+
+export type EbacChangeType = 'ADD' | 'MODIFY' | 'DEACTIVATE';
+export type EbacStatus =
+  | 'PENDING_VERIFICATION'
+  | 'VERIFIED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+export interface EmployeeBankAccountChange extends AuditFields {
+  employeeId: string;
+  employee?: Employee;
+  changeType: EbacChangeType;
+  status: EbacStatus;
+  proposedData: Record<string, unknown>;
+  documents: Array<{ documentCode: string; fileName: string; fileUrl: string; mimeType?: string }>;
+  anomalyFlag: boolean;
+  anomalyNotes?: string | null;
+  requestedBy: string;
+  requester?: { id: string; fullName: string; email: string };
+  verifiedBy?: string | null;
+  verifier?: { id: string; fullName: string; email: string } | null;
+  verifiedAt?: string | null;
+  verificationNotes?: string | null;
+  callbackEvidence?: string | null;
+  approvedBy?: string | null;
+  approver?: { id: string; fullName: string; email: string } | null;
+  approvedAt?: string | null;
+  rejectedBy?: string | null;
+  rejector?: { id: string; fullName: string; email: string } | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
 }

@@ -1,12 +1,14 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Post,
-  Query,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { CrossCurrencyService } from './cross-currency.service';
 import { IndicativeEquivalentQueryDto } from './dto/indicative-equivalent.dto';
 import { PostExecutionCorrectionDto } from './dto/post-execution-correction.dto';
@@ -32,6 +34,7 @@ export class CrossCurrencyController {
   constructor(
     private readonly service: CrossCurrencyService,
     private readonly bankAccounts: BankAccountsService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -56,19 +59,38 @@ export class CrossCurrencyController {
    */
   @Post('post-execution-correction')
   @Roles(RoleCode.PAYMENTS_MAKER, RoleCode.PAYMENTS_CHECKER, RoleCode.FINANCE_HEAD)
-  correction(
+  async correction(
     @Body() dto: PostExecutionCorrectionDto,
     @CurrentUser() user: AuthenticatedUser,
-    @Query('locked') locked?: 'true' | 'false',
   ) {
-    if (locked === 'true') {
-      // Hard guard for callers that have already matched the request
-      // against a statement; the lifecycle module is the source of truth
-      // for status, but this is a useful belt-and-braces check.
-      throw new Error(
-        'Amount is locked: the debit has been matched against a bank statement.',
-      );
+    // §2.6 — Validate against the live payment request record.
+    if (dto.paymentRequestId) {
+      const rows: Array<{ proof_of_payment_url: string | null; is_amount_locked: boolean }> =
+        await this.dataSource.query(
+          `SELECT proof_of_payment_url, is_amount_locked
+             FROM payment_requests
+            WHERE id = $1
+              AND deleted_at IS NULL
+            LIMIT 1`,
+          [dto.paymentRequestId],
+        );
+
+      const pr = rows[0];
+      if (!pr) {
+        throw new BadRequestException('Payment request not found.');
+      }
+      if (pr.is_amount_locked) {
+        throw new BadRequestException(
+          'Amount is locked: the debit has been matched against an uploaded bank statement.',
+        );
+      }
+      if (!pr.proof_of_payment_url) {
+        throw new BadRequestException(
+          'Proof of payment must be attached to the payment request before a post-execution correction can be made.',
+        );
+      }
     }
+
     return this.bankAccounts.correctCrossCurrencyDebit({
       accountId: dto.sourceAccountId,
       previouslyDebited: dto.previouslyDebited,

@@ -1,5 +1,16 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+// Backend origin without the /api/vN path — used to construct static file URLs.
+const BACKEND_ORIGIN = API_URL.replace(/\/api\/v\d+\/?$/, '');
 const TOKEN_KEY = 'pcs.token';
+
+/**
+ * Returns a full URL for a stored file path.
+ * Paths starting with /uploads/ are relative to the backend origin.
+ */
+export function resolveFileUrl(fileUrl: string): string {
+  if (fileUrl.startsWith('/uploads/')) return `${BACKEND_ORIGIN}${fileUrl}`;
+  return fileUrl;
+}
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body?: unknown) {
@@ -50,6 +61,57 @@ function safeJson(s: string): unknown {
   }
 }
 
+async function uploadRequest<T>(path: string, file: File): Promise<T> {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : null;
+  if (!res.ok) {
+    const msg =
+      (body && typeof body === 'object' && 'message' in body
+        ? Array.isArray((body as { message: unknown }).message)
+          ? ((body as { message: string[] }).message.join(', '))
+          : String((body as { message: unknown }).message)
+        : res.statusText) || 'Upload failed';
+    throw new ApiError(res.status, msg, body);
+  }
+  return body as T;
+}
+
+async function formRequest<T>(path: string, formData: FormData): Promise<T> {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : null;
+  if (!res.ok) {
+    const msg =
+      (body && typeof body === 'object' && 'message' in body
+        ? Array.isArray((body as { message: unknown }).message)
+          ? ((body as { message: string[] }).message.join(', '))
+          : String((body as { message: unknown }).message)
+        : res.statusText) || 'Request failed';
+    throw new ApiError(res.status, msg, body);
+  }
+  return body as T;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
@@ -57,4 +119,7 @@ export const api = {
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PUT', body: body ? JSON.stringify(body) : undefined }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  upload: (file: File) =>
+    uploadRequest<{ url: string; fileName: string }>('/uploads/file', file),
+  postForm: <T>(path: string, formData: FormData) => formRequest<T>(path, formData),
 };

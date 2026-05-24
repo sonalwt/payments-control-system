@@ -118,16 +118,16 @@ export default function BankAccountsPage(): React.ReactElement {
   const { data: entities } = useQuery({
     queryKey: ['legal-entities', 'all'],
     queryFn: () =>
-      api.get<Paginated<LegalEntity>>(`/legal-entities?page=1&limit=200`),
+      api.get<Paginated<LegalEntity>>(`/legal-entities?page=1&limit=100`),
   });
   const { data: banks } = useQuery({
     queryKey: ['banks', 'all-active'],
-    queryFn: () => api.get<Paginated<Bank>>(`/banks?page=1&limit=200&isActive=true`),
+    queryFn: () => api.get<Paginated<Bank>>(`/banks?page=1&limit=100&isActive=true`),
   });
   const { data: currencies } = useQuery({
     queryKey: ['currencies', 'all-active'],
     queryFn: () =>
-      api.get<Paginated<Currency>>(`/currencies?page=1&limit=200&isActive=true`),
+      api.get<Paginated<Currency>>(`/currencies?page=1&limit=100&isActive=true`),
   });
 
   const createMutation = useMutation({
