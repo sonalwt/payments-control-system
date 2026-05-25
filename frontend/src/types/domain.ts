@@ -541,7 +541,53 @@ export interface PaymentRequest extends AuditFields {
 }
 
 // -----------------------------------------------------------------------
-// Section 7 — Proof-of-Payment Exception Reports
+// Section 7 — Incoming Receipts (separate domain; not a PaymentRequest)
+// -----------------------------------------------------------------------
+
+export type IncomingReceiptStatus =
+  | 'DRAFT'
+  | 'AWAITING_RECEIPT'
+  | 'RECEIVED'
+  | 'CANCELLED';
+
+export interface IncomingReceiptDocument {
+  id: string;
+  incomingReceiptId: string;
+  documentCode: string;
+  documentLabel?: string | null;
+  fileName: string;
+  fileUrl: string;
+  fileSizeBytes?: number | null;
+  mimeType?: string | null;
+  uploadedBy?: string | null;
+  uploadedAt: string;
+  createdAt: string;
+}
+
+export interface IncomingReceipt extends AuditFields {
+  receiptNumber: string;
+  legalEntityId: string;
+  legalEntity?: LegalEntity;
+  counterpartyId: string;
+  counterparty?: Counterparty;
+  receiveFromAccountId: string;
+  receiveFromAccount?: BankAccount;
+  expectedAmount: string;
+  expectedCurrencyCode: string;
+  purposeDescription?: string | null;
+  status: IncomingReceiptStatus;
+  submittedAt?: string | null;
+  receivedAt?: string | null;
+  receivedAmount?: string | null;
+  receivedCurrencyCode?: string | null;
+  inwardBankReference?: string | null;
+  receivedRemarks?: string | null;
+  cancellationReason?: string | null;
+  documents?: IncomingReceiptDocument[];
+}
+
+// -----------------------------------------------------------------------
+// Section 7 (legacy heading) — Proof-of-Payment Exception Reports
 // -----------------------------------------------------------------------
 
 export interface ExceptionReportItem {
