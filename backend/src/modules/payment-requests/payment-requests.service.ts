@@ -191,6 +191,15 @@ export class PaymentRequestsService {
     const pr = await this.requireById(id, true);
     this.assertStatus(pr, 'DRAFT', 'submit');
 
+    // §6 — Beneficiary account must be ACTIVE before a payment request can
+    // be submitted. Check this first — no point validating documents if the
+    // account is blocked (PENDING_ACTIVATION or INACTIVE).
+    if (pr.beneficiaryAccount && pr.beneficiaryAccount.status !== 'ACTIVE') {
+      throw new BadRequestException(
+        `The selected beneficiary account is in status "${pr.beneficiaryAccount.status}" and cannot be used until it is ACTIVE.`,
+      );
+    }
+
     // §4.1 — Enforce threshold-based document policy before allowing submission.
     const documentPolicy = await this.repo.findDocumentPolicyByPaymentType(pr.paymentTypeCode);
     if (documentPolicy.length > 0) {
@@ -208,15 +217,6 @@ export class PaymentRequestsService {
           `The following required document(s) must be attached before submitting: ${missing.join(', ')}.`,
         );
       }
-    }
-
-    // §6 — Beneficiary account must be ACTIVE before a payment request can
-    // be submitted. PENDING_ACTIVATION (cooling-off) and INACTIVE accounts
-    // are not permitted as payment destinations.
-    if (pr.beneficiaryAccount && pr.beneficiaryAccount.status !== 'ACTIVE') {
-      throw new BadRequestException(
-        `The selected beneficiary account is in status "${pr.beneficiaryAccount.status}" and cannot be used until it is ACTIVE.`,
-      );
     }
 
     // §6.5/§4.2 — Check whether the beneficiary or counterparty country is
@@ -358,6 +358,17 @@ export class PaymentRequestsService {
     }
 
     await this.assertCanActOnStep(currentStep, userId, pr.legalEntityId);
+
+    // §6.5 — final approver must acknowledge sanctions risk in writing
+    if (pr.sanctionWarning && !dto.sanctionAcknowledgement?.trim()) {
+      throw new BadRequestException(
+        'This payment involves a sanctioned country. ' +
+        'You must provide a written acknowledgement (sanctionAcknowledgement) before approving.',
+      );
+    }
+    if (pr.sanctionWarning && dto.sanctionAcknowledgement) {
+      pr.sanctionOverrideReason = dto.sanctionAcknowledgement;
+    }
 
     currentStep.decision = 'APPROVED';
     currentStep.decidedBy = userId;

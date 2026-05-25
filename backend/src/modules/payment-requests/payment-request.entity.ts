@@ -176,6 +176,13 @@ export class PaymentRequest extends BaseEntity {
   @Column({ name: 'sanction_warning', type: 'boolean', default: false })
   sanctionWarning!: boolean;
 
+  /**
+   * §6.5 — Written acknowledgement from the final approver when
+   * sanction_warning is true. Required before approval registers.
+   */
+  @Column({ name: 'sanction_override_reason', type: 'text', nullable: true })
+  sanctionOverrideReason?: string | null;
+
   /** §6 — Destination beneficiary account from the verified master. */
   @Column({ name: 'beneficiary_account_id', type: 'uuid', nullable: true })
   beneficiaryAccountId?: string | null;

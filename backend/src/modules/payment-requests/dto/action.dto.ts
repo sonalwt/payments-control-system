@@ -14,6 +14,15 @@ export class ApprovePaymentRequestDto {
   @IsOptional()
   @MaxLength(1000)
   comments?: string;
+
+  /**
+   * §6.5 — Required when the payment request has sanction_warning = true.
+   * The final approver must explicitly acknowledge the sanctions risk in writing.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(2000)
+  sanctionAcknowledgement?: string;
 }
 
 /** POST /payment-requests/:id/reject */

@@ -8,7 +8,8 @@ import { Currency } from '../currencies/currency.entity';
 export type BeneficiaryAccountStatus = 'PENDING_ACTIVATION' | 'ACTIVE' | 'INACTIVE';
 
 @Entity({ name: 'beneficiary_accounts' })
-@Unique('uq_bene_account_bank', ['bankId', 'accountNumber'])
+// Per-owner unique indices are enforced in the DB (uq_bene_cp_bank, uq_bene_emp_bank).
+// The global unique was removed to allow copy-from-verified (§6.3 same-group copy rule).
 @Index('idx_bene_counterparty', ['counterpartyId'])
 @Index('idx_bene_employee', ['employeeId'])
 @Index('idx_bene_status', ['status'])

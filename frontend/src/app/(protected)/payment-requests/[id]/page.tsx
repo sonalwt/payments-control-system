@@ -15,7 +15,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import Link from 'next/link';
-import { api, resolveFileUrl } from '@/lib/api';
+import { api, friendlyError, resolveFileUrl } from '@/lib/api';
 import type {
   BankAccount,
   Paginated,
@@ -82,6 +82,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
 
   // Form fields
   const [approveComment, setApproveComment] = useState('');
+  const [sanctionAcknowledgement, setSanctionAcknowledgement] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [withdrawReason, setWithdrawReason] = useState('');
   const [cancelReason, setCancelReason] = useState('');
@@ -162,44 +163,26 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['payment-requests', id] });
 
-  /**
-   * Maps raw backend error messages to clear, user-friendly descriptions.
-   */
-  function friendlyApprovalError(raw: string): string {
-    if (raw.includes('do not hold the required role')) {
-      return 'You do not have the required approval role for this legal entity. Ask your administrator to assign the correct role to your account.';
-    }
-    if (raw.includes('not the designated approver')) {
-      return 'This step is assigned to a specific user and you are not that user. Please ask the designated approver to action this request.';
-    }
-    if (raw.includes('No pending approval step')) {
-      return 'This step has already been actioned by someone else. Please refresh the page to see the latest status.';
-    }
-    if (raw.includes('PENDING_APPROVAL status')) {
-      return 'This request is no longer awaiting approval. Please refresh the page.';
-    }
-    if (raw.includes('minimum balance')) {
-      return 'The selected source account does not have sufficient balance to release this payment.';
-    }
-    return raw;
-  }
-
   const submitMutation = useMutation({
     mutationFn: () => api.post<PaymentRequest>(`/payment-requests/${id}/submit`),
     onSuccess: () => { invalidate(); toast({ title: 'Submitted for approval', variant: 'success' }); },
-    onError: (e: Error) => toast({ title: 'Submit failed', description: friendlyApprovalError(e.message), variant: 'error' }),
+    onError: (e: Error) => toast({ title: 'Submit failed', description: friendlyError(e), variant: 'error' }),
   });
 
   const approveMutation = useMutation({
     mutationFn: () =>
-      api.post<PaymentRequest>(`/payment-requests/${id}/approve`, { comments: approveComment }),
+      api.post<PaymentRequest>(`/payment-requests/${id}/approve`, {
+        comments: approveComment,
+        sanctionAcknowledgement: sanctionAcknowledgement.trim() || undefined,
+      }),
     onSuccess: () => {
       invalidate();
       void qc.invalidateQueries({ queryKey: ['payment-requests', id, 'approvals'] });
       setApproveOpen(false);
+      setSanctionAcknowledgement('');
       toast({ title: 'Approved successfully', variant: 'success' });
     },
-    onError: (e: Error) => toast({ title: 'Approval failed', description: friendlyApprovalError(e.message), variant: 'error' }),
+    onError: (e: Error) => toast({ title: 'Approval failed', description: friendlyError(e), variant: 'error' }),
   });
 
   const rejectMutation = useMutation({
@@ -211,7 +194,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       setRejectOpen(false);
       toast({ title: 'Request rejected', variant: 'success' });
     },
-    onError: (e: Error) => toast({ title: 'Rejection failed', description: friendlyApprovalError(e.message), variant: 'error' }),
+    onError: (e: Error) => toast({ title: 'Rejection failed', description: friendlyError(e), variant: 'error' }),
   });
 
   const withdrawMutation = useMutation({
@@ -222,7 +205,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       setWithdrawOpen(false);
       toast({ title: 'Request withdrawn', variant: 'success' });
     },
-    onError: (e: Error) => toast({ title: 'Withdraw failed', description: friendlyApprovalError(e.message), variant: 'error' }),
+    onError: (e: Error) => toast({ title: 'Withdraw failed', description: friendlyError(e), variant: 'error' }),
   });
 
   const cancelMutation = useMutation({
@@ -233,7 +216,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       setCancelOpen(false);
       toast({ title: 'Request cancelled', variant: 'success' });
     },
-    onError: (e: Error) => toast({ title: 'Cancel failed', description: friendlyApprovalError(e.message), variant: 'error' }),
+    onError: (e: Error) => toast({ title: 'Cancel failed', description: friendlyError(e), variant: 'error' }),
   });
 
   const releaseMutation = useMutation({
@@ -247,7 +230,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       setReleaseOpen(false);
       toast({ title: 'Released to bank', variant: 'success' });
     },
-    onError: (e: Error) => toast({ title: 'Release failed', description: friendlyApprovalError(e.message), variant: 'error' }),
+    onError: (e: Error) => toast({ title: 'Release failed', description: friendlyError(e), variant: 'error' }),
   });
 
   const markPaidMutation = useMutation({
@@ -262,7 +245,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       setPaidOpen(false);
       toast({ title: 'Marked as Paid', variant: 'success' });
     },
-    onError: (e: Error) => toast({ title: 'Mark paid failed', description: friendlyApprovalError(e.message), variant: 'error' }),
+    onError: (e: Error) => toast({ title: 'Mark paid failed', description: friendlyError(e), variant: 'error' }),
   });
 
   if (isLoading) {
@@ -686,17 +669,59 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       {/* ------------------------------------------------------------------ */}
 
       {/* Approve */}
-      <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
-        <DialogContent>
+      <Dialog open={approveOpen} onOpenChange={(o) => {
+        setApproveOpen(o);
+        if (!o) { setApproveComment(''); setSanctionAcknowledgement(''); }
+      }}>
+        <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Approve this request?</DialogTitle></DialogHeader>
-          <div className="space-y-2">
-            <Label>Comments (optional)</Label>
-            <Textarea value={approveComment} onChange={(e) => setApproveComment(e.target.value)}
-              placeholder="Add a note…" rows={3} />
+          <div className="space-y-4">
+            {/* §6.5 — Sanction acknowledgement required when sanctionWarning = true */}
+            {pr?.sanctionWarning && (
+              <div className="flex items-start gap-3 rounded-md border border-red-300 bg-red-50 p-3 dark:bg-red-950/30">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                <div className="space-y-1 text-sm text-red-800 dark:text-red-400">
+                  <p className="font-semibold">Sanctions Warning — Acknowledgement Required</p>
+                  <p className="text-xs">
+                    This payment involves a sanctioned country. You must provide a written acknowledgement
+                    before your approval can be recorded. The acknowledgement will be stored against this
+                    payment request for audit purposes (§6.5).
+                  </p>
+                </div>
+              </div>
+            )}
+            {pr?.sanctionWarning && (
+              <div className="space-y-1.5">
+                <Label htmlFor="sanctionAck">
+                  Sanction Acknowledgement <span className="text-red-500">*</span>
+                </Label>
+                <Textarea
+                  id="sanctionAck"
+                  value={sanctionAcknowledgement}
+                  onChange={(e) => setSanctionAcknowledgement(e.target.value)}
+                  placeholder="State your written acknowledgement of the sanctions risk and the business justification for proceeding…"
+                  rows={3}
+                />
+                {!sanctionAcknowledgement.trim() && (
+                  <p className="text-xs text-red-500">Required — cannot approve without acknowledgement.</p>
+                )}
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label>Comments (optional)</Label>
+              <Textarea value={approveComment} onChange={(e) => setApproveComment(e.target.value)}
+                placeholder="Add a note…" rows={3} />
+            </div>
           </div>
           <DialogFooter className="gap-2">
             <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-            <Button onClick={() => approveMutation.mutate()} disabled={approveMutation.isPending}>
+            <Button
+              onClick={() => approveMutation.mutate()}
+              disabled={
+                approveMutation.isPending ||
+                (!!pr?.sanctionWarning && !sanctionAcknowledgement.trim())
+              }
+            >
               <CheckCircle2 className="mr-1 h-4 w-4" />
               {approveMutation.isPending ? 'Approving…' : 'Approve'}
             </Button>

@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, Eye, XCircle } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Ban, CheckCircle2, Eye, XCircle } from 'lucide-react';
 import Link from 'next/link';
-import { api, resolveFileUrl } from '@/lib/api';
+import { api, friendlyError, resolveFileUrl } from '@/lib/api';
 import type {
   BeneficiaryAccountChangeRequest,
   ChangeRequestStatus,
@@ -65,6 +65,14 @@ const TYPE_STYLE: Record<ChangeRequestType, string> = {
   ADD: 'bg-green-500/10 text-green-700',
   MODIFY: 'bg-amber-500/10 text-amber-700',
   DEACTIVATE: 'bg-red-500/10 text-red-700',
+};
+
+const REQUIRED_DOC_CODES = ['CANCELLED_CHEQUE', 'BANK_LETTER', 'SOURCE_CORRESPONDENCE'] as const;
+
+const REQUIRED_DOC_LABELS: Record<string, string> = {
+  CANCELLED_CHEQUE: 'Cancelled Cheque',
+  BANK_LETTER: 'Bank Letter',
+  SOURCE_CORRESPONDENCE: 'Source Correspondence',
 };
 
 // ─── sub-components ───────────────────────────────────────────────────────────
@@ -147,6 +155,7 @@ function DetailDialog({
   const [verificationNotes, setVerificationNotes] = useState('');
   const [callbackEvidence, setCallbackEvidence] = useState('');
   const [approveNotes, setApproveNotes] = useState('');
+  const [sanctionAck, setSanctionAck] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [rejectOpen, setRejectOpen] = useState(false);
 
@@ -154,6 +163,7 @@ function DetailDialog({
     setVerificationNotes('');
     setCallbackEvidence('');
     setApproveNotes('');
+    setSanctionAck('');
     setRejectReason('');
     setRejectOpen(false);
     onClose();
@@ -171,13 +181,14 @@ function DetailDialog({
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Verify failed', description: err.message, variant: 'error' }),
+      toast({ title: 'Verify failed', description: friendlyError(err), variant: 'error' }),
   });
 
   const approveMutation = useMutation({
     mutationFn: () =>
       api.post(`/beneficiary-accounts/change-requests/${request.id}/approve`, {
         notes: approveNotes.trim() || undefined,
+        sanctionAcknowledgement: sanctionAck.trim() || undefined,
       }),
     onSuccess: () => {
       toast({ title: 'Request approved', variant: 'success' });
@@ -185,7 +196,7 @@ function DetailDialog({
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Approve failed', description: err.message, variant: 'error' }),
+      toast({ title: 'Approve failed', description: friendlyError(err), variant: 'error' }),
   });
 
   const rejectMutation = useMutation({
@@ -199,8 +210,29 @@ function DetailDialog({
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Reject failed', description: err.message, variant: 'error' }),
+      toast({ title: 'Reject failed', description: friendlyError(err), variant: 'error' }),
   });
+
+  const cancelMutation = useMutation({
+    mutationFn: () =>
+      api.post(`/beneficiary-accounts/change-requests/${request.id}/cancel`, {}),
+    onSuccess: () => {
+      toast({ title: 'Request cancelled', variant: 'success' });
+      onActionSuccess();
+      handleClose();
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Cancel failed', description: friendlyError(err), variant: 'error' }),
+  });
+
+  const needsCallback = request.changeType !== 'DEACTIVATE';
+  const canVerify = !needsCallback || callbackEvidence.trim().length > 0;
+
+  const presentDocCodes = new Set(request.documents?.map((d) => d.documentCode) ?? []);
+  const missingDocs =
+    needsCallback
+      ? REQUIRED_DOC_CODES.filter((code) => !presentDocCodes.has(code))
+      : [];
 
   const accountLabel =
     request.beneficiaryAccount
@@ -226,6 +258,42 @@ function DetailDialog({
         </DialogHeader>
 
         <div className="space-y-6">
+
+          {/* §6.4 — Anomaly alert */}
+          {request.anomalyFlag && (
+            <div className="flex gap-3 rounded-md border border-red-300 bg-red-50 p-3 text-red-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">Anomaly Detected</p>
+                {request.anomalyNotes
+                  ? request.anomalyNotes.split('\n').map((note, i) => (
+                      <p key={i} className="text-xs">{note}</p>
+                    ))
+                  : <p className="text-xs">One or more anomaly signals were triggered on this request.</p>}
+              </div>
+            </div>
+          )}
+
+          {/* §6.5 — Sanctioned-country warning */}
+          {request.sanctionWarning && (
+            <div className="flex gap-3 rounded-md border border-orange-400 bg-orange-50 p-3 text-orange-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">Sanctioned Country Warning</p>
+                <p className="text-xs">
+                  The proposed beneficiary country is on the sanctioned-country list.
+                  Every reviewer must be aware of this risk. The final approver must
+                  provide a written acknowledgement before approval can be registered.
+                </p>
+                {request.sanctionOverrideReason && (
+                  <p className="text-xs mt-1">
+                    <span className="font-medium">Approver acknowledgement:</span>{' '}
+                    {request.sanctionOverrideReason}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Core details */}
           <section className="space-y-3">
@@ -372,6 +440,35 @@ function DetailDialog({
               <p className="text-xs text-muted-foreground">
                 You cannot verify a request you created.
               </p>
+
+              {/* §6.2 — Required documents checklist for ADD / MODIFY */}
+              {needsCallback && (
+                <div className="rounded-md border bg-muted/30 p-3 space-y-1.5">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Required Documents
+                  </p>
+                  {REQUIRED_DOC_CODES.map((code) => {
+                    const present = presentDocCodes.has(code);
+                    return (
+                      <div key={code} className="flex items-center gap-2 text-xs">
+                        {present
+                          ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                          : <XCircle className="h-3.5 w-3.5 text-red-500" />}
+                        <span className={present ? 'text-green-700' : 'text-red-600 font-medium'}>
+                          {REQUIRED_DOC_LABELS[code]}
+                        </span>
+                        {!present && <span className="text-red-500 italic">(missing)</span>}
+                      </div>
+                    );
+                  })}
+                  {missingDocs.length > 0 && (
+                    <p className="text-xs text-red-600 mt-1">
+                      The server will reject verification until all required documents are uploaded.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="verNotes">Verification Notes</Label>
@@ -384,7 +481,9 @@ function DetailDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="callbackEv">Callback Evidence</Label>
+                  <Label htmlFor="callbackEv">
+                    Callback Evidence{needsCallback && <span className="ml-0.5 text-red-500">*</span>}
+                  </Label>
                   <Textarea
                     id="callbackEv"
                     value={callbackEvidence}
@@ -392,12 +491,24 @@ function DetailDialog({
                     placeholder="Reference or details of callback performed…"
                     rows={2}
                   />
+                  {needsCallback && !callbackEvidence.trim() && (
+                    <p className="text-xs text-red-500">Required for ADD / MODIFY requests.</p>
+                  )}
                 </div>
               </div>
-              <div className="flex justify-end">
+              <div className="flex items-center justify-between">
+                <Button
+                  variant="outline"
+                  className="border-red-300 text-red-700"
+                  onClick={() => cancelMutation.mutate()}
+                  disabled={cancelMutation.isPending}
+                >
+                  <Ban className="mr-1.5 h-4 w-4" />
+                  {cancelMutation.isPending ? 'Cancelling…' : 'Cancel Request'}
+                </Button>
                 <Button
                   onClick={() => verifyMutation.mutate()}
-                  disabled={verifyMutation.isPending}
+                  disabled={verifyMutation.isPending || !canVerify}
                 >
                   <CheckCircle2 className="mr-1.5 h-4 w-4" />
                   {verifyMutation.isPending ? 'Verifying…' : 'Verify'}
@@ -425,10 +536,33 @@ function DetailDialog({
                       rows={2}
                     />
                   </div>
-                  <div className="flex items-center gap-2">
+
+                  {/* §6.5 — sanction acknowledgement required when warning is set */}
+                  {request.sanctionWarning && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="sanctionAck">
+                        Sanction Acknowledgement <span className="text-destructive">*</span>
+                      </Label>
+                      <Textarea
+                        id="sanctionAck"
+                        value={sanctionAck}
+                        onChange={(e) => setSanctionAck(e.target.value)}
+                        placeholder="Provide your written acknowledgement that this beneficiary is in a sanctioned country and approval is authorised…"
+                        rows={3}
+                        className={!sanctionAck.trim() ? 'border-orange-400 focus-visible:ring-orange-400' : ''}
+                      />
+                      {!sanctionAck.trim() && (
+                        <p className="text-xs text-orange-700">
+                          Required — approval cannot be registered without this acknowledgement.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       onClick={() => approveMutation.mutate()}
-                      disabled={approveMutation.isPending}
+                      disabled={approveMutation.isPending || (request.sanctionWarning && !sanctionAck.trim())}
                       className="border-green-300 text-green-700"
                       variant="outline"
                     >
@@ -442,6 +576,15 @@ function DetailDialog({
                     >
                       <XCircle className="mr-1.5 h-4 w-4" />
                       Reject
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="ml-auto border-orange-300 text-orange-700"
+                      onClick={() => cancelMutation.mutate()}
+                      disabled={cancelMutation.isPending}
+                    >
+                      <Ban className="mr-1.5 h-4 w-4" />
+                      {cancelMutation.isPending ? 'Cancelling…' : 'Cancel Request'}
                     </Button>
                   </div>
                 </div>
@@ -552,13 +695,14 @@ export default function BeneficiaryAccountChangeRequestsPage(): React.ReactEleme
               <TableHead className="w-32">Created At</TableHead>
               <TableHead>Verified By</TableHead>
               <TableHead className="w-40">Status</TableHead>
+              <TableHead className="w-12 text-center" title="Anomaly">⚠</TableHead>
               <TableHead className="w-20 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-12 text-center text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
@@ -586,6 +730,13 @@ export default function BeneficiaryAccountChangeRequestsPage(): React.ReactEleme
                   <TableCell>
                     <StatusBadge status={req.status} />
                   </TableCell>
+                  <TableCell className="text-center">
+                    {req.anomalyFlag && (
+                      <span title="Anomaly detected">
+                        <AlertTriangle className="inline-block h-4 w-4 text-red-500" />
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
                     <Button
                       size="sm"
@@ -601,7 +752,7 @@ export default function BeneficiaryAccountChangeRequestsPage(): React.ReactEleme
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-12 text-center text-muted-foreground">
                   No change requests found.
                 </TableCell>
               </TableRow>

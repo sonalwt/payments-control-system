@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS beneficiary_accounts (
     -- INACTIVE:           deactivated by change request or admin override.
     status                VARCHAR(25) NOT NULL DEFAULT 'PENDING_ACTIVATION',
     cooling_off_until     TIMESTAMPTZ,
+    account_direction     VARCHAR(15) NOT NULL DEFAULT 'PAY_TO',
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at            TIMESTAMPTZ,
