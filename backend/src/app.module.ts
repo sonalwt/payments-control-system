@@ -36,6 +36,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { StatementUploadsModule } from './modules/statement-uploads/statement-uploads.module';
 import { PayrollBatchesModule } from './modules/payroll-batches/payroll-batches.module';
 import { EmployeeBankAccountChangesModule } from './modules/employee-bank-account-changes/employee-bank-account-changes.module';
+import { IncomingReceiptsModule } from './modules/incoming-receipts/incoming-receipts.module';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { EmployeeBankAccountChangesModule } from './modules/employee-bank-accoun
     UploadsModule,
     PayrollBatchesModule,
     EmployeeBankAccountChangesModule,
+    IncomingReceiptsModule,
   ],
 })
 export class AppModule {}

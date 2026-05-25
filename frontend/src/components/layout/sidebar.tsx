@@ -64,9 +64,10 @@ const GROUPS: NavGroup[] = [
   {
     label: 'Payments',
     icon: FileStack,
-    // All authenticated users can see Payment Requests.
+    // All authenticated users can see Payment Requests and Incoming Receipts.
     items: [
       { href: '/payment-requests', label: 'Payment Requests', icon: FileStack },
+      { href: '/incoming-receipts', label: 'Incoming Receipts', icon: HandCoins },
     ],
   },
   {
