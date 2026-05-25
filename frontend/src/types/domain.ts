@@ -474,6 +474,14 @@ export interface BeneficiaryAccountChangeRequest extends AuditFields {
   rejectedBy?: string | null;
   rejectedAt?: string | null;
   rejectionReason?: string | null;
+  /** §6.4 — True when at least one anomaly signal fired on creation. */
+  anomalyFlag: boolean;
+  /** §6.4 — Pipe-separated list of anomaly signals. */
+  anomalyNotes?: string | null;
+  /** §6.5 — True when the proposed beneficiary country is sanctioned. */
+  sanctionWarning: boolean;
+  /** §6.5 — Written acknowledgement from the final approver when sanctionWarning is true. */
+  sanctionOverrideReason?: string | null;
 }
 
 // -----------------------------------------------------------------------
@@ -521,6 +529,8 @@ export interface PaymentRequest extends AuditFields {
    * sanctioned-country list at the time of submission.
    */
   sanctionWarning?: boolean;
+  /** §6.5 — Written acknowledgement from the final approver when sanctionWarning is true. */
+  sanctionOverrideReason?: string | null;
   /**
    * §2.5/§2.6 — True once this request's debit has been reconciled against an
    * uploaded bank statement. Post-execution amount correction is blocked.

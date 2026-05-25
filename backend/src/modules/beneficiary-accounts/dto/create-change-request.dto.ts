@@ -1,5 +1,6 @@
 import {
   IsEnum,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -25,6 +26,7 @@ export class CreateChangeRequestDto {
   beneficiaryAccountId?: string;
 
   /** For ADD: full proposed account data. For MODIFY: fields to change. */
+  @IsObject()
   proposedData!: Record<string, unknown>;
 
   @IsArray()

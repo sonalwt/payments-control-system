@@ -37,6 +37,22 @@ export class BeneficiaryAccountChangeRequest extends BaseEntity {
   @Column({ name: 'documents', type: 'jsonb', default: '[]' })
   documents!: Array<{ documentCode: string; fileName: string; fileUrl: string; mimeType?: string }>;
 
+  /** §6.4 — Set to true when at least one anomaly signal fires on creation. */
+  @Column({ name: 'anomaly_flag', type: 'boolean', default: false })
+  anomalyFlag!: boolean;
+
+  /** §6.4 — Pipe-separated list of anomaly signals that fired. */
+  @Column({ name: 'anomaly_notes', type: 'text', nullable: true })
+  anomalyNotes?: string | null;
+
+  /** §6.5 — True when the proposed beneficiary country is in the sanctioned-country master. */
+  @Column({ name: 'sanction_warning', type: 'boolean', default: false })
+  sanctionWarning!: boolean;
+
+  /** §6.5 — Written acknowledgement from the final approver when sanctionWarning is true. */
+  @Column({ name: 'sanction_override_reason', type: 'text', nullable: true })
+  sanctionOverrideReason?: string | null;
+
   @Column({ name: 'requested_by', type: 'uuid' })
   requestedBy!: string;
 

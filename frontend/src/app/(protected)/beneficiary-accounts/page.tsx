@@ -4,15 +4,17 @@ import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Clock,
+  Copy,
   Paperclip,
   Pencil,
   Plus,
   Shield,
   Trash2,
+  Unlock,
   X,
   Zap,
 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, friendlyError } from '@/lib/api';
 import type {
   Bank,
   BeneficiaryAccount,
@@ -29,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Table,
   TableBody,
@@ -39,6 +42,7 @@ import {
 } from '@/components/ui/table';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -243,8 +247,23 @@ function AccountForm({
     mimeType: '',
   });
 
+  const [docErrors, setDocErrors] = useState<Record<string, boolean>>({});
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    // All 3 supporting documents are mandatory for ADD / MODIFY (§6.2)
+    const missing: Record<string, boolean> = {
+      CANCELLED_CHEQUE: !cancelledCheque.fileName,
+      BANK_LETTER: !bankLetter.fileName,
+      SOURCE_CORRESPONDENCE: !sourceCorrespondence.fileName,
+    };
+    if (Object.values(missing).some(Boolean)) {
+      setDocErrors(missing);
+      return;
+    }
+    setDocErrors({});
+
     const proposedData: ProposedData = {
       accountHolderName: accountHolderName.trim(),
       accountNumber: accountNumber.trim(),
@@ -487,26 +506,46 @@ function AccountForm({
 
       {/* Documents */}
       <div className="space-y-2">
-        <Label className="text-sm font-medium">Supporting Documents</Label>
+        <Label className="text-sm font-medium">
+          Supporting Documents <span className="text-destructive">*</span>
+        </Label>
+        <p className="text-xs text-muted-foreground">
+          All three documents are required before this request can be verified.
+        </p>
         <div className="space-y-2 rounded-md border p-3">
-          <FileUploadField
-            label="Cancelled Cheque"
-            documentCode="CANCELLED_CHEQUE"
-            doc={cancelledCheque}
-            onChange={setCancelledCheque}
-          />
-          <FileUploadField
-            label="Bank Letter"
-            documentCode="BANK_LETTER"
-            doc={bankLetter}
-            onChange={setBankLetter}
-          />
-          <FileUploadField
-            label="Source Correspondence"
-            documentCode="SOURCE_CORRESPONDENCE"
-            doc={sourceCorrespondence}
-            onChange={setSourceCorrespondence}
-          />
+          <div>
+            <FileUploadField
+              label="Cancelled Cheque"
+              documentCode="CANCELLED_CHEQUE"
+              doc={cancelledCheque}
+              onChange={(d) => { setCancelledCheque(d); setDocErrors((prev) => ({ ...prev, CANCELLED_CHEQUE: false })); }}
+            />
+            {docErrors.CANCELLED_CHEQUE && (
+              <p className="mt-0.5 text-xs text-destructive">Cancelled Cheque is required.</p>
+            )}
+          </div>
+          <div>
+            <FileUploadField
+              label="Bank Letter"
+              documentCode="BANK_LETTER"
+              doc={bankLetter}
+              onChange={(d) => { setBankLetter(d); setDocErrors((prev) => ({ ...prev, BANK_LETTER: false })); }}
+            />
+            {docErrors.BANK_LETTER && (
+              <p className="mt-0.5 text-xs text-destructive">Bank Letter is required.</p>
+            )}
+          </div>
+          <div>
+            <FileUploadField
+              label="Source Correspondence"
+              documentCode="SOURCE_CORRESPONDENCE"
+              doc={sourceCorrespondence}
+              onChange={(d) => { setSourceCorrespondence(d); setDocErrors((prev) => ({ ...prev, SOURCE_CORRESPONDENCE: false })); }}
+            />
+            {docErrors.SOURCE_CORRESPONDENCE && (
+              <p className="mt-0.5 text-xs text-destructive">Source Correspondence is required.</p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -522,6 +561,182 @@ function AccountForm({
   );
 }
 
+// ─── copy from verified dialog ────────────────────────────────────────────────
+
+interface CopyFromVerifiedDialogProps {
+  source: BeneficiaryAccount;
+  counterparties: Counterparty[];
+  employees: Employee[];
+  submitting: boolean;
+  onSubmit: (counterpartyId?: string, employeeId?: string) => void;
+  onClose: () => void;
+}
+
+function CopyFromVerifiedDialog({
+  source,
+  counterparties,
+  employees,
+  submitting,
+  onSubmit,
+  onClose,
+}: CopyFromVerifiedDialogProps): React.ReactElement {
+  const [ownerType, setOwnerType] = useState<'counterparty' | 'employee'>('counterparty');
+  const [counterpartyId, setCounterpartyId] = useState('');
+  const [employeeId, setEmployeeId] = useState('');
+
+  const canSubmit = ownerType === 'counterparty' ? !!counterpartyId : !!employeeId;
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Copy Account to Another Owner</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <p className="text-sm text-muted-foreground">
+            Copies <span className="font-medium">{source.accountHolderName}</span> ({source.accountNumber})
+            to a new owner. The copy will be immediately ACTIVE with no cooling-off period (§6.3 same-group rule).
+          </p>
+          <div className="space-y-1.5">
+            <Label>Target Owner Type</Label>
+            <div className="flex gap-4">
+              <label className="flex cursor-pointer items-center gap-1.5 text-sm">
+                <input
+                  type="radio"
+                  name="copyOwnerType"
+                  value="counterparty"
+                  checked={ownerType === 'counterparty'}
+                  onChange={() => { setOwnerType('counterparty'); setEmployeeId(''); }}
+                />
+                Counterparty
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5 text-sm">
+                <input
+                  type="radio"
+                  name="copyOwnerType"
+                  value="employee"
+                  checked={ownerType === 'employee'}
+                  onChange={() => { setOwnerType('employee'); setCounterpartyId(''); }}
+                />
+                Employee
+              </label>
+            </div>
+          </div>
+          {ownerType === 'counterparty' ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="copyCpId">Target Counterparty *</Label>
+              <select
+                id="copyCpId"
+                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                value={counterpartyId}
+                onChange={(e) => setCounterpartyId(e.target.value)}
+              >
+                <option value="">— select counterparty —</option>
+                {counterparties.filter((c) => c.isActive).map((c) => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label htmlFor="copyEmpId">Target Employee *</Label>
+              <select
+                id="copyEmpId"
+                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                value={employeeId}
+                onChange={(e) => setEmployeeId(e.target.value)}
+              >
+                <option value="">— select employee —</option>
+                {employees.filter((e) => e.isActive).map((e) => (
+                  <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          <DialogClose asChild>
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+          </DialogClose>
+          <Button
+            disabled={submitting || !canSubmit}
+            onClick={() =>
+              onSubmit(
+                ownerType === 'counterparty' ? counterpartyId : undefined,
+                ownerType === 'employee' ? employeeId : undefined,
+              )
+            }
+          >
+            <Copy className="mr-1.5 h-4 w-4" />
+            {submitting ? 'Copying…' : 'Copy Account'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── override cooling-off dialog ──────────────────────────────────────────────
+
+interface OverrideCoolingOffDialogProps {
+  account: BeneficiaryAccount;
+  submitting: boolean;
+  onSubmit: (reason: string) => void;
+  onClose: () => void;
+}
+
+function OverrideCoolingOffDialog({
+  account,
+  submitting,
+  onSubmit,
+  onClose,
+}: OverrideCoolingOffDialogProps): React.ReactElement {
+  const [reason, setReason] = useState('');
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Override Cooling-off Period</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <p className="text-sm text-muted-foreground">
+            Force-activates <span className="font-medium">{account.accountHolderName}</span> ({account.accountNumber})
+            immediately, bypassing the cooling-off window
+            {account.coolingOffUntil && (
+              <> (expires {new Date(account.coolingOffUntil).toLocaleString()})</>
+            )}.
+            This action is logged to the audit trail (§6.3).
+          </p>
+          <div className="space-y-1.5">
+            <Label htmlFor="overrideReason">Justification *</Label>
+            <Textarea
+              id="overrideReason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="State the business reason for bypassing the cooling-off period…"
+              rows={3}
+            />
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <DialogClose asChild>
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+          </DialogClose>
+          <Button
+            variant="destructive"
+            disabled={submitting || !reason.trim()}
+            onClick={() => onSubmit(reason.trim())}
+          >
+            <Unlock className="mr-1.5 h-4 w-4" />
+            {submitting ? 'Overriding…' : 'Force Activate'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── page ─────────────────────────────────────────────────────────────────────
 
 export default function BeneficiaryAccountsPage(): React.ReactElement {
@@ -530,6 +745,8 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
   const [ownerTypeFilter, setOwnerTypeFilter] = useState<'counterparty' | 'employee' | ''>('');
   const [createOpen, setCreateOpen] = useState(false);
   const [modifying, setModifying] = useState<BeneficiaryAccount | null>(null);
+  const [copying, setCopying] = useState<BeneficiaryAccount | null>(null);
+  const [overriding, setOverriding] = useState<BeneficiaryAccount | null>(null);
 
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -606,7 +823,7 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
       toast({ title: 'Change request submitted', variant: 'success' });
     },
     onError: (err: Error) =>
-      toast({ title: 'Submit failed', description: err.message, variant: 'error' }),
+      toast({ title: 'Submit failed', description: friendlyError(err), variant: 'error' }),
   });
 
   const modifyMutation = useMutation({
@@ -629,7 +846,7 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
       toast({ title: 'Modify change request submitted', variant: 'success' });
     },
     onError: (err: Error) =>
-      toast({ title: 'Submit failed', description: err.message, variant: 'error' }),
+      toast({ title: 'Submit failed', description: friendlyError(err), variant: 'error' }),
   });
 
   const deactivateMutation = useMutation({
@@ -645,7 +862,7 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
       toast({ title: 'Deactivate change request submitted', variant: 'success' });
     },
     onError: (err: Error) =>
-      toast({ title: 'Submit failed', description: err.message, variant: 'error' }),
+      toast({ title: 'Submit failed', description: friendlyError(err), variant: 'error' }),
   });
 
   const activateMutation = useMutation({
@@ -656,7 +873,38 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
       toast({ title: 'Account activated', variant: 'success' });
     },
     onError: (err: Error) =>
-      toast({ title: 'Activate failed', description: err.message, variant: 'error' }),
+      toast({ title: 'Activate failed', description: friendlyError(err), variant: 'error' }),
+  });
+
+  const copyMutation = useMutation({
+    mutationFn: ({
+      id,
+      counterpartyId,
+      employeeId,
+    }: {
+      id: string;
+      counterpartyId?: string;
+      employeeId?: string;
+    }) => api.post(`/beneficiary-accounts/${id}/copy`, { counterpartyId, employeeId }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [KEY] });
+      setCopying(null);
+      toast({ title: 'Account copied — now active', variant: 'success' });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Copy failed', description: friendlyError(err), variant: 'error' }),
+  });
+
+  const overrideMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post(`/beneficiary-accounts/${id}/override-cooling-off`, { reason }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [KEY] });
+      setOverriding(null);
+      toast({ title: 'Cooling-off overridden — account now active', variant: 'success' });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Override failed', description: friendlyError(err), variant: 'error' }),
   });
 
   function canActivate(account: BeneficiaryAccount): boolean {
@@ -857,6 +1105,29 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
                           Activate
                         </Button>
                       )}
+                      {account.status === 'PENDING_ACTIVATION' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-xs text-orange-700 border-orange-300 hover:bg-orange-50"
+                          title="Force activate (override cooling-off)"
+                          onClick={() => setOverriding(account)}
+                        >
+                          <Unlock className="mr-1 h-3 w-3" />
+                          Force
+                        </Button>
+                      )}
+                      {account.status === 'ACTIVE' && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          title="Copy to another owner"
+                          onClick={() => setCopying(account)}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                       <Button
                         size="icon"
                         variant="ghost"
@@ -926,6 +1197,30 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* §6.3 — Copy from Verified dialog */}
+      {copying && (
+        <CopyFromVerifiedDialog
+          source={copying}
+          counterparties={counterparties}
+          employees={employees}
+          submitting={copyMutation.isPending}
+          onSubmit={(counterpartyId, employeeId) =>
+            copyMutation.mutate({ id: copying.id, counterpartyId, employeeId })
+          }
+          onClose={() => setCopying(null)}
+        />
+      )}
+
+      {/* §6.3 — Override cooling-off dialog */}
+      {overriding && (
+        <OverrideCoolingOffDialog
+          account={overriding}
+          submitting={overrideMutation.isPending}
+          onSubmit={(reason) => overrideMutation.mutate({ id: overriding.id, reason })}
+          onClose={() => setOverriding(null)}
+        />
+      )}
     </div>
   );
 }
