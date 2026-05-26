@@ -1,0 +1,4 @@
+Value Date,Description,Debit,Credit,Reference,Balance
+2026-05-20,Vendor payment to ACME Corp,15000.00,,UTR240520001,485000.00
+2026-05-21,Customer remittance from XYZ Ltd,,25000.00,FT24052100123,510000.00
+2026-05-22,Bank charges,250.00,,CHG-20250522,509750.00

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  AlertTriangle,
   Building2,
   Layers,
   Globe,
@@ -110,6 +111,7 @@ const GROUPS: NavGroup[] = [
       { href: '/banks', label: 'Banks', icon: Landmark },
       { href: '/bank-accounts', label: 'Bank Accounts', icon: CreditCard },
       { href: '/statement-uploads', label: 'Statement Uploads', icon: UploadCloud },
+      { href: '/reconciliation-exceptions', label: 'Reconciliation Exceptions', icon: AlertTriangle },
     ],
   },
   {
