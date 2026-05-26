@@ -13,9 +13,18 @@ import {
   PaginatedResult,
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { RoleCode } from '../../common/enums/role.enum';
+
+/** §9.4 — Roles that may see chairman-designated account statement uploads. */
+const CHAIRMAN_EXECUTION_ROLES: string[] = [
+  RoleCode.PAYMENTS_MAKER,
+  RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
+];
 
 interface UploadQuery extends PaginationQueryDto {
   bankAccountId?: string;
+  userRoles?: string[];
 }
 
 @Injectable()
@@ -87,7 +96,7 @@ export class StatementUploadsService {
   }
 
   async findAll(query: UploadQuery): Promise<PaginatedResult<StatementUpload>> {
-    const { page = 1, limit = 20, bankAccountId } = query;
+    const { page = 1, limit = 20, bankAccountId, userRoles = [] } = query;
 
     const qb = this.repo
       .createQueryBuilder('su')
@@ -101,6 +110,13 @@ export class StatementUploadsService {
 
     if (bankAccountId) {
       qb.andWhere('su.bankAccountId = :bankAccountId', { bankAccountId });
+    }
+
+    // §9.4 — Hide uploads belonging to chairman-designated accounts from roles
+    // that do not participate in chairman payment execution.
+    const canSeeChairman = CHAIRMAN_EXECUTION_ROLES.some((r) => userRoles.includes(r));
+    if (!canSeeChairman) {
+      qb.andWhere('ba.is_chairman_designated = FALSE');
     }
 
     const [data, total] = await qb.getManyAndCount();

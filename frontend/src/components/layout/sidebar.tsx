@@ -36,6 +36,7 @@ import {
   HandCoins,
   UsersRound,
   Layers2,
+  LockKeyhole,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -47,6 +48,9 @@ import {
   HR_WORKFLOW_ROLES,
   PAYMENT_REQUEST_VIEW_ROLES,
   RECONCILIATION_VIEW_ROLES,
+  CHAIRMAN_PAYMENT_ROLES,
+  CHAIRMAN_EXECUTION_ROLES,
+  CHAIRMAN_BENEFICIARY_ROLES,
 } from '@/lib/roles';
 
 type Icon = React.ComponentType<{ className?: string }>;
@@ -54,6 +58,8 @@ interface NavItem {
   href: string;
   label: string;
   icon: Icon;
+  /** When set, item is only shown to users holding at least one of these roles. */
+  allowedRoles?: readonly string[];
 }
 interface NavGroup {
   label: string;
@@ -148,6 +154,34 @@ const GROUPS: NavGroup[] = [
       { href: '/exception-reports', label: 'Exception Reports', icon: ClipboardList },
     ],
   },
+  {
+    // §9 — Chairman payments: confidential, chain-free. CHAIRMAN initiates;
+    // Maker / Checker / Head handle execution. Beneficiary list is hidden from
+    // non-execution roles.
+    label: 'Chairman Payments',
+    icon: LockKeyhole,
+    allowedRoles: CHAIRMAN_PAYMENT_ROLES,
+    items: [
+      {
+        href: '/chairman-payments',
+        label: 'Payment Queue',
+        icon: FileStack,
+        allowedRoles: CHAIRMAN_EXECUTION_ROLES,
+      },
+      {
+        href: '/chairman-beneficiaries',
+        label: 'Beneficiaries',
+        icon: BookUser,
+        allowedRoles: CHAIRMAN_EXECUTION_ROLES,
+      },
+      {
+        href: '/chairman-beneficiaries/change-requests',
+        label: 'Beneficiary Changes',
+        icon: ClipboardList,
+        allowedRoles: CHAIRMAN_BENEFICIARY_ROLES,
+      },
+    ],
+  },
 ];
 function isItemActive(pathname: string | null, href: string): boolean {
   return pathname === href || (pathname?.startsWith(`${href}/`) ?? false);
@@ -173,7 +207,7 @@ export function Sidebar(): React.ReactElement {
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
         <NavLink item={DASHBOARD} active={isItemActive(pathname, DASHBOARD.href)} />
         {visibleGroups.map((group) => (
-          <NavGroupSection key={group.label} group={group} pathname={pathname} />
+          <NavGroupSection key={group.label} group={group} pathname={pathname} userRoles={userRoles} />
         ))}
       </nav>
       <div className="border-t p-3">
@@ -197,11 +231,18 @@ export function Sidebar(): React.ReactElement {
 function NavGroupSection({
   group,
   pathname,
+  userRoles,
 }: {
   group: NavGroup;
   pathname: string | null;
+  userRoles: string[];
 }): React.ReactElement {
-  const hasActiveChild = group.items.some((it) => isItemActive(pathname, it.href));
+  // Filter items by per-item allowedRoles if present.
+  const visibleItems = group.items.filter(
+    (it) => !it.allowedRoles || it.allowedRoles.some((r) => userRoles.includes(r)),
+  );
+
+  const hasActiveChild = visibleItems.some((it) => isItemActive(pathname, it.href));
   const [open, setOpen] = useState<boolean>(hasActiveChild);
   const expanded = open || hasActiveChild;
   const Chevron = expanded ? ChevronDown : ChevronRight;
@@ -224,7 +265,7 @@ function NavGroupSection({
       </button>
       {expanded && (
         <div className="mt-1 space-y-1">
-          {group.items.map((item) => (
+          {visibleItems.map((item) => (
             <NavLink
               key={item.href}
               item={item}

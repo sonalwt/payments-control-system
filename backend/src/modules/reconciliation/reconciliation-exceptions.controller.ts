@@ -65,6 +65,7 @@ export class ReconciliationExceptionsController {
     @Query('exceptionType') exceptionType?: string,
     @Query('bankAccountId') bankAccountId?: string,
     @Query('statementUploadId') statementUploadId?: string,
+    @CurrentUser() user?: AuthenticatedUser,
   ) {
     return this.service.findAll({
       page: page ? Number(page) : 1,
@@ -73,6 +74,7 @@ export class ReconciliationExceptionsController {
       exceptionType: exceptionType as ReconciliationExceptionType | undefined,
       bankAccountId,
       statementUploadId,
+      userRoles: user?.roles ?? [],
     });
   }
 

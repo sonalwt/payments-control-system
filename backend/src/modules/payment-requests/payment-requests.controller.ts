@@ -26,6 +26,7 @@ import {
   ReleasePaymentRequestDto,
   WithdrawPaymentRequestDto,
 } from './dto/action.dto';
+import { ChairmanApproveDto, ChairmanPrepareDto, ChairmanVerifyDto } from './dto/chairman-action.dto';
 import { PaymentRequestStatus } from './payment-request.entity';
 
 interface AuthUser {
@@ -69,23 +70,32 @@ export class PaymentRequestsController {
     @Query('legalEntityId') legalEntityId?: string,
     @Query('counterpartyId') counterpartyId?: string,
     @Query('employeeId') employeeId?: string,
+    @Query('isChairmanPayment') isChairmanPayment?: string,
+    @CurrentUser() user?: AuthUser,
   ) {
-    return this.service.findAll({
-      page: page ? Number(page) : 1,
-      limit: limit ? Number(limit) : 20,
-      search,
-      status: status as PaymentRequestStatus | undefined,
-      paymentTypeCode,
-      legalEntityId,
-      counterpartyId,
-      employeeId,
-    });
+    return this.service.findAll(
+      {
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20,
+        search,
+        status: status as PaymentRequestStatus | undefined,
+        paymentTypeCode,
+        legalEntityId,
+        counterpartyId,
+        employeeId,
+        isChairmanPayment: isChairmanPayment as 'true' | 'false' | undefined,
+      },
+      user?.roles ?? [],
+    );
   }
 
   /** Get a single payment request with all relations. */
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.service.findOne(id);
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    return this.service.findOne(id, user?.roles ?? []);
   }
 
   /** Update a DRAFT payment request. */
@@ -225,6 +235,65 @@ export class PaymentRequestsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.service.markPaid(id, user.id, dto);
+  }
+
+  // -----------------------------------------------------------------------
+  // §9 — Chairman payment lifecycle
+  // -----------------------------------------------------------------------
+
+  /**
+   * DRAFT → AWAITING_MAKER_PREP.
+   * Skips the approval matrix entirely; only valid on chairman payment requests.
+   */
+  @Post(':id/chairman-submit')
+  @Roles(RoleCode.CHAIRMAN, RoleCode.SUPER_ADMIN)
+  chairmanSubmit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.service.chairmanSubmit(id, user.id);
+  }
+
+  /**
+   * AWAITING_MAKER_PREP → AWAITING_CHECKER_REVIEW.
+   * Payments Maker selects a chairman-designated source account.
+   */
+  @Post(':id/chairman-prepare')
+  @Roles(RoleCode.PAYMENTS_MAKER, RoleCode.SUPER_ADMIN)
+  chairmanPrepare(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ChairmanPrepareDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.service.chairmanPrepare(id, user.id, dto);
+  }
+
+  /**
+   * AWAITING_CHECKER_REVIEW → AWAITING_HEAD_APPROVAL.
+   * Payments Checker verifies documents (different person from Maker).
+   */
+  @Post(':id/chairman-verify')
+  @Roles(RoleCode.PAYMENTS_CHECKER, RoleCode.SUPER_ADMIN)
+  chairmanVerify(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ChairmanVerifyDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.service.chairmanVerify(id, user.id, dto);
+  }
+
+  /**
+   * AWAITING_HEAD_APPROVAL → AWAITING_PAYMENT_CONFIRMATION.
+   * Payments Head gives final execution approval.
+   */
+  @Post(':id/chairman-approve')
+  @Roles(RoleCode.PAYMENTS_HEAD, RoleCode.SUPER_ADMIN)
+  chairmanApprove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ChairmanApproveDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.service.chairmanApprove(id, user.id, dto);
   }
 
   // -----------------------------------------------------------------------

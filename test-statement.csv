@@ -1,9 +1,0 @@
-Value Date,Description,Debit,Credit,Reference,Balance
-2026-05-18,Vendor payment to ACME Corporation,15000.00,,UTR240518001,485000.00
-2026-05-19,Wire transfer to Global Services Ltd,7500.50,,UTR240519002,477499.50
-2026-05-20,Customer remittance from XYZ Trading Co,,25000.00,FT26052000123,502499.50
-2026-05-21,Payroll - May 2026 salary batch,42000.00,,SAL-2026-05,460499.50
-2026-05-22,Bank service charges,250.00,,CHG-260522,460249.50
-2026-05-23,Incoming wire from Stellar Industries,,18750.00,FT26052300456,479000.00
-2026-05-24,Office rent - Sterling Properties,12500.00,,UTR240524003,466500.00
-2026-05-25,Refund from BlueSky Vendors,,3200.00,REF-260525-A,469700.00

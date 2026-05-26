@@ -1,9 +1,10 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Plus, Upload } from 'lucide-react';
+import { AlertTriangle, Eye, Plus, Upload } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { LegalEntity, Paginated, PayrollBatch, PayrollBatchStatus } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
@@ -230,19 +231,20 @@ export default function PayrollBatchesPage() {
               <TableHead className="text-right">Total Net</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Flags</TableHead>
+              <TableHead className="w-16 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && batches.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                   No payroll batches found.
                 </TableCell>
               </TableRow>
@@ -269,6 +271,13 @@ export default function PayrollBatchesPage() {
                   {b.varianceFlag && (
                     <AlertTriangle className="h-4 w-4 text-amber-500" aria-label="Variance flag" />
                   )}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Link href={`/payroll-batches/${b.id}`} onClick={(e) => e.stopPropagation()}>
+                    <Button size="icon" variant="ghost" title="View">
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                  </Link>
                 </TableCell>
               </TableRow>
             ))}

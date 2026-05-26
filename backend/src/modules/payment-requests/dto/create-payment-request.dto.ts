@@ -111,4 +111,14 @@ export class CreatePaymentRequestDto {
   @Type(() => DocumentAttachmentDto)
   @IsOptional()
   documents?: DocumentAttachmentDto[];
+
+  /** §9 — Set to true to flag this as a confidential chairman payment. */
+  @IsBoolean()
+  @IsOptional()
+  isChairmanPayment?: boolean;
+
+  /** §9 — Required when isChairmanPayment = true. Must point to an ACTIVE chairman beneficiary. */
+  @IsUUID()
+  @IsOptional()
+  chairmanBeneficiaryId?: string;
 }

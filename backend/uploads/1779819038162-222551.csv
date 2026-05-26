@@ -1,0 +1,7 @@
+Date,Debit,Credit,Reference,Counterparty,Description,Balance
+2026-05-18,15000.00,,UTR240518001,Amazon Web Services,Payment to Amazon Web Services,10985000.00
+2026-05-19,7500.50,,UTR240519002,Amazon Web Services,Payment to Amazon Web Services,10977499.50
+2026-05-20,,25000.00,FT26052000123,Amazon Web Services,Receipt from Amazon Web Services,11002499.50
+2026-05-20,15000.00,,,Unknown Vendor,Duplicate amount no reference,10987499.50
+2026-05-21,99999.00,,GHOST-001,Shadow Corp,Unauthorised debit - no matching PR,10887499.50
+2026-05-21,,55000.00,UNKNOWN-CR-001,Unknown Sender,Unidentified inbound credit,10942499.50

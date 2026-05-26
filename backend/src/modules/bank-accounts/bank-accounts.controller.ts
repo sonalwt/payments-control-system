@@ -58,6 +58,7 @@ export class BankAccountsController {
       currencyId?: string;
       accountType?: BankAccountType;
       isActive?: 'true' | 'false';
+      isChairmanDesignated?: 'true' | 'false';
     },
   ) {
     return this.service.findAll(query);

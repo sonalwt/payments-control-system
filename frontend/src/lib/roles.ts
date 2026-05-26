@@ -137,3 +137,29 @@ export const RECONCILIATION_VIEW_ROLES: RoleCode[] = [
   RoleCode.GROUP_TREASURER,
   RoleCode.INTERNAL_AUDITOR,
 ];
+
+/** Section 9 — Chairman payment queue & beneficiary management. */
+export const CHAIRMAN_PAYMENT_ROLES: RoleCode[] = [
+  RoleCode.CHAIRMAN,
+  RoleCode.PAYMENTS_MAKER,
+  RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
+  RoleCode.SUPER_ADMIN,
+];
+
+/** Section 9 — Roles that can manage chairman beneficiary change requests. */
+export const CHAIRMAN_BENEFICIARY_ROLES: RoleCode[] = [
+  RoleCode.CHAIRMAN,
+  RoleCode.PAYMENTS_MAKER,
+  RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
+  RoleCode.SUPER_ADMIN,
+];
+
+/** Section 9 — Execution-only view (beneficiary queue, manage CRs). */
+export const CHAIRMAN_EXECUTION_ROLES: RoleCode[] = [
+  RoleCode.PAYMENTS_MAKER,
+  RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
+  RoleCode.SUPER_ADMIN,
+];

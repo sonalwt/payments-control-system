@@ -24,6 +24,13 @@ import {
 } from './dto/action.dto';
 import { ApprovalMatricesService } from '../approval-matrices/approval-matrices.service';
 import { BankAccountsService } from '../bank-accounts/bank-accounts.service';
+import { ChairmanBeneficiariesService } from '../chairman-beneficiaries/chairman-beneficiaries.service';
+import { RoleCode } from '../../common/enums/role.enum';
+import {
+  ChairmanApproveDto,
+  ChairmanPrepareDto,
+  ChairmanVerifyDto,
+} from './dto/chairman-action.dto';
 import {
   PaginatedResult,
   PaginationQueryDto,
@@ -35,6 +42,7 @@ interface PaymentRequestQuery extends PaginationQueryDto {
   legalEntityId?: string;
   counterpartyId?: string;
   employeeId?: string;
+  isChairmanPayment?: 'true' | 'false';
 }
 
 /** Non-terminal statuses that may still be acted on. */
@@ -43,6 +51,19 @@ const ACTIVE_STATUSES: PaymentRequestStatus[] = [
   'PENDING_APPROVAL',
   'APPROVED',
   'AWAITING_PAYMENT_CONFIRMATION',
+  'AWAITING_MAKER_PREP',
+  'AWAITING_CHECKER_REVIEW',
+  'AWAITING_HEAD_APPROVAL',
+];
+
+/**
+ * §9 — Roles that can see the full chairman beneficiary details.
+ * All other roles receive a masked/confidential view.
+ */
+const CHAIRMAN_CONFIDENTIAL_ROLES: string[] = [
+  RoleCode.PAYMENTS_MAKER,
+  RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
 ];
 
 @Injectable()
@@ -51,6 +72,7 @@ export class PaymentRequestsService {
     private readonly repo: PaymentRequestsRepository,
     private readonly approvalMatricesService: ApprovalMatricesService,
     private readonly bankAccountsService: BankAccountsService,
+    private readonly chairmanBeneficiariesService: ChairmanBeneficiariesService,
   ) {}
 
   // -----------------------------------------------------------------------
@@ -58,6 +80,21 @@ export class PaymentRequestsService {
   // -----------------------------------------------------------------------
 
   async create(dto: CreatePaymentRequestDto, userId: string): Promise<PaymentRequest> {
+    // §9 — chairman payments must reference an ACTIVE chairman beneficiary
+    if (dto.isChairmanPayment) {
+      if (!dto.chairmanBeneficiaryId) {
+        throw new BadRequestException(
+          'chairmanBeneficiaryId is required when isChairmanPayment is true.',
+        );
+      }
+      const ben = await this.chairmanBeneficiariesService.findOneAccount(dto.chairmanBeneficiaryId);
+      if (ben.status !== 'ACTIVE') {
+        throw new BadRequestException(
+          `Chairman beneficiary is in status "${ben.status}" and cannot be used until ACTIVE.`,
+        );
+      }
+    }
+
     const requestNumber = await this.generateRequestNumber();
 
     const entity = this.repo.create({
@@ -75,6 +112,8 @@ export class PaymentRequestsService {
       dueDate: dto.dueDate ?? null,
       status: 'DRAFT',
       isCrossCurrency: false,
+      isChairmanPayment: dto.isChairmanPayment ?? false,
+      chairmanBeneficiaryId: dto.chairmanBeneficiaryId ?? null,
       createdBy: userId,
       updatedBy: userId,
     });
@@ -89,7 +128,10 @@ export class PaymentRequestsService {
     return this.requireById(saved.id, true);
   }
 
-  async findAll(query: PaymentRequestQuery): Promise<PaginatedResult<PaymentRequest>> {
+  async findAll(
+    query: PaymentRequestQuery,
+    userRoles: string[] = [],
+  ): Promise<PaginatedResult<PaymentRequest>> {
     const {
       page = 1,
       limit = 20,
@@ -99,6 +141,7 @@ export class PaymentRequestsService {
       legalEntityId,
       counterpartyId,
       employeeId,
+      isChairmanPayment,
     } = query;
 
     const where: Record<string, unknown> = {};
@@ -107,6 +150,8 @@ export class PaymentRequestsService {
     if (legalEntityId) where.legalEntityId = legalEntityId;
     if (counterpartyId) where.counterpartyId = counterpartyId;
     if (employeeId) where.employeeId = employeeId;
+    if (isChairmanPayment === 'true') where.isChairmanPayment = true;
+    if (isChairmanPayment === 'false') where.isChairmanPayment = false;
 
     const baseWhere = search
       ? [
@@ -124,17 +169,20 @@ export class PaymentRequestsService {
         counterparty: true,
         employee: true,
         sourceAccount: { bank: true, currency: true },
+        chairmanBeneficiary: { bank: true, currency: true },
       },
       order: { createdAt: 'DESC' },
       skip: (page - 1) * limit,
       take: limit,
     });
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    const masked = data.map((pr) => this.maskChairmanBeneficiary(pr, userRoles));
+    return { data: masked, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async findOne(id: string): Promise<PaymentRequest> {
-    return this.requireById(id, true);
+  async findOne(id: string, userRoles: string[] = []): Promise<PaymentRequest> {
+    const pr = await this.requireById(id, true);
+    return this.maskChairmanBeneficiary(pr, userRoles);
   }
 
   async update(
@@ -190,6 +238,13 @@ export class PaymentRequestsService {
   async submit(id: string, userId: string): Promise<PaymentRequest> {
     const pr = await this.requireById(id, true);
     this.assertStatus(pr, 'DRAFT', 'submit');
+
+    // §9 — Chairman payments have their own submission route; block standard submit.
+    if (pr.isChairmanPayment) {
+      throw new BadRequestException(
+        'Chairman payments must be submitted via POST /:id/chairman-submit, not the standard submit endpoint.',
+      );
+    }
 
     // §6 — Beneficiary account must be ACTIVE before a payment request can
     // be submitted. Check this first — no point validating documents if the
@@ -473,6 +528,16 @@ export class PaymentRequestsService {
     const pr = await this.requireById(id);
     this.assertStatus(pr, 'APPROVED', 'release');
 
+    // §9 — Standard release must not use chairman-designated accounts; those
+    // are reserved for the chairman payment workflow.
+    const sourceAccount = await this.bankAccountsService.findOne(dto.sourceAccountId);
+    if ((sourceAccount as any).isChairmanDesignated && !pr.isChairmanPayment) {
+      throw new BadRequestException(
+        'Cannot use a chairman-designated account for a standard payment. ' +
+        'Chairman-designated accounts are reserved for the chairman payment workflow.',
+      );
+    }
+
     // The debit amount for the minimum-balance check:
     // for cross-currency payments use the indicative source-currency equivalent.
     const debitForCheck =
@@ -554,6 +619,183 @@ export class PaymentRequestsService {
   async getDocuments(id: string): Promise<PaymentRequestDocument[]> {
     await this.requireById(id);
     return this.repo.findDocuments(id);
+  }
+
+  // -----------------------------------------------------------------------
+  // §9 — Chairman Payment lifecycle
+  // -----------------------------------------------------------------------
+
+  /**
+   * DRAFT → AWAITING_MAKER_PREP.
+   * Skips the approval chain entirely. Freezes the chairman beneficiary
+   * data into beneficiarySnapshot at this point.
+   */
+  async chairmanSubmit(id: string, userId: string): Promise<PaymentRequest> {
+    const pr = await this.requireById(id, true);
+    this.assertStatus(pr, 'DRAFT', 'chairman-submit');
+
+    if (!pr.isChairmanPayment) {
+      throw new BadRequestException(
+        'This payment request is not a chairman payment. Use the standard submit endpoint.',
+      );
+    }
+
+    // Freeze chairman beneficiary into beneficiarySnapshot
+    if (pr.chairmanBeneficiary) {
+      pr.beneficiarySnapshot = {
+        id: pr.chairmanBeneficiary.id,
+        accountHolderName: pr.chairmanBeneficiary.accountHolderName,
+        accountNumber: pr.chairmanBeneficiary.accountNumber,
+        bankName: pr.chairmanBeneficiary.bankName ?? (pr.chairmanBeneficiary.bank as any)?.name ?? null,
+        swiftBic: pr.chairmanBeneficiary.swiftBic ?? null,
+        iban: pr.chairmanBeneficiary.iban ?? null,
+        countryCode: pr.chairmanBeneficiary.countryCode,
+        currencyCode: (pr.chairmanBeneficiary.currency as any)?.code ?? null,
+        capturedAt: new Date().toISOString(),
+      };
+    }
+
+    pr.status = 'AWAITING_MAKER_PREP';
+    pr.submittedAt = new Date();
+    pr.updatedBy = userId;
+    return this.repo.save(pr);
+  }
+
+  /**
+   * §9 — PAYMENTS_MAKER: AWAITING_MAKER_PREP → AWAITING_CHECKER_REVIEW.
+   * Selects a chairman-designated source account and validates balance.
+   */
+  async chairmanPrepare(
+    id: string,
+    userId: string,
+    dto: ChairmanPrepareDto,
+  ): Promise<PaymentRequest> {
+    const pr = await this.requireById(id, true);
+    this.assertStatus(pr, 'AWAITING_MAKER_PREP', 'chairman-prepare');
+
+    if (!pr.isChairmanPayment) {
+      throw new BadRequestException('This is not a chairman payment.');
+    }
+
+    const account = await this.bankAccountsService.findOne(dto.sourceAccountId);
+    if (!(account as any).isChairmanDesignated) {
+      throw new BadRequestException(
+        'A chairman-designated bank account is required for this step.',
+      );
+    }
+    if ((account as any).accountType !== 'CURRENT' || !(account as any).isActive) {
+      throw new BadRequestException(
+        'The selected account must be an active CURRENT account.',
+      );
+    }
+
+    const debitForCheck =
+      dto.isCrossCurrency && dto.indicativeSourceAmount
+        ? String(dto.indicativeSourceAmount)
+        : pr.amount;
+    await this.bankAccountsService.assertMinimumBalance(dto.sourceAccountId, debitForCheck);
+
+    pr.status = 'AWAITING_CHECKER_REVIEW';
+    pr.sourceAccountId = dto.sourceAccountId;
+    pr.isCrossCurrency = dto.isCrossCurrency ?? false;
+    pr.indicativeSourceAmount = dto.indicativeSourceAmount ? String(dto.indicativeSourceAmount) : null;
+    pr.makerNotes = dto.makerNotes ?? pr.makerNotes ?? null;
+    pr.makerPreparedAt = new Date();
+    pr.updatedBy = userId;
+    return this.repo.save(pr);
+  }
+
+  /**
+   * §9 — PAYMENTS_CHECKER: AWAITING_CHECKER_REVIEW → AWAITING_HEAD_APPROVAL.
+   * Maker-checker enforced: checker must differ from the user who prepared.
+   */
+  async chairmanVerify(
+    id: string,
+    userId: string,
+    dto: ChairmanVerifyDto,
+  ): Promise<PaymentRequest> {
+    const pr = await this.requireById(id, true);
+    this.assertStatus(pr, 'AWAITING_CHECKER_REVIEW', 'chairman-verify');
+
+    if (!pr.isChairmanPayment) {
+      throw new BadRequestException('This is not a chairman payment.');
+    }
+
+    // Maker-checker: the user who prepared the TT must not also verify it.
+    // We use updatedBy recorded on the AWAITING_CHECKER_REVIEW transition
+    // as a proxy for the maker who prepared.
+    if (pr.updatedBy === userId) {
+      throw new ForbiddenException(
+        'Maker-checker: the same user who prepared this TT cannot also verify it.',
+      );
+    }
+
+    pr.status = 'AWAITING_HEAD_APPROVAL';
+    pr.checkerVerifiedAt = new Date();
+    pr.checkerNotes = dto.checkerNotes;
+    pr.updatedBy = userId;
+    return this.repo.save(pr);
+  }
+
+  /**
+   * §9 — PAYMENTS_HEAD: AWAITING_HEAD_APPROVAL → AWAITING_PAYMENT_CONFIRMATION.
+   */
+  async chairmanApprove(
+    id: string,
+    userId: string,
+    dto: ChairmanApproveDto,
+  ): Promise<PaymentRequest> {
+    const pr = await this.requireById(id, true);
+    this.assertStatus(pr, 'AWAITING_HEAD_APPROVAL', 'chairman-approve');
+
+    if (!pr.isChairmanPayment) {
+      throw new BadRequestException('This is not a chairman payment.');
+    }
+
+    pr.status = 'AWAITING_PAYMENT_CONFIRMATION';
+    pr.headApprovedAt = new Date();
+    if (dto.comments) pr.makerNotes = dto.comments;
+    pr.updatedBy = userId;
+    return this.repo.save(pr);
+  }
+
+  // -----------------------------------------------------------------------
+  // §9 — Confidentiality mask
+  // -----------------------------------------------------------------------
+
+  /**
+   * §9.3 — Mask chairman beneficiary details for roles not in the
+   * confidential execution team (PAYMENTS_MAKER / CHECKER / HEAD).
+   */
+  private maskChairmanBeneficiary(pr: PaymentRequest, userRoles: string[]): PaymentRequest {
+    if (!pr.isChairmanPayment) return pr;
+
+    const canSee = CHAIRMAN_CONFIDENTIAL_ROLES.some((r) => userRoles.includes(r));
+    if (canSee) return pr;
+
+    const masked = {
+      accountHolderName: 'Confidential',
+      accountNumber: '****',
+      bankName: 'Confidential',
+      swiftBic: null,
+      iban: null,
+    };
+
+    if (pr.chairmanBeneficiary) {
+      (pr as any).chairmanBeneficiary = {
+        ...pr.chairmanBeneficiary,
+        ...masked,
+      };
+    }
+
+    if (pr.beneficiarySnapshot) {
+      pr.beneficiarySnapshot = {
+        ...pr.beneficiarySnapshot,
+        ...masked,
+      };
+    }
+
+    return pr;
   }
 
   // -----------------------------------------------------------------------

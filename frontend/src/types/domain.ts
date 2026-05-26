@@ -380,7 +380,11 @@ export type PaymentRequestStatus =
   | 'PAID'
   | 'REJECTED'
   | 'WITHDRAWN'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  // §9 — Chairman payment execution stages (chain-free).
+  | 'AWAITING_MAKER_PREP'
+  | 'AWAITING_CHECKER_REVIEW'
+  | 'AWAITING_HEAD_APPROVAL';
 
 export type ApprovalDecision = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -485,6 +489,65 @@ export interface BeneficiaryAccountChangeRequest extends AuditFields {
 }
 
 // -----------------------------------------------------------------------
+// Section 9 — Chairman Beneficiary Master
+// -----------------------------------------------------------------------
+
+export type ChairmanBeneficiaryStatus = 'PENDING_ACTIVATION' | 'ACTIVE' | 'INACTIVE';
+export type ChairmanCrType = 'ADD' | 'MODIFY' | 'DEACTIVATE';
+export type ChairmanCrStatus =
+  | 'PENDING_VERIFICATION'
+  | 'VERIFIED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+/** A confidential payment beneficiary — no counterparty/employee owner. */
+export interface ChairmanBeneficiary extends AuditFields {
+  accountHolderName: string;   // may be 'Confidential' when masked by the API
+  accountNumber: string;       // may be '****' when masked
+  bankId: string;
+  bank?: Bank;
+  bankName?: string | null;    // may be 'Confidential' when masked
+  branchName?: string | null;
+  swiftBic?: string | null;
+  iban?: string | null;
+  currencyId: string;
+  currency?: Currency;
+  countryCode: string;
+  status: ChairmanBeneficiaryStatus;
+  coolingOffUntil?: string | null;
+  anomalyFlag: boolean;
+  anomalyNotes?: string | null;
+  sanctionWarning: boolean;
+  sanctionOverrideReason?: string | null;
+}
+
+export interface ChairmanBeneficiaryChangeRequest extends AuditFields {
+  chairmanBeneficiaryId?: string | null;
+  chairmanBeneficiary?: ChairmanBeneficiary | null;
+  changeType: ChairmanCrType;
+  status: ChairmanCrStatus;
+  proposedData: Record<string, unknown>;
+  documents: Array<{ documentCode: string; fileName: string; fileUrl: string; mimeType?: string }>;
+  anomalyFlag: boolean;
+  anomalyNotes?: string | null;
+  sanctionWarning: boolean;
+  sanctionOverrideReason?: string | null;
+  requestedBy: string;
+  requester?: { id: string; fullName: string; email: string };
+  verifiedBy?: string | null;
+  verifier?: { id: string; fullName: string; email: string } | null;
+  verifiedAt?: string | null;
+  verificationNotes?: string | null;
+  callbackEvidence?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  rejectedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
+}
+
+// -----------------------------------------------------------------------
 
 export interface PaymentRequest extends AuditFields {
   requestNumber: string;
@@ -538,6 +601,15 @@ export interface PaymentRequest extends AuditFields {
   isAmountLocked?: boolean;
   approvals?: PaymentRequestApproval[];
   documents?: PaymentRequestDocument[];
+  // §9 — Chairman payment fields.
+  isChairmanPayment?: boolean;
+  chairmanBeneficiaryId?: string | null;
+  /** Full object when loaded with relations; may be masked for non-execution roles. */
+  chairmanBeneficiary?: ChairmanBeneficiary | null;
+  makerPreparedAt?: string | null;
+  checkerVerifiedAt?: string | null;
+  headApprovedAt?: string | null;
+  checkerNotes?: string | null;
 }
 
 // -----------------------------------------------------------------------

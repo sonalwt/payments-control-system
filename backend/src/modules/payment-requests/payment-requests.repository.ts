@@ -38,6 +38,7 @@ export class PaymentRequestsRepository {
             employee: true,
             sourceAccount: { bank: true, currency: true },
             beneficiaryAccount: { bank: true, currency: true, counterparty: true, employee: true },
+            chairmanBeneficiary: { bank: true, currency: true },
             approvals: true,
             documents: true,
           }

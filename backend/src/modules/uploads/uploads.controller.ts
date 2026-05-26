@@ -32,6 +32,10 @@ export class UploadsController {
           'image/jpeg',
           'image/png',
           'image/tiff',
+          'text/csv',
+          'application/csv',
+          'application/vnd.ms-excel',
+          'text/plain',
         ];
         if (allowed.includes(file.mimetype)) {
           cb(null, true);

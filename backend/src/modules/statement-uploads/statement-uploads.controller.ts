@@ -54,8 +54,9 @@ export class StatementUploadsController {
   )
   findAll(
     @Query() query: PaginationQueryDto & { bankAccountId?: string },
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.service.findAll(query);
+    return this.service.findAll({ ...query, userRoles: user.roles });
   }
 
   @Get(':id')

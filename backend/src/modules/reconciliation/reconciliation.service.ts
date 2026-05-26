@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -13,6 +14,14 @@ import { StatementCsvParser } from './statement-csv.parser';
 import { ReconciliationMatcherService } from './reconciliation-matcher.service';
 import { IngestCsvDto, IngestManualDto } from './dto/ingest.dto';
 import { ConfirmMatchDto, UnmatchLineDto } from './dto/match.dto';
+import { RoleCode } from '../../common/enums/role.enum';
+
+/** §9.4 — Roles that may see lines for chairman-designated bank accounts. */
+const CHAIRMAN_EXECUTION_ROLES: string[] = [
+  RoleCode.PAYMENTS_MAKER,
+  RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
+];
 
 /**
  * SOW §8.1 / §8.2 — Reconciliation orchestrator. Wraps the CSV parser and
@@ -158,8 +167,17 @@ export class ReconciliationService {
   // §8.2 — line view + confirm / unmatch
   // -------------------------------------------------------------------
 
-  async listLines(uploadId: string): Promise<StatementLine[]> {
-    await this.requireUpload(uploadId);
+  async listLines(uploadId: string, userRoles: string[] = []): Promise<StatementLine[]> {
+    const upload = await this.requireUpload(uploadId);
+
+    // §9.4 — Lines for chairman-designated accounts are visible only to the
+    // execution team (Maker / Checker / Head). Other roles receive an empty
+    // array rather than an error so the UI degrades gracefully.
+    if (upload.bankAccount?.isChairmanDesignated) {
+      const canSee = CHAIRMAN_EXECUTION_ROLES.some((r) => userRoles.includes(r));
+      if (!canSee) return [];
+    }
+
     return this.lineRepo.find({
       where: { statementUploadId: uploadId },
       relations: {

@@ -85,7 +85,7 @@ async function run(): Promise<void> {
   // ── Optional: full dummy data ──────────────────────────────────────────
   if (process.argv.includes('--all')) {
     const dbDir = path.join(__dirname);
-    const sqlFiles = ['seed_dummy.sql', 'seed_beneficiary_accounts.sql'];
+    const sqlFiles = ['seed_dummy.sql', 'seed_beneficiary_accounts.sql', 'seed_chairman_payments.sql'];
 
     for (const file of sqlFiles) {
       const filePath = path.join(dbDir, file);

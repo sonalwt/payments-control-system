@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Plus } from 'lucide-react';
+import { AlertTriangle, Eye, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import type {
   EbacChangeType,
@@ -273,19 +274,20 @@ export default function EmployeeBankAccountChangesPage() {
               <TableHead>Requested By</TableHead>
               <TableHead>Verified By</TableHead>
               <TableHead>Created</TableHead>
+              <TableHead className="w-16 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && changes.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                   No change requests found.
                 </TableCell>
               </TableRow>
@@ -320,6 +322,13 @@ export default function EmployeeBankAccountChangesPage() {
                 <TableCell className="text-sm text-muted-foreground">{c.verifiedBy ?? '—'}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {new Date(c.createdAt).toLocaleDateString()}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Link href={`/employee-bank-account-changes/${c.id}`} onClick={(e) => e.stopPropagation()}>
+                    <Button size="icon" variant="ghost" title="View">
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                  </Link>
                 </TableCell>
               </TableRow>
             ))}

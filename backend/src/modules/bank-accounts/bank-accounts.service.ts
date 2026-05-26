@@ -26,6 +26,7 @@ interface BankAccountQuery extends PaginationQueryDto {
   currencyId?: string;
   accountType?: BankAccountType;
   isActive?: 'true' | 'false';
+  isChairmanDesignated?: 'true' | 'false';
 }
 
 interface BalanceMovementInput {
@@ -119,6 +120,7 @@ export class BankAccountsService {
       currencyId,
       accountType,
       isActive,
+      isChairmanDesignated,
     } = query;
 
     const where: Record<string, unknown> = {};
@@ -128,6 +130,8 @@ export class BankAccountsService {
     if (accountType) where.accountType = accountType;
     if (isActive === 'true') where.isActive = true;
     if (isActive === 'false') where.isActive = false;
+    if (isChairmanDesignated === 'true') where.isChairmanDesignated = true;
+    if (isChairmanDesignated === 'false') where.isChairmanDesignated = false;
 
     const baseWhere = search
       ? [

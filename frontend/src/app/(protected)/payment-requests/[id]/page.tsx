@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock,
   FileText,
+  Lock,
   Paperclip,
   Send,
   X,
@@ -25,6 +26,8 @@ import type {
   PaymentRequestStatus,
   SanctionedCountry,
 } from '@/types/domain';
+import { useAuth } from '@/hooks/use-auth';
+import { RoleCode } from '@/lib/roles';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -49,6 +52,16 @@ const STATUS_STYLE: Record<PaymentRequestStatus, string> = {
   REJECTED: 'bg-red-500/10 text-red-700',
   WITHDRAWN: 'bg-muted text-muted-foreground',
   CANCELLED: 'bg-muted text-muted-foreground',
+  // §9 — Chairman payment execution stages
+  AWAITING_MAKER_PREP: 'bg-amber-600/10 text-amber-800',
+  AWAITING_CHECKER_REVIEW: 'bg-blue-600/10 text-blue-800',
+  AWAITING_HEAD_APPROVAL: 'bg-violet-500/10 text-violet-700',
+};
+
+const STATUS_LABEL: Partial<Record<PaymentRequestStatus, string>> = {
+  AWAITING_MAKER_PREP: 'Awaiting Preparation',
+  AWAITING_CHECKER_REVIEW: 'Awaiting Verification',
+  AWAITING_HEAD_APPROVAL: 'Awaiting Head Approval',
 };
 
 const DECISION_ICON = {
@@ -71,6 +84,16 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const router = useRouter();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
+
+  // §9 — Role-based flags for chairman payment UI gating
+  const userRoles: string[] = user?.roles ?? [];
+  const hasMakerRole = userRoles.includes(RoleCode.PAYMENTS_MAKER);
+  const hasCheckerRole = userRoles.includes(RoleCode.PAYMENTS_CHECKER);
+  const hasHeadRole = userRoles.includes(RoleCode.PAYMENTS_HEAD);
+  const isChairmanRole = userRoles.includes(RoleCode.CHAIRMAN);
+  const isSuperAdmin = userRoles.includes(RoleCode.SUPER_ADMIN);
+  const canSeeConfidential = hasMakerRole || hasCheckerRole || hasHeadRole || isSuperAdmin;
 
   // Dialog states
   const [approveOpen, setApproveOpen] = useState(false);
@@ -80,6 +103,12 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const [releaseOpen, setReleaseOpen] = useState(false);
   const [paidOpen, setPaidOpen] = useState(false);
 
+  // §9 — Chairman execution dialog states
+  const [chairmanSubmitOpen, setChairmanSubmitOpen] = useState(false);
+  const [chairmanPrepareOpen, setChairmanPrepareOpen] = useState(false);
+  const [chairmanVerifyOpen, setChairmanVerifyOpen] = useState(false);
+  const [chairmanApproveOpen, setChairmanApproveOpen] = useState(false);
+
   // Form fields
   const [approveComment, setApproveComment] = useState('');
   const [sanctionAcknowledgement, setSanctionAcknowledgement] = useState('');
@@ -88,6 +117,12 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const [cancelReason, setCancelReason] = useState('');
   const [releaseAccountId, setReleaseAccountId] = useState('');
   const [makerNotes, setMakerNotes] = useState('');
+
+  // §9 — Chairman execution form fields
+  const [chairmanSourceAccountId, setChairmanSourceAccountId] = useState('');
+  const [chairmanMakerNotes, setChairmanMakerNotes] = useState('');
+  const [checkerNotes, setCheckerNotes] = useState('');
+  const [chairmanApproveComments, setChairmanApproveComments] = useState('');
 
   // Maker verification checklist (Release to Bank step)
   const RELEASE_CHECKLIST = [
@@ -248,6 +283,70 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onError: (e: Error) => toast({ title: 'Mark paid failed', description: friendlyError(e), variant: 'error' }),
   });
 
+  // §9 — Chairman-designated accounts for the Prepare dialog
+  const { data: chairmanAccounts } = useQuery({
+    queryKey: ['bank-accounts-chairman', pr?.legalEntityId],
+    queryFn: () =>
+      api.get<Paginated<BankAccount>>(
+        `/bank-accounts?legalEntityId=${pr!.legalEntityId}&isChairmanDesignated=true&isActive=true&limit=100`,
+      ),
+    enabled: !!pr?.legalEntityId && !!pr.isChairmanPayment && chairmanPrepareOpen,
+  });
+
+  const chairmanSubmitMutation = useMutation({
+    mutationFn: () => api.post<PaymentRequest>(`/payment-requests/${id}/chairman-submit`),
+    onSuccess: () => {
+      invalidate();
+      setChairmanSubmitOpen(false);
+      toast({ title: 'Sent to Payments Team', variant: 'success' });
+    },
+    onError: (e: Error) => toast({ title: 'Submit failed', description: friendlyError(e), variant: 'error' }),
+  });
+
+  const chairmanPrepareMutation = useMutation({
+    mutationFn: () =>
+      api.post<PaymentRequest>(`/payment-requests/${id}/chairman-prepare`, {
+        sourceAccountId: chairmanSourceAccountId,
+        makerNotes: chairmanMakerNotes.trim() || undefined,
+      }),
+    onSuccess: () => {
+      invalidate();
+      setChairmanPrepareOpen(false);
+      setChairmanSourceAccountId('');
+      setChairmanMakerNotes('');
+      toast({ title: 'TT prepared', variant: 'success' });
+    },
+    onError: (e: Error) => toast({ title: 'Prepare failed', description: friendlyError(e), variant: 'error' }),
+  });
+
+  const chairmanVerifyMutation = useMutation({
+    mutationFn: () =>
+      api.post<PaymentRequest>(`/payment-requests/${id}/chairman-verify`, {
+        checkerNotes: checkerNotes.trim(),
+      }),
+    onSuccess: () => {
+      invalidate();
+      setChairmanVerifyOpen(false);
+      setCheckerNotes('');
+      toast({ title: 'Documents verified', variant: 'success' });
+    },
+    onError: (e: Error) => toast({ title: 'Verify failed', description: friendlyError(e), variant: 'error' }),
+  });
+
+  const chairmanApproveMutation = useMutation({
+    mutationFn: () =>
+      api.post<PaymentRequest>(`/payment-requests/${id}/chairman-approve`, {
+        comments: chairmanApproveComments.trim() || undefined,
+      }),
+    onSuccess: () => {
+      invalidate();
+      setChairmanApproveOpen(false);
+      setChairmanApproveComments('');
+      toast({ title: 'Execution approved', variant: 'success' });
+    },
+    onError: (e: Error) => toast({ title: 'Approve failed', description: friendlyError(e), variant: 'error' }),
+  });
+
   if (isLoading) {
     return (
       <div className="py-20 text-center text-muted-foreground">Loading…</div>
@@ -261,7 +360,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   }
 
   const accountOpts = bankAccounts?.data ?? [];
-  const isNonTerminal = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'AWAITING_PAYMENT_CONFIRMATION'].includes(pr.status);
+  const chairmanAccountOpts = chairmanAccounts?.data ?? [];
+  const isNonTerminal = [
+    'DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'AWAITING_PAYMENT_CONFIRMATION',
+    'AWAITING_MAKER_PREP', 'AWAITING_CHECKER_REVIEW', 'AWAITING_HEAD_APPROVAL',
+  ].includes(pr.status);
 
   return (
     <div className="space-y-6">
@@ -278,7 +381,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
             <span
               className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[pr.status]}`}
             >
-              {pr.status.replace(/_/g, ' ')}
+              {STATUS_LABEL[pr.status] ?? pr.status.replace(/_/g, ' ')}
             </span>
           </div>
           <p className="text-sm text-muted-foreground">
@@ -288,39 +391,75 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         </div>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-2">
-          {pr.status === 'DRAFT' && (
-            <Button
-              size="sm"
-              onClick={() => submitMutation.mutate()}
-              disabled={submitMutation.isPending}
-            >
-              <Send className="mr-1 h-4 w-4" />
-              {submitMutation.isPending ? 'Submitting…' : 'Submit for Approval'}
-            </Button>
-          )}
-          {pr.status === 'PENDING_APPROVAL' && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* ── Standard (non-chairman) flow ─────────────────────────── */}
+          {!pr.isChairmanPayment && (
             <>
-              <Button size="sm" variant="outline" className="text-green-700 border-green-300"
-                onClick={() => setApproveOpen(true)}>
-                <CheckCircle2 className="mr-1 h-4 w-4" /> Approve
-              </Button>
-              <Button size="sm" variant="outline" className="text-red-700 border-red-300"
-                onClick={() => setRejectOpen(true)}>
-                <XCircle className="mr-1 h-4 w-4" /> Reject
-              </Button>
+              {pr.status === 'DRAFT' && (
+                <Button
+                  size="sm"
+                  onClick={() => submitMutation.mutate()}
+                  disabled={submitMutation.isPending}
+                >
+                  <Send className="mr-1 h-4 w-4" />
+                  {submitMutation.isPending ? 'Submitting…' : 'Submit for Approval'}
+                </Button>
+              )}
+              {pr.status === 'PENDING_APPROVAL' && (
+                <>
+                  <Button size="sm" variant="outline" className="text-green-700 border-green-300"
+                    onClick={() => setApproveOpen(true)}>
+                    <CheckCircle2 className="mr-1 h-4 w-4" /> Approve
+                  </Button>
+                  <Button size="sm" variant="outline" className="text-red-700 border-red-300"
+                    onClick={() => setRejectOpen(true)}>
+                    <XCircle className="mr-1 h-4 w-4" /> Reject
+                  </Button>
+                </>
+              )}
+              {pr.status === 'APPROVED' && (
+                <Button size="sm" onClick={() => setReleaseOpen(true)}>
+                  <Send className="mr-1 h-4 w-4" /> Release to Bank
+                </Button>
+              )}
             </>
           )}
-          {pr.status === 'APPROVED' && (
-            <Button size="sm" onClick={() => setReleaseOpen(true)}>
-              <Send className="mr-1 h-4 w-4" /> Release to Bank
-            </Button>
+
+          {/* ── §9 Chairman flow ─────────────────────────────────────── */}
+          {pr.isChairmanPayment && (
+            <>
+              {pr.status === 'DRAFT' && (isChairmanRole || isSuperAdmin) && (
+                <Button size="sm" onClick={() => setChairmanSubmitOpen(true)}>
+                  <Send className="mr-1 h-4 w-4" /> Submit to Payments Team
+                </Button>
+              )}
+              {pr.status === 'AWAITING_MAKER_PREP' && (hasMakerRole || isSuperAdmin) && (
+                <Button size="sm" onClick={() => setChairmanPrepareOpen(true)}>
+                  <Send className="mr-1 h-4 w-4" /> Prepare TT
+                </Button>
+              )}
+              {pr.status === 'AWAITING_CHECKER_REVIEW' && (hasCheckerRole || isSuperAdmin) && (
+                <Button size="sm" variant="outline" className="text-blue-700 border-blue-300"
+                  onClick={() => setChairmanVerifyOpen(true)}>
+                  <CheckCircle2 className="mr-1 h-4 w-4" /> Verify Documents
+                </Button>
+              )}
+              {pr.status === 'AWAITING_HEAD_APPROVAL' && (hasHeadRole || isSuperAdmin) && (
+                <Button size="sm" variant="outline" className="text-violet-700 border-violet-300"
+                  onClick={() => setChairmanApproveOpen(true)}>
+                  <CheckCircle2 className="mr-1 h-4 w-4" /> Approve Execution
+                </Button>
+              )}
+            </>
           )}
+
+          {/* Mark as Paid — shared by both flows */}
           {pr.status === 'AWAITING_PAYMENT_CONFIRMATION' && (
             <Button size="sm" onClick={() => setPaidOpen(true)}>
               <CheckCircle2 className="mr-1 h-4 w-4" /> Mark as Paid
             </Button>
           )}
+
           {isNonTerminal && (
             <>
               <Button size="sm" variant="outline" onClick={() => setWithdrawOpen(true)}>
@@ -373,6 +512,43 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
                 {' · '}
                 {pr.beneficiaryAccount.countryCode}
               </p>
+            </div>
+          )}
+
+          {/* §9 — Chairman beneficiary (confidential; may be masked) */}
+          {pr.isChairmanPayment && pr.chairmanBeneficiary && (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                <Lock className="h-3 w-3" />
+                Chairman Beneficiary
+                {!canSeeConfidential && (
+                  <span className="ml-1 text-xs font-normal italic text-muted-foreground">
+                    (restricted)
+                  </span>
+                )}
+              </p>
+              {pr.chairmanBeneficiary.accountHolderName === 'Confidential' ? (
+                <p className="text-sm italic text-muted-foreground">
+                  <Lock className="mr-1.5 inline h-3.5 w-3.5" />
+                  Confidential — not visible to your role
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm font-medium">{pr.chairmanBeneficiary.accountHolderName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {pr.chairmanBeneficiary.bankName ?? pr.chairmanBeneficiary.bank?.name ?? '—'}
+                    {' · '}
+                    {pr.chairmanBeneficiary.accountNumber}
+                    {pr.chairmanBeneficiary.iban ? ` · IBAN: ${pr.chairmanBeneficiary.iban}` : ''}
+                    {pr.chairmanBeneficiary.swiftBic ? ` · SWIFT: ${pr.chairmanBeneficiary.swiftBic}` : ''}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {pr.chairmanBeneficiary.currency?.code ?? pr.chairmanBeneficiary.currencyId}
+                    {' · '}
+                    {pr.chairmanBeneficiary.countryCode}
+                  </p>
+                </>
+              )}
             </div>
           )}
           <Field label="Currency" value={pr.currencyCode} />
@@ -854,6 +1030,172 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
               disabled={releaseMutation.isPending || !releaseAccountId || !allReleaseChecked}>
               <Send className="mr-1 h-4 w-4" />
               {releaseMutation.isPending ? 'Releasing…' : 'Release'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── §9 Chairman Submit ─────────────────────────────────────────────── */}
+      <Dialog open={chairmanSubmitOpen} onOpenChange={setChairmanSubmitOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="h-4 w-4" />
+              Submit Chairman Payment
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will send the request directly to the Payments Team for preparation.
+            No approval matrix will be triggered.
+          </p>
+          <DialogFooter className="gap-2">
+            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
+            <Button
+              onClick={() => chairmanSubmitMutation.mutate()}
+              disabled={chairmanSubmitMutation.isPending}
+            >
+              <Send className="mr-1 h-4 w-4" />
+              {chairmanSubmitMutation.isPending ? 'Submitting…' : 'Submit'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── §9 Chairman Prepare (Maker) ────────────────────────────────────── */}
+      <Dialog open={chairmanPrepareOpen} onOpenChange={(o) => {
+        setChairmanPrepareOpen(o);
+        if (!o) { setChairmanSourceAccountId(''); setChairmanMakerNotes(''); }
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="h-4 w-4" />
+              Prepare TT — Chairman Payment
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Chairman-Designated Source Account *</Label>
+              <select
+                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                value={chairmanSourceAccountId}
+                onChange={(e) => setChairmanSourceAccountId(e.target.value)}
+              >
+                <option value="">— select —</option>
+                {chairmanAccountOpts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.nickname} — {a.currency?.code} — Bal: {Number(a.balance).toLocaleString()}
+                  </option>
+                ))}
+              </select>
+              {chairmanAccountOpts.length === 0 && (
+                <p className="text-xs text-muted-foreground">No chairman-designated accounts available.</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Maker Notes (optional)</Label>
+              <Textarea
+                value={chairmanMakerNotes}
+                onChange={(e) => setChairmanMakerNotes(e.target.value)}
+                placeholder="Notes for the checker…"
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
+            <Button
+              onClick={() => chairmanPrepareMutation.mutate()}
+              disabled={chairmanPrepareMutation.isPending || !chairmanSourceAccountId}
+            >
+              <Send className="mr-1 h-4 w-4" />
+              {chairmanPrepareMutation.isPending ? 'Preparing…' : 'Prepare TT'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── §9 Chairman Verify (Checker) ───────────────────────────────────── */}
+      <Dialog open={chairmanVerifyOpen} onOpenChange={(o) => {
+        setChairmanVerifyOpen(o);
+        if (!o) setCheckerNotes('');
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="h-4 w-4" />
+              Verify Documents — Chairman Payment
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              You cannot verify a payment you prepared (maker-checker separation).
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="checkerNotes">Checker Notes *</Label>
+              <Textarea
+                id="checkerNotes"
+                value={checkerNotes}
+                onChange={(e) => setCheckerNotes(e.target.value)}
+                placeholder="Document verification notes…"
+                rows={3}
+              />
+              {!checkerNotes.trim() && (
+                <p className="text-xs text-red-500">Checker notes are required.</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
+            <Button
+              onClick={() => chairmanVerifyMutation.mutate()}
+              disabled={chairmanVerifyMutation.isPending || !checkerNotes.trim()}
+              className="border-blue-300 text-blue-700"
+              variant="outline"
+            >
+              <CheckCircle2 className="mr-1 h-4 w-4" />
+              {chairmanVerifyMutation.isPending ? 'Verifying…' : 'Verify'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── §9 Chairman Approve (Head) ─────────────────────────────────────── */}
+      <Dialog open={chairmanApproveOpen} onOpenChange={(o) => {
+        setChairmanApproveOpen(o);
+        if (!o) setChairmanApproveComments('');
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="h-4 w-4" />
+              Approve Execution — Chairman Payment
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              This will move the request to Awaiting Payment Confirmation.
+            </p>
+            <div className="space-y-1.5">
+              <Label>Comments (optional)</Label>
+              <Textarea
+                value={chairmanApproveComments}
+                onChange={(e) => setChairmanApproveComments(e.target.value)}
+                placeholder="Add a comment…"
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
+            <Button
+              onClick={() => chairmanApproveMutation.mutate()}
+              disabled={chairmanApproveMutation.isPending}
+              className="border-violet-300 text-violet-700"
+              variant="outline"
+            >
+              <CheckCircle2 className="mr-1 h-4 w-4" />
+              {chairmanApproveMutation.isPending ? 'Approving…' : 'Approve Execution'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -20,12 +20,21 @@ import {
   PaginatedResult,
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { RoleCode } from '../../common/enums/role.enum';
+
+/** §9.4 — Roles that may see exceptions from chairman-designated accounts. */
+const CHAIRMAN_EXECUTION_ROLES: string[] = [
+  RoleCode.PAYMENTS_MAKER,
+  RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
+];
 
 interface ExceptionQuery extends PaginationQueryDto {
   status?: ReconciliationExceptionStatus;
   exceptionType?: ReconciliationExceptionType;
   bankAccountId?: string;
   statementUploadId?: string;
+  userRoles?: string[];
 }
 
 /**
@@ -54,6 +63,7 @@ export class ReconciliationExceptionsService {
       exceptionType,
       bankAccountId,
       statementUploadId,
+      userRoles = [],
     } = query;
 
     const qb = this.repo
@@ -72,6 +82,13 @@ export class ReconciliationExceptionsService {
     if (bankAccountId) qb.andWhere('re.bankAccountId = :bankAccountId', { bankAccountId });
     if (statementUploadId)
       qb.andWhere('re.statementUploadId = :statementUploadId', { statementUploadId });
+
+    // §9.4 — Exceptions from chairman-designated accounts are visible only to
+    // execution roles (Maker / Checker / Head).
+    const canSeeChairman = CHAIRMAN_EXECUTION_ROLES.some((r) => userRoles.includes(r));
+    if (!canSeeChairman) {
+      qb.andWhere('ba.is_chairman_designated = FALSE');
+    }
 
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };

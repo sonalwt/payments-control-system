@@ -13,6 +13,7 @@ import { Counterparty } from '../counterparties/counterparty.entity';
 import { Employee } from '../employees/employee.entity';
 import { BankAccount } from '../bank-accounts/bank-account.entity';
 import { BeneficiaryAccount } from '../beneficiary-accounts/beneficiary-account.entity';
+import { ChairmanBeneficiary } from '../chairman-beneficiaries/chairman-beneficiary.entity';
 import { PaymentRequestApproval } from './payment-request-approval.entity';
 import { PaymentRequestDocument } from './payment-request-document.entity';
 
@@ -24,7 +25,10 @@ export type PaymentRequestStatus =
   | 'PAID'
   | 'REJECTED'
   | 'WITHDRAWN'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'AWAITING_MAKER_PREP'
+  | 'AWAITING_CHECKER_REVIEW'
+  | 'AWAITING_HEAD_APPROVAL';
 
 /**
  * SOW §3 — Payment Lifecycle
@@ -32,6 +36,10 @@ export type PaymentRequestStatus =
  * Canonical status machine:
  *   DRAFT → PENDING_APPROVAL → APPROVED → AWAITING_PAYMENT_CONFIRMATION → PAID
  *   Any non-terminal status may also → REJECTED | WITHDRAWN | CANCELLED
+ *
+ * §9 — Chairman payment lifecycle (bypasses approval chain):
+ *   DRAFT → AWAITING_MAKER_PREP → AWAITING_CHECKER_REVIEW → AWAITING_HEAD_APPROVAL
+ *        → AWAITING_PAYMENT_CONFIRMATION → PAID
  */
 @Entity({ name: 'payment_requests' })
 @Index('idx_payment_requests_status', ['status'])
@@ -39,7 +47,7 @@ export type PaymentRequestStatus =
 @Index('idx_payment_requests_type', ['paymentTypeCode'])
 @Check(
   'chk_pr_status',
-  `status IN ('DRAFT','PENDING_APPROVAL','APPROVED','AWAITING_PAYMENT_CONFIRMATION','PAID','REJECTED','WITHDRAWN','CANCELLED')`,
+  `status IN ('DRAFT','PENDING_APPROVAL','APPROVED','AWAITING_PAYMENT_CONFIRMATION','PAID','REJECTED','WITHDRAWN','CANCELLED','AWAITING_MAKER_PREP','AWAITING_CHECKER_REVIEW','AWAITING_HEAD_APPROVAL')`,
 )
 @Check('chk_pr_amount_positive', `amount > 0`)
 export class PaymentRequest extends BaseEntity {
@@ -198,6 +206,36 @@ export class PaymentRequest extends BaseEntity {
   /** §4.2 — Snapshot of beneficiary account data frozen at submission (immutable). */
   @Column({ name: 'beneficiary_snapshot', type: 'jsonb', nullable: true })
   beneficiarySnapshot?: Record<string, unknown> | null;
+
+  // ── §9 Chairman Payment fields ─────────────────────────────────────────────
+
+  /** §9 — True when this request follows the chairman-payment confidential workflow. */
+  @Column({ name: 'is_chairman_payment', type: 'boolean', default: false })
+  isChairmanPayment!: boolean;
+
+  /** §9 — FK to the segregated chairman beneficiary master. */
+  @Column({ name: 'chairman_beneficiary_id', type: 'uuid', nullable: true })
+  chairmanBeneficiaryId?: string | null;
+
+  @ManyToOne(() => ChairmanBeneficiary, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'chairman_beneficiary_id' })
+  chairmanBeneficiary?: ChairmanBeneficiary | null;
+
+  /** §9 — Set when PAYMENTS_MAKER moves from AWAITING_MAKER_PREP → AWAITING_CHECKER_REVIEW. */
+  @Column({ name: 'maker_prepared_at', type: 'timestamptz', nullable: true })
+  makerPreparedAt?: Date | null;
+
+  /** §9 — Set when PAYMENTS_CHECKER moves to AWAITING_HEAD_APPROVAL. */
+  @Column({ name: 'checker_verified_at', type: 'timestamptz', nullable: true })
+  checkerVerifiedAt?: Date | null;
+
+  /** §9 — Set when PAYMENTS_HEAD approves. */
+  @Column({ name: 'head_approved_at', type: 'timestamptz', nullable: true })
+  headApprovedAt?: Date | null;
+
+  /** §9 — Notes added by the checker when verifying documents. */
+  @Column({ name: 'checker_notes', type: 'text', nullable: true })
+  checkerNotes?: string | null;
 
   @OneToMany(() => PaymentRequestApproval, (a) => a.paymentRequest, {
     cascade: ['insert', 'update'],

@@ -38,6 +38,7 @@ import { PayrollBatchesModule } from './modules/payroll-batches/payroll-batches.
 import { EmployeeBankAccountChangesModule } from './modules/employee-bank-account-changes/employee-bank-account-changes.module';
 import { IncomingReceiptsModule } from './modules/incoming-receipts/incoming-receipts.module';
 import { ReconciliationModule } from './modules/reconciliation/reconciliation.module';
+import { ChairmanBeneficiariesModule } from './modules/chairman-beneficiaries/chairman-beneficiaries.module';
 
 @Module({
   imports: [
@@ -91,6 +92,7 @@ import { ReconciliationModule } from './modules/reconciliation/reconciliation.mo
     EmployeeBankAccountChangesModule,
     IncomingReceiptsModule,
     ReconciliationModule,
+    ChairmanBeneficiariesModule,
   ],
 })
 export class AppModule {}

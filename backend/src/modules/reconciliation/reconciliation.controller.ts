@@ -77,8 +77,11 @@ export class ReconciliationController {
 
   @Get('uploads/:uploadId/lines')
   @Roles(...VIEW)
-  listLines(@Param('uploadId', ParseUUIDPipe) uploadId: string) {
-    return this.service.listLines(uploadId);
+  listLines(
+    @Param('uploadId', ParseUUIDPipe) uploadId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.listLines(uploadId, user.roles);
   }
 
   @Post('lines/:lineId/confirm-match')
