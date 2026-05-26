@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Search } from 'lucide-react';
+import { Eye, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type {
   IncomingReceipt,
@@ -133,19 +133,20 @@ export default function IncomingReceiptsPage(): React.ReactElement {
               <TableHead>Inward Ref</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
+              <TableHead className="w-28 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {list.isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             )}
             {!list.isLoading && data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
                   No incoming receipts yet.
                 </TableCell>
               </TableRow>
@@ -177,6 +178,21 @@ export default function IncomingReceiptsPage(): React.ReactElement {
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {new Date(r.createdAt).toLocaleDateString()}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Link href={`/incoming-receipts/${r.id}`}>
+                    <Button size="icon" variant="ghost" title="View / Act">
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    title="Delete (draft only)"
+                    disabled={r.status !== 'DRAFT'}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}
