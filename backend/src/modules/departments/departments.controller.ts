@@ -36,7 +36,7 @@ export class DepartmentsController {
   constructor(private readonly service: DepartmentsService) {}
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   create(@Body() dto: CreateDepartmentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.service.create(dto, user.id);
   }
@@ -52,7 +52,7 @@ export class DepartmentsController {
   }
 
   @Put(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateDepartmentDto,
@@ -62,7 +62,7 @@ export class DepartmentsController {
   }
 
   @Delete(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
     @Param('id', new ParseUUIDPipe()) id: string,

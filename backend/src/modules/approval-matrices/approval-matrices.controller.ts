@@ -41,7 +41,7 @@ export class ApprovalMatricesController {
   constructor(private readonly service: ApprovalMatricesService) {}
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   create(
     @Body() dto: CreateApprovalMatrixDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -72,7 +72,7 @@ export class ApprovalMatricesController {
   }
 
   @Put(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateApprovalMatrixDto,
@@ -82,7 +82,7 @@ export class ApprovalMatricesController {
   }
 
   @Post(':id/publish')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.OK)
   publish(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -92,7 +92,7 @@ export class ApprovalMatricesController {
   }
 
   @Delete(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
     @Param('id', new ParseUUIDPipe()) id: string,

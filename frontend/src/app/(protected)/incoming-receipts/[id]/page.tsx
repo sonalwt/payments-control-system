@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, FileText, Send } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, FileText, Pencil, Send } from 'lucide-react';
 import { api, resolveFileUrl } from '@/lib/api';
 import type {
   BankAccount,
@@ -163,6 +163,13 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
             </div>
           </div>
           <div className="flex gap-2">
+            {canSubmit && (
+              <Link href={`/incoming-receipts/${id}/edit`}>
+                <Button variant="outline">
+                  <Pencil className="mr-2 h-4 w-4" /> Edit
+                </Button>
+              </Link>
+            )}
             {canSubmit && (
               <Button
                 onClick={() => submitMutation.mutate()}

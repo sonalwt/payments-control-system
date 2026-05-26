@@ -38,7 +38,7 @@ export class EmployeesController {
   constructor(private readonly service: EmployeesService) {}
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN, RoleCode.HR_INITIATOR)
   create(
     @Body() dto: CreateEmployeeDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -65,7 +65,7 @@ export class EmployeesController {
   }
 
   @Put(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN, RoleCode.HR_INITIATOR)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateEmployeeDto,
@@ -75,7 +75,7 @@ export class EmployeesController {
   }
 
   @Delete(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN, RoleCode.HR_INITIATOR)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
     @Param('id', new ParseUUIDPipe()) id: string,

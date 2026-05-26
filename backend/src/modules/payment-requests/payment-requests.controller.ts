@@ -11,6 +11,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { RoleCode } from '../../common/enums/role.enum';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PaymentRequestsService } from './payment-requests.service';
 import { CreatePaymentRequestDto } from './dto/create-payment-request.dto';
@@ -31,7 +34,7 @@ interface AuthUser {
   roles: string[];
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('payment-requests')
 export class PaymentRequestsController {
   constructor(private readonly service: PaymentRequestsService) {}
@@ -42,6 +45,12 @@ export class PaymentRequestsController {
 
   /** Create a new payment request in DRAFT status. */
   @Post()
+  @Roles(
+    RoleCode.INITIATOR,
+    RoleCode.HR_INITIATOR,
+    RoleCode.CHAIRMAN,
+    RoleCode.SUPER_ADMIN,
+  )
   create(
     @Body() dto: CreatePaymentRequestDto,
     @CurrentUser() user: AuthUser,
@@ -81,6 +90,12 @@ export class PaymentRequestsController {
 
   /** Update a DRAFT payment request. */
   @Put(':id')
+  @Roles(
+    RoleCode.INITIATOR,
+    RoleCode.HR_INITIATOR,
+    RoleCode.CHAIRMAN,
+    RoleCode.SUPER_ADMIN,
+  )
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdatePaymentRequestDto,
@@ -91,6 +106,12 @@ export class PaymentRequestsController {
 
   /** Soft-delete a DRAFT payment request. */
   @Delete(':id')
+  @Roles(
+    RoleCode.INITIATOR,
+    RoleCode.HR_INITIATOR,
+    RoleCode.CHAIRMAN,
+    RoleCode.SUPER_ADMIN,
+  )
   remove(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthUser,
@@ -104,6 +125,12 @@ export class PaymentRequestsController {
 
   /** DRAFT → PENDING_APPROVAL. Resolves and pins the approval chain. */
   @Post(':id/submit')
+  @Roles(
+    RoleCode.INITIATOR,
+    RoleCode.HR_INITIATOR,
+    RoleCode.CHAIRMAN,
+    RoleCode.SUPER_ADMIN,
+  )
   submit(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthUser,
@@ -113,6 +140,13 @@ export class PaymentRequestsController {
 
   /** Approve the current pending step (for the designated approver). */
   @Post(':id/approve')
+  @Roles(
+    RoleCode.APPROVER,
+    RoleCode.PAYROLL_APPROVER,
+    RoleCode.PAYMENTS_HEAD,
+    RoleCode.FINANCE_HEAD,
+    RoleCode.SUPER_ADMIN,
+  )
   approve(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ApprovePaymentRequestDto,
@@ -123,6 +157,13 @@ export class PaymentRequestsController {
 
   /** Reject the request at the current step. */
   @Post(':id/reject')
+  @Roles(
+    RoleCode.APPROVER,
+    RoleCode.PAYROLL_APPROVER,
+    RoleCode.PAYMENTS_HEAD,
+    RoleCode.FINANCE_HEAD,
+    RoleCode.SUPER_ADMIN,
+  )
   reject(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RejectPaymentRequestDto,
@@ -133,6 +174,12 @@ export class PaymentRequestsController {
 
   /** Requester withdraws a non-terminal request. */
   @Post(':id/withdraw')
+  @Roles(
+    RoleCode.INITIATOR,
+    RoleCode.HR_INITIATOR,
+    RoleCode.CHAIRMAN,
+    RoleCode.SUPER_ADMIN,
+  )
   withdraw(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: WithdrawPaymentRequestDto,
@@ -143,6 +190,7 @@ export class PaymentRequestsController {
 
   /** Admin cancels a non-terminal request. */
   @Post(':id/cancel')
+  @Roles(RoleCode.SYSTEM_ADMIN, RoleCode.SUPER_ADMIN)
   cancel(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CancelPaymentRequestDto,
@@ -156,6 +204,7 @@ export class PaymentRequestsController {
    * Sets the source account and moves to AWAITING_PAYMENT_CONFIRMATION.
    */
   @Post(':id/release')
+  @Roles(RoleCode.PAYMENTS_MAKER, RoleCode.SUPER_ADMIN)
   release(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ReleasePaymentRequestDto,
@@ -169,6 +218,7 @@ export class PaymentRequestsController {
    * Debits the source account balance (§2.5).
    */
   @Post(':id/mark-paid')
+  @Roles(RoleCode.PAYMENTS_MAKER, RoleCode.SUPER_ADMIN)
   markPaid(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: MarkPaidDto,

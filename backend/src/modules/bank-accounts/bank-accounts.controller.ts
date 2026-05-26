@@ -41,7 +41,7 @@ export class BankAccountsController {
   constructor(private readonly service: BankAccountsService) {}
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   create(
     @Body() dto: CreateBankAccountDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -93,7 +93,7 @@ export class BankAccountsController {
   }
 
   @Put(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateBankAccountDto,
@@ -103,7 +103,7 @@ export class BankAccountsController {
   }
 
   @Delete(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -117,7 +117,7 @@ export class BankAccountsController {
    * user, timestamp, previous value, new value, and reason.
    */
   @Post(':id/balance-override')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN, RoleCode.FINANCE_HEAD)
   balanceOverride(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: BalanceOverrideDto,

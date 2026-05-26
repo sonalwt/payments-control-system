@@ -49,7 +49,12 @@ export class BeneficiaryAccountsController {
 
   /** §6.3 — Activate a PENDING_ACTIVATION account after the cooling-off window elapses. */
   @Post(':id/activate')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.PAYMENTS_CHECKER)
+  @Roles(
+    RoleCode.BENEFICIARY_CHANGE_VERIFIER,
+    RoleCode.PAYMENTS_CHECKER,
+    RoleCode.SYSTEM_ADMIN,
+    RoleCode.SUPER_ADMIN,
+  )
   activate(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthUser,
@@ -59,7 +64,7 @@ export class BeneficiaryAccountsController {
 
   /** §6.3 — Admin force-activates, bypassing remaining cooling-off; override logged. */
   @Post(':id/override-cooling-off')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD)
+  @Roles(RoleCode.SYSTEM_ADMIN, RoleCode.SUPER_ADMIN)
   overrideCoolingOff(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: OverrideCoolingOffDto,
@@ -70,7 +75,12 @@ export class BeneficiaryAccountsController {
 
   /** §6.3 — Copy an ACTIVE verified account to a new owner; no cooling-off. */
   @Post(':id/copy')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD)
+  @Roles(
+    RoleCode.BENEFICIARY_CHANGE_MAKER,
+    RoleCode.INITIATOR,
+    RoleCode.PAYMENTS_MAKER,
+    RoleCode.SUPER_ADMIN,
+  )
   copyFromVerified(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CopyFromVerifiedDto,
@@ -83,10 +93,11 @@ export class BeneficiaryAccountsController {
 
   @Post('change-requests')
   @Roles(
-    RoleCode.SUPER_ADMIN,
-    RoleCode.FINANCE_HEAD,
+    RoleCode.BENEFICIARY_CHANGE_MAKER,
     RoleCode.INITIATOR,
+    RoleCode.HR_INITIATOR,
     RoleCode.PAYMENTS_MAKER,
+    RoleCode.SUPER_ADMIN,
   )
   createChangeRequest(
     @Body() dto: CreateChangeRequestDto,
@@ -106,7 +117,11 @@ export class BeneficiaryAccountsController {
   }
 
   @Post('change-requests/:id/verify')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.PAYMENTS_CHECKER)
+  @Roles(
+    RoleCode.BENEFICIARY_CHANGE_VERIFIER,
+    RoleCode.PAYMENTS_CHECKER,
+    RoleCode.SUPER_ADMIN,
+  )
   verify(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: VerifyChangeRequestDto,
@@ -116,7 +131,12 @@ export class BeneficiaryAccountsController {
   }
 
   @Post('change-requests/:id/approve')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.APPROVER)
+  @Roles(
+    RoleCode.APPROVER,
+    RoleCode.PAYMENTS_HEAD,
+    RoleCode.FINANCE_HEAD,
+    RoleCode.SUPER_ADMIN,
+  )
   approve(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ApproveChangeRequestDto,
@@ -127,10 +147,12 @@ export class BeneficiaryAccountsController {
 
   @Post('change-requests/:id/reject')
   @Roles(
-    RoleCode.SUPER_ADMIN,
-    RoleCode.FINANCE_HEAD,
+    RoleCode.BENEFICIARY_CHANGE_VERIFIER,
     RoleCode.PAYMENTS_CHECKER,
     RoleCode.APPROVER,
+    RoleCode.PAYMENTS_HEAD,
+    RoleCode.FINANCE_HEAD,
+    RoleCode.SUPER_ADMIN,
   )
   reject(
     @Param('id', ParseUUIDPipe) id: string,
@@ -143,11 +165,12 @@ export class BeneficiaryAccountsController {
   /** §6.2 — Cancel a PENDING_VERIFICATION or VERIFIED change request. */
   @Post('change-requests/:id/cancel')
   @Roles(
-    RoleCode.SUPER_ADMIN,
-    RoleCode.FINANCE_HEAD,
-    RoleCode.PAYMENTS_CHECKER,
+    RoleCode.BENEFICIARY_CHANGE_MAKER,
     RoleCode.INITIATOR,
+    RoleCode.HR_INITIATOR,
     RoleCode.PAYMENTS_MAKER,
+    RoleCode.SYSTEM_ADMIN,
+    RoleCode.SUPER_ADMIN,
   )
   cancel(
     @Param('id', ParseUUIDPipe) id: string,

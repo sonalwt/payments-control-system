@@ -32,9 +32,9 @@ interface AuthUser {
 export class PayrollBatchesController {
   constructor(private readonly service: PayrollBatchesService) {}
 
-  /** Upload a CSV and create a new payroll batch in DRAFT status. */
+  /** Upload a CSV and create a new payroll batch in DRAFT status. §5.1 — HR initiates. */
   @Post('upload')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.INITIATOR, RoleCode.PAYMENTS_MAKER)
+  @Roles(RoleCode.HR_INITIATOR, RoleCode.SUPER_ADMIN)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
@@ -79,9 +79,9 @@ export class PayrollBatchesController {
     return this.service.findOneWithItems(id);
   }
 
-  /** DRAFT → PENDING_APPROVAL. Restricted to the roles that initiate payroll. */
+  /** DRAFT → PENDING_APPROVAL. §5.1 — HR submits the uploaded batch. */
   @Post(':id/submit')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.INITIATOR, RoleCode.PAYMENTS_MAKER)
+  @Roles(RoleCode.HR_INITIATOR, RoleCode.SUPER_ADMIN)
   submit(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthUser,
@@ -89,9 +89,9 @@ export class PayrollBatchesController {
     return this.service.submit(id, user.id);
   }
 
-  /** PENDING_APPROVAL → APPROVED. Restricted to Finance Head, Approver, Super Admin. */
+  /** PENDING_APPROVAL → APPROVED. §5.2 — batch-level approval by Payroll Approver. */
   @Post(':id/approve')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.APPROVER)
+  @Roles(RoleCode.PAYROLL_APPROVER, RoleCode.SUPER_ADMIN)
   approve(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthUser,
@@ -101,7 +101,7 @@ export class PayrollBatchesController {
 
   /** PENDING_APPROVAL → REJECTED. Same authority as approve. */
   @Post(':id/reject')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.APPROVER)
+  @Roles(RoleCode.PAYROLL_APPROVER, RoleCode.SUPER_ADMIN)
   reject(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RejectBatchDto,
@@ -111,7 +111,7 @@ export class PayrollBatchesController {
   }
 
   @Post(':id/cancel')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD)
+  @Roles(RoleCode.SYSTEM_ADMIN, RoleCode.SUPER_ADMIN)
   cancel(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CancelBatchDto,
