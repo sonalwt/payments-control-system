@@ -41,4 +41,27 @@ export class StatementUpload {
 
   @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })
   createdAt!: Date;
+
+  // ── §8 reconciliation summary (nullable, populated by reconciliation
+  //    module after ingest/match runs; not touched by the upload flow).
+  @Column({ name: 'ingestion_status', type: 'varchar', length: 20, nullable: true })
+  ingestionStatus?: 'UPLOADED' | 'PARSED' | 'PARSE_FAILED' | 'MATCHED' | null;
+
+  @Column({ name: 'ingestion_format', type: 'varchar', length: 10, nullable: true })
+  ingestionFormat?: 'CSV' | 'PDF' | null;
+
+  @Column({ name: 'ingestion_error', type: 'text', nullable: true })
+  ingestionError?: string | null;
+
+  @Column({ name: 'auto_match_completed_at', type: 'timestamptz', nullable: true })
+  autoMatchCompletedAt?: Date | null;
+
+  @Column({ name: 'matched_count', type: 'integer', nullable: true })
+  matchedCount?: number | null;
+
+  @Column({ name: 'candidate_count', type: 'integer', nullable: true })
+  candidateCount?: number | null;
+
+  @Column({ name: 'exception_count', type: 'integer', nullable: true })
+  exceptionCount?: number | null;
 }

@@ -615,6 +615,14 @@ export interface ExceptionReport {
 // Section 8 — Bank Statement Uploads
 // -----------------------------------------------------------------------
 
+export type StatementIngestionStatus =
+  | 'UPLOADED'
+  | 'PARSED'
+  | 'PARSE_FAILED'
+  | 'MATCHED';
+
+export type StatementIngestionFormat = 'CSV' | 'PDF';
+
 export interface StatementUpload {
   id: string;
   bankAccountId: string;
@@ -628,6 +636,89 @@ export interface StatementUpload {
   uploadedBy: string;
   uploader?: { id: string; fullName: string; email: string } | null;
   createdAt: string;
+  // §8 reconciliation summary (all optional; populated by reconciliation module).
+  ingestionStatus?: StatementIngestionStatus | null;
+  ingestionFormat?: StatementIngestionFormat | null;
+  ingestionError?: string | null;
+  autoMatchCompletedAt?: string | null;
+  matchedCount?: number | null;
+  candidateCount?: number | null;
+  exceptionCount?: number | null;
+}
+
+// -----------------------------------------------------------------------
+// §8 — Statement lines & reconciliation exceptions
+// -----------------------------------------------------------------------
+
+export type StatementLineDirection = 'DEBIT' | 'CREDIT';
+export type StatementLineMatchStatus =
+  | 'UNMATCHED'
+  | 'CANDIDATE'
+  | 'MATCHED'
+  | 'EXCEPTION';
+
+export interface StatementLine {
+  id: string;
+  statementUploadId: string;
+  bankAccountId: string;
+  lineIndex: number;
+  valueDate: string;
+  postingDate?: string | null;
+  direction: StatementLineDirection;
+  amount: string;
+  currencyCode: string;
+  bankReference?: string | null;
+  counterpartyText?: string | null;
+  narrative?: string | null;
+  runningBalance?: string | null;
+  matchStatus: StatementLineMatchStatus;
+  matchedPaymentRequestId?: string | null;
+  matchedPaymentRequest?: PaymentRequest | null;
+  matchedIncomingReceiptId?: string | null;
+  matchedIncomingReceipt?: IncomingReceipt | null;
+  matchScore?: string | null;
+  matchReason?: string | null;
+  matchedAt?: string | null;
+  matchedBy?: string | null;
+  exceptionId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReconciliationExceptionType =
+  | 'UNAUTHORISED_PAYMENT'
+  | 'UNIDENTIFIED_RECEIPT';
+
+export type ReconciliationExceptionStatus =
+  | 'OPEN'
+  | 'UNDER_INVESTIGATION'
+  | 'RESOLVED_WITH_JUSTIFICATION'
+  | 'CONFIRMED_EXCEPTION';
+
+export interface ReconciliationException {
+  id: string;
+  exceptionNumber: string;
+  statementUploadId: string;
+  statementUpload?: StatementUpload;
+  statementLineId: string;
+  statementLine?: StatementLine;
+  bankAccountId: string;
+  bankAccount?: BankAccount;
+  exceptionType: ReconciliationExceptionType;
+  status: ReconciliationExceptionStatus;
+  amount: string;
+  currencyCode: string;
+  valueDate: string;
+  bankReference?: string | null;
+  counterpartyText?: string | null;
+  narrative?: string | null;
+  resolutionNote?: string | null;
+  investigatedBy?: string | null;
+  investigatedAt?: string | null;
+  resolvedBy?: string | null;
+  resolvedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuthMe {

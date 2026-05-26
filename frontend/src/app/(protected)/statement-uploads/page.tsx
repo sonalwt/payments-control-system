@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, UploadCloud } from 'lucide-react';
+import { ExternalLink, Plus, Trash2, UploadCloud } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { BankAccount, LegalEntity, Paginated, StatementUpload } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
@@ -40,6 +41,30 @@ function fmtDate(d: string | undefined | null): string {
 function fmtBalance(v: string | number | undefined | null): string {
   if (v == null) return '—';
   return Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function IngestionBadge({
+  status,
+  format,
+}: {
+  status?: StatementUpload['ingestionStatus'];
+  format?: StatementUpload['ingestionFormat'];
+}): React.ReactElement {
+  const effective = status ?? 'UPLOADED';
+  const colour =
+    effective === 'MATCHED'
+      ? 'bg-emerald-100 text-emerald-800'
+      : effective === 'PARSED'
+        ? 'bg-blue-100 text-blue-800'
+        : effective === 'PARSE_FAILED'
+          ? 'bg-red-100 text-red-800'
+          : 'bg-slate-100 text-slate-700';
+  return (
+    <span className={`inline-block rounded px-1.5 py-0.5 text-xs ${colour}`}>
+      {effective.toLowerCase()}
+      {format ? ` · ${format}` : ''}
+    </span>
+  );
 }
 
 // -----------------------------------------------------------------------
@@ -352,6 +377,8 @@ export default function StatementUploadsPage(): React.ReactElement {
               <TableHead>Statement Date</TableHead>
               <TableHead className="text-right">Opening Balance</TableHead>
               <TableHead className="text-right">Closing Balance</TableHead>
+              <TableHead>Ingestion</TableHead>
+              <TableHead className="text-right">Match Summary</TableHead>
               <TableHead>Uploaded By</TableHead>
               <TableHead>File</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -360,13 +387,13 @@ export default function StatementUploadsPage(): React.ReactElement {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : uploads.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                   No statement uploads found.
                 </TableCell>
               </TableRow>
@@ -385,6 +412,20 @@ export default function StatementUploadsPage(): React.ReactElement {
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm">
                     {fmtBalance(u.closingBalance)}
+                  </TableCell>
+                  <TableCell>
+                    <IngestionBadge status={u.ingestionStatus} format={u.ingestionFormat} />
+                  </TableCell>
+                  <TableCell className="text-right text-xs">
+                    {!u.ingestionStatus || u.ingestionStatus === 'UPLOADED' ? (
+                      <span className="text-muted-foreground">— pending —</span>
+                    ) : (
+                      <span className="space-x-2 font-mono">
+                        <span className="text-emerald-600">{u.matchedCount ?? 0} ✓</span>
+                        <span className="text-amber-600">{u.candidateCount ?? 0} ?</span>
+                        <span className="text-red-600">{u.exceptionCount ?? 0} !</span>
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {(u.uploader as { fullName?: string } | undefined)?.fullName ?? u.uploadedBy}
@@ -406,6 +447,13 @@ export default function StatementUploadsPage(): React.ReactElement {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
+                    <Link
+                      href={`/statement-uploads/${u.id}`}
+                      className="mr-1 inline-flex h-7 items-center rounded px-2 text-xs text-primary hover:bg-muted"
+                    >
+                      <ExternalLink className="mr-1 h-3.5 w-3.5" />
+                      Reconcile
+                    </Link>
                     <Button
                       variant="ghost"
                       size="sm"
