@@ -20,11 +20,22 @@ import { ReconciliationService } from './reconciliation.service';
 import { IngestCsvDto, IngestManualDto } from './dto/ingest.dto';
 import { ConfirmMatchDto, UnmatchLineDto } from './dto/match.dto';
 
-const MAKER = [RoleCode.PAYMENTS_MAKER, RoleCode.FINANCE_HEAD, RoleCode.SUPER_ADMIN];
+// §8 — Reconciliation operations. Maker actions are scoped to the payments
+// team; view is open to oversight (Finance Head, Treasurer) and read-only
+// audit roles (Internal Auditor) per §13 dashboards.
+const MAKER = [
+  RoleCode.PAYMENTS_MAKER,
+  RoleCode.PAYMENTS_HEAD,
+  RoleCode.SUPER_ADMIN,
+];
 const VIEW = [
   RoleCode.PAYMENTS_MAKER,
   RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
   RoleCode.FINANCE_HEAD,
+  RoleCode.GROUP_TREASURER,
+  RoleCode.INTERNAL_AUDITOR,
+  RoleCode.SYSTEM_ADMIN,
   RoleCode.SUPER_ADMIN,
 ];
 

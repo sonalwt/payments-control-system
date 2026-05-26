@@ -36,7 +36,7 @@ export class LegalEntitiesController {
   constructor(private readonly service: LegalEntitiesService) {}
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   create(
     @Body() dto: CreateLegalEntityDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -55,7 +55,7 @@ export class LegalEntitiesController {
   }
 
   @Put(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateLegalEntityDto,
@@ -65,7 +65,7 @@ export class LegalEntitiesController {
   }
 
   @Delete(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
     @Param('id', new ParseUUIDPipe()) id: string,

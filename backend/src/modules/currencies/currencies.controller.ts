@@ -39,7 +39,7 @@ export class CurrenciesController {
   constructor(private readonly service: CurrenciesService) {}
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   create(
     @Body() dto: CreateCurrencyDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -60,7 +60,7 @@ export class CurrenciesController {
   }
 
   @Put(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateCurrencyDto,
@@ -70,7 +70,7 @@ export class CurrenciesController {
   }
 
   @Delete(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('id', new ParseUUIDPipe()) id: string,

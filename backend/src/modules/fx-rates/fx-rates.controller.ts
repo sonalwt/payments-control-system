@@ -61,14 +61,14 @@ export class FxRatesController {
 
   /** Trigger an immediate provider fetch (also runnable on a cron). */
   @Post('fetch')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   fetchNow(@Body() dto: FetchRatesDto) {
     return this.service.fetchDaily(dto.asOfDate, dto.baseCurrencyCode);
   }
 
   /** Manual override — logged with reason. */
   @Post('override')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   override(
     @Body() dto: OverrideFxRateDto,
     @CurrentUser() user: AuthenticatedUser,

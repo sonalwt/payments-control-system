@@ -218,14 +218,24 @@ INSERT INTO currencies(code, name) VALUES
     ('CNY','Chinese Yuan')
 ON CONFLICT DO NOTHING;
 
+-- Section 14 — full role catalogue (SoW User Roles and Access Control).
 INSERT INTO roles(code, name, description, is_system) VALUES
-    ('SUPER_ADMIN',       'Super Administrator', 'Full administrative privileges',                 TRUE),
-    ('INITIATOR',         'Payments Initiator',  'Creates payment requests',                       TRUE),
-    ('APPROVER',          'Approver',            'Approves payment requests',                      TRUE),
-    ('PAYMENTS_MAKER',    'Payments Maker',      'Prepares and releases approved payments',        TRUE),
-    ('PAYMENTS_CHECKER',  'Payments Checker',    'Independent check on sensitive payments',        TRUE),
-    ('FINANCE_HEAD',      'Finance Head',        'Country / entity finance head',                  TRUE)
-ON CONFLICT DO NOTHING;
+    ('SUPER_ADMIN',                'Super Administrator',         'Highest privilege; administrative reassignment, cooling-off overrides, emergency operations',  TRUE),
+    ('SYSTEM_ADMIN',               'System Administrator',        'User management, master data, matrix and account configuration, sanctioned-country list, balance override', TRUE),
+    ('INITIATOR',                  'Payments Initiator',          'Creates vendor payment requests and incoming receipt requests',                                TRUE),
+    ('HR_INITIATOR',               'HR Initiator',                'Bulk-uploads payroll, creates reimbursement and FnF requests',                                 TRUE),
+    ('APPROVER',                   'Approver',                    'Approves on mobile against requests routed by the approval matrix',                            TRUE),
+    ('PAYROLL_APPROVER',           'Payroll Approver',            'Batch-level approval of payroll before processing',                                            TRUE),
+    ('PAYMENTS_MAKER',             'Payments Team Maker',         'Verifies documents, prepares TTs, marks payments released and paid, uploads proof of payment', TRUE),
+    ('PAYMENTS_CHECKER',           'Payments Team Checker',       'Independent verifier on chairman payments and beneficiary change requests',                    TRUE),
+    ('PAYMENTS_HEAD',              'Payments Head',               'Approves execution of chairman payments; senior payments-team oversight',                      TRUE),
+    ('BENEFICIARY_CHANGE_MAKER',   'Beneficiary Change Maker',    'Creates bank account change requests under maker-checker',                                     TRUE),
+    ('BENEFICIARY_CHANGE_VERIFIER','Beneficiary Change Verifier', 'Verifies bank account change requests under maker-checker',                                    TRUE),
+    ('FINANCE_HEAD',               'Country / Entity Finance Head','Reviews and reports within entity or country scope',                                          TRUE),
+    ('GROUP_TREASURER',            'Group Treasurer / CFO',       'Group-wide visibility and reporting; recipient for reconciliation exceptions',                 TRUE),
+    ('CHAIRMAN',                   'Chairman',                    'Initiates chairman payments on mobile',                                                        TRUE),
+    ('INTERNAL_AUDITOR',           'Internal Auditor',            'Read-only access across the system, including the full audit log',                             TRUE)
+ON CONFLICT (code) DO NOTHING;
 
 -- =====================================================================
 -- Section 1.2 — Payment Types

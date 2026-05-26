@@ -36,7 +36,7 @@ export class GroupsController {
   constructor(private readonly service: GroupsService) {}
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   create(
     @Body() dto: CreateGroupDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -55,7 +55,7 @@ export class GroupsController {
   }
 
   @Put(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateGroupDto,
@@ -65,7 +65,7 @@ export class GroupsController {
   }
 
   @Delete(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
     @Param('id', new ParseUUIDPipe()) id: string,

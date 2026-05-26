@@ -325,6 +325,7 @@ export class IncomingReceiptsService {
     userId: string,
   ): IncomingReceiptDocument[] {
     return dtos.map((d) => {
+      this.assertAllowedFileType(d);
       const doc = new IncomingReceiptDocument();
       doc.incomingReceiptId = incomingReceiptId;
       doc.documentCode = d.documentCode;
@@ -337,5 +338,42 @@ export class IncomingReceiptsService {
       doc.uploadedAt = new Date();
       return doc;
     });
+  }
+
+  // §7.1 — Debit note / final invoice attachments are restricted to PDF or
+  // image formats. The shared /uploads endpoint also accepts Office/CSV files
+  // (needed for §8 bank statements) but those are rejected here.
+  private static readonly ALLOWED_DOC_EXTENSIONS = [
+    '.pdf',
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.tif',
+    '.tiff',
+  ];
+
+  private static readonly ALLOWED_DOC_MIME_TYPES = [
+    'application/pdf',
+    'image/jpeg',
+    'image/png',
+    'image/tiff',
+  ];
+
+  private assertAllowedFileType(d: IncomingReceiptDocumentDto): void {
+    const fileName = d.fileName ?? '';
+    const dotIndex = fileName.lastIndexOf('.');
+    const ext = dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : '';
+    const mime = (d.mimeType ?? '').toLowerCase();
+
+    const extOk = IncomingReceiptsService.ALLOWED_DOC_EXTENSIONS.includes(ext);
+    const mimeOk =
+      mime.length > 0 &&
+      IncomingReceiptsService.ALLOWED_DOC_MIME_TYPES.includes(mime);
+
+    if (!extOk && !mimeOk) {
+      throw new BadRequestException(
+        `Unsupported document type for "${fileName}". Incoming receipts only accept PDF or image files (.pdf, .jpg, .jpeg, .png, .tif, .tiff).`,
+      );
+    }
   }
 }

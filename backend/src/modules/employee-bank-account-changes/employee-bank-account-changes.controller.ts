@@ -31,21 +31,28 @@ interface AuthUser {
 export class EmployeeBankAccountChangesController {
   constructor(private readonly service: EmployeeBankAccountChangesService) {}
 
-  /** Any initiator or above can raise a bank account change request. */
+  /** §5.4 — Maker raises the change on the basis of an emailed employee request. */
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.INITIATOR, RoleCode.PAYMENTS_MAKER)
+  @Roles(
+    RoleCode.PAYMENTS_MAKER,
+    RoleCode.HR_INITIATOR,
+    RoleCode.SUPER_ADMIN,
+  )
   create(@Body() dto: CreateEbacDto, @CurrentUser() user: AuthUser) {
     return this.service.create(dto, user.id);
   }
 
   @Get()
   @Roles(
-    RoleCode.SUPER_ADMIN,
-    RoleCode.FINANCE_HEAD,
-    RoleCode.INITIATOR,
     RoleCode.PAYMENTS_MAKER,
     RoleCode.PAYMENTS_CHECKER,
+    RoleCode.HR_INITIATOR,
     RoleCode.APPROVER,
+    RoleCode.FINANCE_HEAD,
+    RoleCode.GROUP_TREASURER,
+    RoleCode.INTERNAL_AUDITOR,
+    RoleCode.SYSTEM_ADMIN,
+    RoleCode.SUPER_ADMIN,
   )
   findAll(
     @Query('page') page?: string,
@@ -64,12 +71,15 @@ export class EmployeeBankAccountChangesController {
 
   @Get(':id')
   @Roles(
-    RoleCode.SUPER_ADMIN,
-    RoleCode.FINANCE_HEAD,
-    RoleCode.INITIATOR,
     RoleCode.PAYMENTS_MAKER,
     RoleCode.PAYMENTS_CHECKER,
+    RoleCode.HR_INITIATOR,
     RoleCode.APPROVER,
+    RoleCode.FINANCE_HEAD,
+    RoleCode.GROUP_TREASURER,
+    RoleCode.INTERNAL_AUDITOR,
+    RoleCode.SYSTEM_ADMIN,
+    RoleCode.SUPER_ADMIN,
   )
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
@@ -77,7 +87,7 @@ export class EmployeeBankAccountChangesController {
 
   /** Checker verifies the request. Must not be the same user who created it. */
   @Post(':id/verify')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.PAYMENTS_CHECKER)
+  @Roles(RoleCode.PAYMENTS_CHECKER, RoleCode.SUPER_ADMIN)
   verify(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: VerifyEbacDto,
@@ -88,7 +98,11 @@ export class EmployeeBankAccountChangesController {
 
   /** Approver gives final approval. Must not be the same user who created it. */
   @Post(':id/approve')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.APPROVER)
+  @Roles(
+    RoleCode.APPROVER,
+    RoleCode.FINANCE_HEAD,
+    RoleCode.SUPER_ADMIN,
+  )
   approve(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthUser,
@@ -97,7 +111,12 @@ export class EmployeeBankAccountChangesController {
   }
 
   @Post(':id/reject')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD, RoleCode.PAYMENTS_CHECKER, RoleCode.APPROVER)
+  @Roles(
+    RoleCode.PAYMENTS_CHECKER,
+    RoleCode.APPROVER,
+    RoleCode.FINANCE_HEAD,
+    RoleCode.SUPER_ADMIN,
+  )
   reject(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RejectEbacDto,
@@ -107,7 +126,7 @@ export class EmployeeBankAccountChangesController {
   }
 
   @Post(':id/cancel')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.FINANCE_HEAD)
+  @Roles(RoleCode.SYSTEM_ADMIN, RoleCode.SUPER_ADMIN)
   cancel(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CancelEbacDto,

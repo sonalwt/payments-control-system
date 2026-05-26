@@ -31,8 +31,9 @@ import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 export class StatementUploadsController {
   constructor(private readonly service: StatementUploadsService) {}
 
+  /** §8.1 — Weekly statement ingestion by the payments team. */
   @Post()
-  @Roles(RoleCode.PAYMENTS_MAKER, RoleCode.FINANCE_HEAD, RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.PAYMENTS_MAKER, RoleCode.SUPER_ADMIN)
   create(
     @Body() dto: CreateStatementUploadDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -44,7 +45,11 @@ export class StatementUploadsController {
   @Roles(
     RoleCode.PAYMENTS_MAKER,
     RoleCode.PAYMENTS_CHECKER,
+    RoleCode.PAYMENTS_HEAD,
     RoleCode.FINANCE_HEAD,
+    RoleCode.GROUP_TREASURER,
+    RoleCode.INTERNAL_AUDITOR,
+    RoleCode.SYSTEM_ADMIN,
     RoleCode.SUPER_ADMIN,
   )
   findAll(
@@ -57,7 +62,11 @@ export class StatementUploadsController {
   @Roles(
     RoleCode.PAYMENTS_MAKER,
     RoleCode.PAYMENTS_CHECKER,
+    RoleCode.PAYMENTS_HEAD,
     RoleCode.FINANCE_HEAD,
+    RoleCode.GROUP_TREASURER,
+    RoleCode.INTERNAL_AUDITOR,
+    RoleCode.SYSTEM_ADMIN,
     RoleCode.SUPER_ADMIN,
   )
   findOne(@Param('id', ParseUUIDPipe) id: string) {
@@ -66,7 +75,7 @@ export class StatementUploadsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Roles(RoleCode.FINANCE_HEAD, RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SYSTEM_ADMIN, RoleCode.SUPER_ADMIN)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);
   }

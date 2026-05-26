@@ -28,13 +28,26 @@ import {
   ReconciliationExceptionType,
 } from './reconciliation-exception.entity';
 
+// §8.3 — exceptions are routed to "a configured group of senior users"; the
+// Group Treasurer / CFO is the §13 recipient group for reconciliation
+// exceptions. Internal Auditor and System Admin retain read access only.
 const VIEW = [
   RoleCode.PAYMENTS_MAKER,
   RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
   RoleCode.FINANCE_HEAD,
+  RoleCode.GROUP_TREASURER,
+  RoleCode.INTERNAL_AUDITOR,
+  RoleCode.SYSTEM_ADMIN,
   RoleCode.SUPER_ADMIN,
 ];
-const ACT = [RoleCode.PAYMENTS_CHECKER, RoleCode.FINANCE_HEAD, RoleCode.SUPER_ADMIN];
+const ACT = [
+  RoleCode.PAYMENTS_CHECKER,
+  RoleCode.PAYMENTS_HEAD,
+  RoleCode.FINANCE_HEAD,
+  RoleCode.GROUP_TREASURER,
+  RoleCode.SUPER_ADMIN,
+];
 
 @ApiTags('reconciliation-exceptions')
 @ApiBearerAuth()
@@ -90,7 +103,11 @@ export class ReconciliationExceptionsController {
   }
 
   @Post(':id/confirm')
-  @Roles(RoleCode.FINANCE_HEAD, RoleCode.SUPER_ADMIN)
+  @Roles(
+    RoleCode.FINANCE_HEAD,
+    RoleCode.GROUP_TREASURER,
+    RoleCode.SUPER_ADMIN,
+  )
   confirm(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ConfirmExceptionDto,

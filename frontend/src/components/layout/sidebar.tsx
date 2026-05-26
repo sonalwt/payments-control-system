@@ -40,6 +40,14 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
+import {
+  ADMIN_ROLES,
+  MASTER_DATA_READ_ROLES,
+  BANKING_ROLES,
+  HR_WORKFLOW_ROLES,
+  PAYMENT_REQUEST_VIEW_ROLES,
+  RECONCILIATION_VIEW_ROLES,
+} from '@/lib/roles';
 
 type Icon = React.ComponentType<{ className?: string }>;
 interface NavItem {
@@ -52,7 +60,7 @@ interface NavGroup {
   icon: Icon;
   items: NavItem[];
   /** Role codes that may see this group. Empty = everyone. */
-  allowedRoles?: string[];
+  allowedRoles?: readonly string[];
 }
 
 const DASHBOARD: NavItem = {
@@ -61,21 +69,25 @@ const DASHBOARD: NavItem = {
   icon: LayoutDashboard,
 };
 
+// Role mappings derived from SoW §13 (Dashboards and Reporting) and §14 (User
+// Roles). Keep these aligned with backend @Roles() decorators — a user must
+// hold a role surfaced here AND the matching role on the API call.
 const GROUPS: NavGroup[] = [
   {
     label: 'Payments',
     icon: FileStack,
-    // All authenticated users can see Payment Requests and Incoming Receipts.
+    allowedRoles: PAYMENT_REQUEST_VIEW_ROLES,
     items: [
       { href: '/payment-requests', label: 'Payment Requests', icon: FileStack },
       { href: '/incoming-receipts', label: 'Incoming Receipts', icon: HandCoins },
     ],
   },
   {
+    // §14 — System Administrator manages users, roles, and organisational
+    // hierarchy under dual control with Super Administrator.
     label: 'User Settings',
     icon: Settings,
-    // Only platform / super admins manage users, entities, and org structure.
-    allowedRoles: ['SUPER_ADMIN'],
+    allowedRoles: ADMIN_ROLES,
     items: [
       { href: '/groups', label: 'Groups', icon: Layers },
       { href: '/legal-entities', label: 'Legal Entities', icon: Building2 },
@@ -87,10 +99,11 @@ const GROUPS: NavGroup[] = [
     ],
   },
   {
+    // §1 — master data lookups visible to anyone who needs to pick a value
+    // (initiators, makers, checkers, finance heads, auditors).
     label: 'Masters',
     icon: Database,
-    // Admins, Finance Heads, and Initiators (who register beneficiary accounts).
-    allowedRoles: ['SUPER_ADMIN', 'FINANCE_HEAD', 'INITIATOR'],
+    allowedRoles: MASTER_DATA_READ_ROLES,
     items: [
       { href: '/payment-types', label: 'Payment Types', icon: Wallet },
       { href: '/counterparties', label: 'Counterparties', icon: Contact2 },
@@ -101,10 +114,11 @@ const GROUPS: NavGroup[] = [
     ],
   },
   {
+    // §2 — banking and account configuration. §8 — bank statement
+    // reconciliation lives alongside.
     label: 'Banking',
     icon: Banknote,
-    // Admins, Finance Heads, and Payments Makers/Checkers who handle bank operations.
-    allowedRoles: ['SUPER_ADMIN', 'FINANCE_HEAD', 'PAYMENTS_MAKER', 'PAYMENTS_CHECKER'],
+    allowedRoles: BANKING_ROLES,
     items: [
       { href: '/currencies', label: 'Currencies', icon: Coins },
       { href: '/fx-rates', label: 'FX Rates', icon: TrendingUp },
@@ -115,9 +129,10 @@ const GROUPS: NavGroup[] = [
     ],
   },
   {
+    // §5 — HR-led payroll, reimbursement, FnF. HR Initiator + Payroll Approver.
     label: 'Payroll',
     icon: UsersRound,
-    allowedRoles: ['SUPER_ADMIN', 'FINANCE_HEAD', 'PAYROLL_ADMIN', 'INITIATOR'],
+    allowedRoles: HR_WORKFLOW_ROLES,
     items: [
       { href: '/payroll-batches', label: 'Payroll Batches', icon: Layers2 },
       { href: '/employee-bank-account-changes', label: 'Bank Account Changes', icon: HandCoins },
@@ -128,14 +143,12 @@ const GROUPS: NavGroup[] = [
   {
     label: 'Reports',
     icon: ClipboardList,
-    // Admins, Approvers, Finance Heads, and Payments staff.
-    allowedRoles: ['SUPER_ADMIN', 'APPROVER', 'FINANCE_HEAD', 'PAYMENTS_MAKER', 'PAYMENTS_CHECKER'],
+    allowedRoles: RECONCILIATION_VIEW_ROLES,
     items: [
       { href: '/exception-reports', label: 'Exception Reports', icon: ClipboardList },
     ],
   },
 ];
-
 function isItemActive(pathname: string | null, href: string): boolean {
   return pathname === href || (pathname?.startsWith(`${href}/`) ?? false);
 }

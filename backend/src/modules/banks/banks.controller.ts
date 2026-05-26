@@ -39,7 +39,7 @@ export class BanksController {
   constructor(private readonly service: BanksService) {}
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   create(
     @Body() dto: CreateBankDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -64,7 +64,7 @@ export class BanksController {
   }
 
   @Put(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateBankDto,
@@ -74,7 +74,7 @@ export class BanksController {
   }
 
   @Delete(':id')
-  @Roles(RoleCode.SUPER_ADMIN)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('id', new ParseUUIDPipe()) id: string,
