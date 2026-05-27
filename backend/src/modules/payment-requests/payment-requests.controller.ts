@@ -16,7 +16,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { RoleCode } from '../../common/enums/role.enum';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PaymentRequestsService } from './payment-requests.service';
-import { CreatePaymentRequestDto } from './dto/create-payment-request.dto';
+import { CreatePaymentRequestDto, DocumentAttachmentDto } from './dto/create-payment-request.dto';
 import { UpdatePaymentRequestDto } from './dto/update-payment-request.dto';
 import {
   ApprovePaymentRequestDto,
@@ -310,6 +310,22 @@ export class PaymentRequestsController {
   @Get(':id/documents')
   getDocuments(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.getDocuments(id);
+  }
+
+  /** Add a document to a DRAFT request (used when editing before submission). */
+  @Post(':id/documents')
+  @Roles(
+    RoleCode.INITIATOR,
+    RoleCode.HR_INITIATOR,
+    RoleCode.CHAIRMAN,
+    RoleCode.SUPER_ADMIN,
+  )
+  addDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: DocumentAttachmentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.service.addDocument(id, dto, user.id);
   }
 
   /**

@@ -11,7 +11,9 @@ import {
   FileText,
   Lock,
   Paperclip,
+  Plus,
   Send,
+  UploadCloud,
   X,
   XCircle,
 } from 'lucide-react';
@@ -123,6 +125,14 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const [chairmanMakerNotes, setChairmanMakerNotes] = useState('');
   const [checkerNotes, setCheckerNotes] = useState('');
   const [chairmanApproveComments, setChairmanApproveComments] = useState('');
+
+  // Add-document (DRAFT only)
+  const [addDocCode, setAddDocCode] = useState('');
+  const [addDocLabel, setAddDocLabel] = useState('');
+  const [addDocFileName, setAddDocFileName] = useState('');
+  const [addDocFileUrl, setAddDocFileUrl] = useState('');
+  const [addDocMime, setAddDocMime] = useState('');
+  const [addDocUploading, setAddDocUploading] = useState(false);
 
   // Maker verification checklist (Release to Bank step)
   const RELEASE_CHECKLIST = [
@@ -345,6 +355,27 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       toast({ title: 'Execution approved', variant: 'success' });
     },
     onError: (e: Error) => toast({ title: 'Approve failed', description: friendlyError(e), variant: 'error' }),
+  });
+
+  const addDocMutation = useMutation({
+    mutationFn: () =>
+      api.post<PaymentRequestDocument[]>(`/payment-requests/${id}/documents`, {
+        documentCode: addDocCode.trim().toUpperCase(),
+        documentLabel: addDocLabel.trim() || undefined,
+        fileName: addDocFileName,
+        fileUrl: addDocFileUrl,
+        mimeType: addDocMime || undefined,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['payment-requests', id, 'documents'] });
+      setAddDocCode('');
+      setAddDocLabel('');
+      setAddDocFileName('');
+      setAddDocFileUrl('');
+      setAddDocMime('');
+      toast({ title: 'Document added', variant: 'success' });
+    },
+    onError: (e: Error) => toast({ title: 'Upload failed', description: friendlyError(e), variant: 'error' }),
   });
 
   if (isLoading) {
@@ -804,6 +835,86 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
               </li>
             ))}
           </ul>
+        </Card>
+      )}
+
+      {/* Add Document — only available while request is still DRAFT */}
+      {pr.status === 'DRAFT' && (
+        <Card className="p-6">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <Plus className="mr-1 inline h-3.5 w-3.5" />
+            Add Document
+          </h2>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Document Code <span className="text-red-500">*</span></Label>
+                <Input
+                  placeholder="e.g. RECEIPTS"
+                  value={addDocCode}
+                  onChange={(e) => setAddDocCode(e.target.value)}
+                  className="h-8 text-xs uppercase"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Label (optional)</Label>
+                <Input
+                  placeholder="e.g. Supporting Receipts"
+                  value={addDocLabel}
+                  onChange={(e) => setAddDocLabel(e.target.value)}
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">File <span className="text-red-500">*</span></Label>
+              {addDocFileUrl ? (
+                <div className="flex h-8 items-center gap-2 rounded-md border bg-muted/50 px-3 text-xs">
+                  <UploadCloud className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="flex-1 truncate">{addDocFileName}</span>
+                  <button
+                    type="button"
+                    onClick={() => { setAddDocFileUrl(''); setAddDocFileName(''); setAddDocMime(''); }}
+                    className="text-muted-foreground hover:text-foreground"
+                  >×</button>
+                </div>
+              ) : (
+                <label className="flex h-8 cursor-pointer items-center gap-2 rounded-md border border-dashed bg-background px-3 text-xs text-muted-foreground hover:bg-muted/50">
+                  <UploadCloud className="h-3.5 w-3.5" />
+                  <span>{addDocUploading ? 'Uploading…' : 'Click to attach file…'}</span>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                    className="sr-only"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setAddDocUploading(true);
+                      try {
+                        const result = await api.upload(file);
+                        setAddDocFileName(result.fileName);
+                        setAddDocFileUrl(result.url);
+                        setAddDocMime(file.type);
+                      } catch {
+                        toast({ title: 'Upload failed', variant: 'error' });
+                      } finally {
+                        setAddDocUploading(false);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+            <Button
+              size="sm"
+              onClick={() => addDocMutation.mutate()}
+              disabled={addDocMutation.isPending || !addDocCode.trim() || !addDocFileUrl}
+            >
+              <UploadCloud className="mr-1 h-3.5 w-3.5" />
+              {addDocMutation.isPending ? 'Saving…' : 'Attach Document'}
+            </Button>
+          </div>
         </Card>
       )}
 

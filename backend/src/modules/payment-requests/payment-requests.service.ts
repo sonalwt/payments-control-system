@@ -314,6 +314,13 @@ export class PaymentRequestsService {
       return a;
     });
 
+    // §4.1 — Clean up any approval/snapshot records left behind by a previous
+    // partial submit attempt (i.e. approvals were saved but the final PR update
+    // failed).  Without this, TypeORM's cascade save would try to null-out those
+    // "orphaned" FK columns on re-submit, triggering a NOT NULL DB violation.
+    await this.repo.deleteApprovals(pr.id);
+    await this.repo.deleteSnapshotDocuments(pr.id);
+
     await this.repo.saveApprovals(approvals);
 
     // §4.1/4.2 — Freeze counterparty / beneficiary data into immutable snapshots.
@@ -372,21 +379,28 @@ export class PaymentRequestsService {
       await this.repo.saveDocuments([snapshotDoc]);
     }
 
-    pr.status = 'PENDING_APPROVAL';
-    pr.submittedAt = new Date();
-    pr.matrixId = chain.matrixId;
-    pr.matrixVersion = chain.version;
-    pr.currentStepOrder = chain.steps.length > 0 ? 1 : null;
-    pr.updatedBy = userId;
+    const now = new Date();
+    const hasChain = chain.steps.length > 0;
 
-    // If there are no approval steps (e.g. payment type with no chain), go directly to APPROVED.
-    if (chain.steps.length === 0) {
-      pr.status = 'APPROVED';
-      pr.approvedAt = new Date();
-      pr.currentStepOrder = null;
-    }
+    // Use a direct SQL UPDATE rather than repo.save() to avoid TypeORM's
+    // cascade logic.  When cascade is triggered, TypeORM orphan-nullifies any
+    // child rows that are not in the loaded collection, which would fail with a
+    // NOT NULL violation on payment_request_id because we saved approvals and
+    // the snapshot document independently above.
+    await this.repo.updateSubmitFields(pr.id, {
+      status: hasChain ? 'PENDING_APPROVAL' : 'APPROVED',
+      submittedAt: now,
+      matrixId: chain.matrixId,
+      matrixVersion: chain.version,
+      currentStepOrder: hasChain ? 1 : null,
+      counterpartySnapshot: pr.counterpartySnapshot ?? null,
+      beneficiarySnapshot: pr.beneficiarySnapshot ?? null,
+      sanctionWarning: pr.sanctionWarning,
+      updatedBy: userId,
+      approvedAt: hasChain ? null : now,
+    });
 
-    return this.repo.save(pr);
+    return this.requireById(id, true);
   }
 
   /**
@@ -865,6 +879,18 @@ export class PaymentRequestsService {
     const seq = await this.repo.nextSequenceValue();
     const year = new Date().getFullYear();
     return `PR-${year}-${String(seq).padStart(5, '0')}`;
+  }
+
+  async addDocument(
+    id: string,
+    dto: DocumentAttachmentDto,
+    userId: string,
+  ): Promise<PaymentRequestDocument[]> {
+    const pr = await this.requireById(id);
+    this.assertStatus(pr, 'DRAFT', 'add document to');
+    const docs = this.buildDocuments([dto], id, userId);
+    await this.repo.saveDocuments(docs);
+    return this.getDocuments(id);
   }
 
   private buildDocuments(

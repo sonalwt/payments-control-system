@@ -120,14 +120,19 @@ export function friendlyError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   const status = err instanceof ApiError ? err.status : 0;
 
-  // HTTP-status-based overrides first
+  // 401 / 403 are always generic — the backend message adds no value here.
   if (status === 401) return 'Your session has expired. Please sign in again.';
   if (status === 403) return 'You do not have permission to perform this action.';
-  if (status === 404) return 'The requested record was not found.';
-  if (status >= 500) return 'An unexpected server error occurred. Please try again or contact support.';
 
-  // Pattern-match well-known backend messages → user-friendly text
+  // Pattern-match well-known backend messages BEFORE falling back to
+  // status-based generics — this ensures specific errors are always shown.
   const lower = raw.toLowerCase();
+
+  // Approval matrix errors
+  if (lower.includes('no published approval matrix'))
+    return `No approval matrix is configured for this payment type. Ask your administrator to create and publish one under Masters → Approval Matrices.`;
+  if (lower.includes('no band') && lower.includes('matrix') && lower.includes('covers'))
+    return 'The payment amount falls outside the bands defined in the approval matrix. Ask your administrator to update the matrix bands under Masters → Approval Matrices.';
 
   if (lower.includes('cooling') && lower.includes('period'))
     return 'This account is still within its cooling-off period. Use Force Activate to override, or wait for it to expire.';
@@ -139,8 +144,8 @@ export function friendlyError(err: unknown): string {
     return 'Callback evidence is required for ADD and MODIFY requests.';
   if (lower.includes('callback'))
     return 'Callback evidence must be provided before verifying this request.';
-  if (lower.includes('missing') && lower.includes('document'))
-    return 'One or more required supporting documents are missing. Please upload all required documents first.';
+  if (lower.includes('required document') || (lower.includes('missing') && lower.includes('document')))
+    return raw; // Already user-readable: lists exactly which documents are missing
   if (lower.includes('duplicate key') || lower.includes('already exists') || lower.includes('unique constraint'))
     return 'A record with this information already exists.';
   if (lower.includes('foreign key') || lower.includes('referenced by'))
@@ -163,11 +168,49 @@ export function friendlyError(err: unknown): string {
     return 'This request is no longer awaiting approval. Please refresh.';
   if (lower.includes('active') && lower.includes('beneficiary'))
     return 'Only ACTIVE beneficiary accounts can be used as a copy source.';
+  if (lower.includes('status') && lower.includes('cannot') && lower.includes('edit'))
+    return raw; // Status transition errors are already clear
   if (lower.includes('must provide') || lower.includes('is required') || lower.includes('should not be empty'))
-    return raw; // Keep validation messages — they're already user-readable from class-validator
+    return raw; // class-validator messages are already user-readable
 
-  // Generic fallback: return the raw message but strip any JSON / stack noise
-  if (raw.length > 200) return 'An unexpected error occurred. Please try again.';
+  // ── Common 500-class causes ──────────────────────────────────────────────
+  // The backend HttpExceptionFilter forwards the original exception message
+  // for 500s, so we can still pattern-match and show something actionable.
+  if (lower.includes('database error') || lower.includes('query failed'))
+    return 'A database error occurred. Please try again. If the problem persists, contact your system administrator.';
+  if (lower.includes('connection') && lower.includes('refused'))
+    return 'Could not connect to the server. Please check that the backend service is running.';
+  if (lower.includes('jwt') || lower.includes('token') || lower.includes('unauthorized'))
+    return 'Your session has expired or is invalid. Please sign in again.';
+  if (lower.includes('entity') && lower.includes('not found'))
+    return 'The record you are trying to access no longer exists. It may have been deleted.';
+  if (lower.includes('no approval') || lower.includes('approval matrix'))
+    return 'No approval matrix is configured for this payment type. Ask your administrator to set one up under Masters → Approval Matrices.';
+  if (lower.includes('amount') && (lower.includes('band') || lower.includes('range')))
+    return 'The payment amount is outside the configured approval bands. Ask your administrator to update the matrix.';
+  if (lower.includes('status') && lower.includes('draft'))
+    return 'This action can only be performed on a Draft request.';
+  if (lower.includes('beneficiary') && lower.includes('active'))
+    return 'The beneficiary account must be in ACTIVE status before a payment can be submitted.';
+  if (lower.includes('source account') || lower.includes('bank account'))
+    return 'The selected bank account is not available or does not exist.';
+
+  // For 404 and 500: if the backend sent a specific message (not the default
+  // NestJS generic text) pass it through directly so the user sees exactly what
+  // went wrong instead of a vague fallback.
+  const isGenericBackendMsg =
+    raw === 'Internal server error' ||
+    raw === 'Not Found' ||
+    raw === 'Bad Gateway' ||
+    raw.toLowerCase() === 'request failed';
+
+  if (!isGenericBackendMsg && raw.length > 0 && raw.length <= 300) return raw;
+
+  if (status === 404) return 'The requested record was not found.';
+  if (status >= 500) return 'An unexpected server error occurred. Please try again or contact support.';
+
+  // Generic fallback
+  if (raw.length > 300) return 'An unexpected error occurred. Please try again.';
   return raw || 'An unexpected error occurred. Please try again.';
 }
 

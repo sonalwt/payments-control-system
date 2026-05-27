@@ -126,6 +126,74 @@ export class PaymentRequestsRepository {
     });
   }
 
+  /**
+   * Delete ALL approval records for a payment request.
+   * Used at the start of submit() to purge orphaned records left behind
+   * by a previous partial submit that failed after saving approvals but
+   * before updating the PR status.
+   */
+  deleteApprovals(paymentRequestId: string): Promise<void> {
+    return this.approvalRepo.delete({ paymentRequestId }).then(() => undefined);
+  }
+
+  /**
+   * Delete COUNTERPARTY_SNAPSHOT documents for a payment request.
+   * Used alongside deleteApprovals() to clean up a partial submit.
+   */
+  deleteSnapshotDocuments(paymentRequestId: string): Promise<void> {
+    return this.docRepo
+      .delete({ paymentRequestId, documentCode: 'COUNTERPARTY_SNAPSHOT' })
+      .then(() => undefined);
+  }
+
+  /**
+   * Update only the status/snapshot columns on a payment request row.
+   * Using a direct update (not save()) avoids the TypeORM cascade that
+   * would otherwise try to nullify FK columns on child rows that were
+   * inserted independently (saveApprovals / saveDocuments).
+   */
+  async updateSubmitFields(
+    id: string,
+    fields: {
+      status: string;
+      submittedAt: Date;
+      matrixId: string | null;
+      matrixVersion: number | null;
+      currentStepOrder: number | null;
+      counterpartySnapshot: Record<string, unknown> | null;
+      beneficiarySnapshot: Record<string, unknown> | null;
+      sanctionWarning: boolean;
+      updatedBy: string;
+      approvedAt?: Date | null;
+    },
+  ): Promise<void> {
+    const set: Record<string, unknown> = {
+      status: fields.status,
+      submitted_at: fields.submittedAt,
+      matrix_id: fields.matrixId,
+      matrix_version: fields.matrixVersion,
+      current_step_order: fields.currentStepOrder,
+      counterparty_snapshot: fields.counterpartySnapshot,
+      beneficiary_snapshot: fields.beneficiarySnapshot,
+      sanction_warning: fields.sanctionWarning,
+      updated_by: fields.updatedBy,
+      updated_at: new Date(),
+    };
+    if (fields.approvedAt !== undefined) {
+      set['approved_at'] = fields.approvedAt;
+    }
+
+    const setClauses = Object.keys(set)
+      .map((col, i) => `"${col}" = $${i + 2}`)
+      .join(', ');
+    const values = [id, ...Object.values(set)];
+
+    await this.prRepo.query(
+      `UPDATE payment_requests SET ${setClauses} WHERE id = $1`,
+      values,
+    );
+  }
+
   // -----------------------------------------------------------------------
   // Role-based approval check (§3): user holds the approver role in the entity
   // -----------------------------------------------------------------------

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Plus, Trash2, UploadCloud } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, resolveFileUrl } from '@/lib/api';
 import type { BankAccount, LegalEntity, Paginated, StatementUpload } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -435,7 +435,7 @@ export default function StatementUploadsPage(): React.ReactElement {
                   <TableCell>
                     {u.fileUrl ? (
                       <a
-                        href={u.fileUrl}
+                        href={resolveFileUrl(u.fileUrl)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-primary hover:underline"

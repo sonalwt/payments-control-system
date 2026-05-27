@@ -84,6 +84,8 @@ export interface User extends AuditFields {
   employeeCode?: string | null;
   isActive: boolean;
   lastLoginAt?: string | null;
+  roles?: string[];
+  legalEntities?: string[];
 }
 
 export interface UserEntityRole {

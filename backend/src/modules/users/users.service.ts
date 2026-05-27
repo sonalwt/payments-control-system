@@ -53,7 +53,44 @@ export class UsersService {
       qb.andWhere('(u.fullName ILIKE :s OR u.email ILIKE :s)', { s: `%${search}%` });
     }
     const [data, total] = await qb.getManyAndCount();
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+
+    // Batch-load role names and legal entity names for all users on this page.
+    const roleMap = new Map<string, string[]>();
+    const entityMap = new Map<string, string[]>();
+    if (data.length > 0) {
+      const ids = data.map((u) => u.id);
+      const rows = await this.repo
+        .createQueryBuilder('u')
+        .leftJoin('u.entityRoles', 'uer', 'uer.is_active = true')
+        .leftJoin('uer.role', 'r')
+        .leftJoin('uer.legalEntity', 'le')
+        .where('u.id IN (:...ids)', { ids })
+        .select(['u.id AS uid', 'r.name AS role_name', 'le.name AS entity_name'])
+        .getRawMany<{ uid: string; role_name: string | null; entity_name: string | null }>();
+      for (const row of rows) {
+        if (row.role_name) {
+          if (!roleMap.has(row.uid)) roleMap.set(row.uid, []);
+          if (!roleMap.get(row.uid)!.includes(row.role_name))
+            roleMap.get(row.uid)!.push(row.role_name);
+        }
+        if (row.entity_name) {
+          if (!entityMap.has(row.uid)) entityMap.set(row.uid, []);
+          if (!entityMap.get(row.uid)!.includes(row.entity_name))
+            entityMap.get(row.uid)!.push(row.entity_name);
+        }
+      }
+    }
+
+    return {
+      data: data.map((u) => Object.assign(u, {
+        roles: roleMap.get(u.id) ?? [],
+        legalEntities: entityMap.get(u.id) ?? [],
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string): Promise<User> {

@@ -10,7 +10,6 @@ import {
   Globe,
   Briefcase,
   Users2,
-  ShieldCheck,
   Network,
   LayoutDashboard,
   LogOut,
@@ -101,7 +100,6 @@ const GROUPS: NavGroup[] = [
       { href: '/business-units', label: 'Business Units', icon: Briefcase },
       { href: '/departments', label: 'Departments', icon: Network },
       { href: '/users', label: 'Users', icon: Users2 },
-      { href: '/user-roles', label: 'User Role Assignment', icon: ShieldCheck },
     ],
   },
   {
