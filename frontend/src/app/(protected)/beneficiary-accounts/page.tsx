@@ -49,7 +49,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ interface FileUploadFieldProps {
 function FileUploadField({ label, documentCode, doc, onChange }: FileUploadFieldProps): React.ReactElement {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const { toast } = useToast();
+  const notify = useNotify();
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -141,7 +141,7 @@ function FileUploadField({ label, documentCode, doc, onChange }: FileUploadField
         mimeType: file.type,
       });
     } catch {
-      toast({ title: 'Upload failed', variant: 'error' });
+      notify.error('Upload failed');
     } finally {
       setUploading(false);
       e.target.value = '';
@@ -748,7 +748,7 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
   const [copying, setCopying] = useState<BeneficiaryAccount | null>(null);
   const [overriding, setOverriding] = useState<BeneficiaryAccount | null>(null);
 
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -820,10 +820,10 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
-      toast({ title: 'Change request submitted', variant: 'success' });
+      notify.success('Change request submitted');
     },
     onError: (err: Error) =>
-      toast({ title: 'Submit failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Submit failed'),
   });
 
   const modifyMutation = useMutation({
@@ -843,10 +843,10 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setModifying(null);
-      toast({ title: 'Modify change request submitted', variant: 'success' });
+      notify.success('Modify change request submitted');
     },
     onError: (err: Error) =>
-      toast({ title: 'Submit failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Submit failed'),
   });
 
   const deactivateMutation = useMutation({
@@ -859,10 +859,10 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
-      toast({ title: 'Deactivate change request submitted', variant: 'success' });
+      notify.success('Deactivate change request submitted');
     },
     onError: (err: Error) =>
-      toast({ title: 'Submit failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Submit failed'),
   });
 
   const activateMutation = useMutation({
@@ -870,10 +870,10 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
       api.post(`/beneficiary-accounts/${id}/activate`),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
-      toast({ title: 'Account activated', variant: 'success' });
+      notify.success('Account activated');
     },
     onError: (err: Error) =>
-      toast({ title: 'Activate failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Activate failed'),
   });
 
   const copyMutation = useMutation({
@@ -889,10 +889,10 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCopying(null);
-      toast({ title: 'Account copied — now active', variant: 'success' });
+      notify.success('Account copied — now active');
     },
     onError: (err: Error) =>
-      toast({ title: 'Copy failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Copy failed'),
   });
 
   const overrideMutation = useMutation({
@@ -901,10 +901,10 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setOverriding(null);
-      toast({ title: 'Cooling-off overridden — account now active', variant: 'success' });
+      notify.success('Cooling-off overridden — account now active');
     },
     onError: (err: Error) =>
-      toast({ title: 'Override failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Override failed'),
   });
 
   function canActivate(account: BeneficiaryAccount): boolean {

@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { api } from '@/lib/api';
 import type { BeneficiaryAccount, Counterparty, Employee, LegalEntity, PaymentType, SanctionedCountry } from '@/types/domain';
 
@@ -99,7 +99,7 @@ export function PaymentRequestForm({
     },
   });
 
-  const { toast } = useToast();
+  const notify = useNotify();
   const [uploadingDocIdx, setUploadingDocIdx] = useState<number>(-1);
 
   const { fields: docFields, append: addDoc, remove: removeDoc } = useFieldArray({
@@ -465,7 +465,7 @@ export function PaymentRequestForm({
                             form.setValue(`documents.${idx}.fileUrl`, result.url, { shouldValidate: true });
                             form.setValue(`documents.${idx}.mimeType`, file.type);
                           } catch {
-                            toast({ title: 'Upload failed', variant: 'error' });
+                            notify.error('Upload failed');
                           } finally {
                             setUploadingDocIdx(-1);
                             e.target.value = '';

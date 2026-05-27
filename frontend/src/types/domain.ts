@@ -100,6 +100,14 @@ export interface UserEntityRole {
   effectiveTo?: string | null;
 }
 
+export interface UserRole {
+  id: string;
+  userId: string;
+  roleId: string;
+  role?: Role;
+  createdAt: string;
+}
+
 export type PaymentDirection = 'OUTGOING' | 'INCOMING';
 
 export interface DocumentPolicyItem {

@@ -37,7 +37,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Select } from '@/components/ui/select';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 const CHANGE_TYPE_LABEL: Record<EbacChangeType, string> = {
   ADD: 'Add',
@@ -70,7 +70,7 @@ const STATUS_STYLE: Record<EbacStatus, string> = {
 export default function EmployeeBankAccountChangesPage() {
   const router = useRouter();
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const [page, setPage] = useState(1);
   const [filterStatus, setFilterStatus] = useState('');
@@ -106,13 +106,13 @@ export default function EmployeeBankAccountChangesPage() {
     mutationFn: (payload: object) =>
       api.post<EmployeeBankAccountChange>('/employee-bank-account-changes', payload),
     onSuccess: () => {
-      toast({ title: 'Change request created', description: 'The request is now pending verification.' });
+      notify.info('Change request created', 'The request is now pending verification.');
       qc.invalidateQueries({ queryKey: ['ebac'] });
       setOpen(false);
       resetForm();
     },
     onError: (e: Error) =>
-      toast({ title: 'Create failed', description: e.message, variant: 'error' }),
+      notify.error('Create failed', e),
   });
 
   function resetForm() {
@@ -130,7 +130,7 @@ export default function EmployeeBankAccountChangesPage() {
 
   function handleCreate() {
     if (!employeeId) {
-      toast({ title: 'Missing fields', description: 'Please select an employee.', variant: 'error' });
+      notify.error('Missing fields', 'Please select an employee.');
       return;
     }
     const proposedData: Record<string, string> = {};

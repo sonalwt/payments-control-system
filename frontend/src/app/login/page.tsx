@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuth } from '@/hooks/use-auth';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,7 +19,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function LoginPage(): React.ReactElement {
   const { login } = useAuth();
-  const { toast } = useToast();
+  const notify = useNotify();
   const [submitting, setSubmitting] = useState(false);
   const {
     register,
@@ -32,11 +32,7 @@ export default function LoginPage(): React.ReactElement {
     try {
       await login(data.email, data.password);
     } catch (err) {
-      toast({
-        title: 'Sign in failed',
-        description: err instanceof Error ? err.message : 'Unknown error',
-        variant: 'error',
-      });
+      notify.error('Sign in failed', err);
     } finally {
       setSubmitting(false);
     }

@@ -32,7 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 const STATUS_STYLE: Record<ReconciliationExceptionStatus, string> = {
   OPEN: 'bg-red-100 text-red-800',
@@ -78,7 +78,7 @@ export default function ReconciliationExceptionsPage(): React.ReactElement {
   } | null>(null);
   const [noteText, setNoteText] = useState('');
 
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = new URLSearchParams();
@@ -118,10 +118,10 @@ export default function ReconciliationExceptionsPage(): React.ReactElement {
       void qc.invalidateQueries({ queryKey: ['reconciliation-exceptions'] });
       setActionTarget(null);
       setNoteText('');
-      toast({ title: 'Exception updated', variant: 'success' });
+      notify.success('Exception updated');
     },
     onError: (e: Error) =>
-      toast({ title: 'Action failed', description: friendlyError(e), variant: 'error' }),
+      notify.error('Action failed'),
   });
 
   const exceptions = data?.data ?? [];

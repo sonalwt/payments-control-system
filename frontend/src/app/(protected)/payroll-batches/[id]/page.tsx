@@ -25,7 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 const STATUS_LABEL: Record<PayrollBatchStatus, string> = {
   VALIDATION_FAILED: 'Validation Failed',
@@ -53,7 +53,7 @@ export default function PayrollBatchDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
@@ -68,27 +68,27 @@ export default function PayrollBatchDetailPage() {
   const submitMutation = useMutation({
     mutationFn: () => api.post(`/payroll-batches/${id}/submit`),
     onSuccess: () => {
-      toast({ title: 'Batch submitted', description: 'Payroll batch is now pending approval.' });
+      notify.info('Batch submitted', 'Payroll batch is now pending approval.');
       qc.invalidateQueries({ queryKey: ['payroll-batch', id] });
     },
     onError: (e: Error) =>
-      toast({ title: 'Submit failed', description: e.message, variant: 'error' }),
+      notify.error('Submit failed', e),
   });
 
   const approveMutation = useMutation({
     mutationFn: () => api.post(`/payroll-batches/${id}/approve`),
     onSuccess: () => {
-      toast({ title: 'Batch approved', description: 'Payment requests have been submitted.' });
+      notify.info('Batch approved', 'Payment requests have been submitted.');
       qc.invalidateQueries({ queryKey: ['payroll-batch', id] });
     },
     onError: (e: Error) =>
-      toast({ title: 'Approve failed', description: e.message, variant: 'error' }),
+      notify.error('Approve failed', e),
   });
 
   const rejectMutation = useMutation({
     mutationFn: () => api.post(`/payroll-batches/${id}/reject`, { reason: rejectReason }),
     onSuccess: () => {
-      toast({ title: 'Batch rejected' });
+      notify.info('Batch rejected');
       setRejectOpen(false);
       setRejectError('');
       qc.invalidateQueries({ queryKey: ['payroll-batch', id] });
@@ -105,13 +105,14 @@ export default function PayrollBatchDetailPage() {
   type BreakdownRow = { count: number; grossMinor: number; netMinor: number; deductionsMinor: number };
 
   // Build country-level breakdown for the approval summary (§5.2c)
+  // Note: bigint columns arrive as strings from the API — coerce to Number before adding.
   const countryBreakdown = items.reduce<Record<string, BreakdownRow>>((acc, item) => {
     const cc = item.employee?.countryCode ?? 'XX';
     if (!acc[cc]) acc[cc] = { count: 0, grossMinor: 0, netMinor: 0, deductionsMinor: 0 };
     acc[cc].count += 1;
-    acc[cc].grossMinor += item.grossAmountMinor;
-    acc[cc].netMinor += item.netAmountMinor;
-    acc[cc].deductionsMinor += item.deductionsMinor;
+    acc[cc].grossMinor += Number(item.grossAmountMinor);
+    acc[cc].netMinor += Number(item.netAmountMinor);
+    acc[cc].deductionsMinor += Number(item.deductionsMinor);
     return acc;
   }, {});
   const countryCodes = Object.keys(countryBreakdown).sort();
@@ -121,9 +122,9 @@ export default function PayrollBatchDetailPage() {
     const cat = item.employee?.payrollCategory ?? 'Unassigned';
     if (!acc[cat]) acc[cat] = { count: 0, grossMinor: 0, netMinor: 0, deductionsMinor: 0 };
     acc[cat].count += 1;
-    acc[cat].grossMinor += item.grossAmountMinor;
-    acc[cat].netMinor += item.netAmountMinor;
-    acc[cat].deductionsMinor += item.deductionsMinor;
+    acc[cat].grossMinor += Number(item.grossAmountMinor);
+    acc[cat].netMinor += Number(item.netAmountMinor);
+    acc[cat].deductionsMinor += Number(item.deductionsMinor);
     return acc;
   }, {});
   const categories = Object.keys(categoryBreakdown).sort();

@@ -33,7 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -150,7 +150,7 @@ function DetailDialog({
   onClose,
   onActionSuccess,
 }: DetailDialogProps): React.ReactElement {
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const [verificationNotes, setVerificationNotes] = useState('');
   const [callbackEvidence, setCallbackEvidence] = useState('');
@@ -176,12 +176,12 @@ function DetailDialog({
         callbackEvidence: callbackEvidence.trim() || undefined,
       }),
     onSuccess: () => {
-      toast({ title: 'Request verified', variant: 'success' });
+      notify.success('Request verified');
       onActionSuccess();
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Verify failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Verify failed'),
   });
 
   const approveMutation = useMutation({
@@ -191,12 +191,12 @@ function DetailDialog({
         sanctionAcknowledgement: sanctionAck.trim() || undefined,
       }),
     onSuccess: () => {
-      toast({ title: 'Request approved', variant: 'success' });
+      notify.success('Request approved');
       onActionSuccess();
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Approve failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Approve failed'),
   });
 
   const rejectMutation = useMutation({
@@ -205,24 +205,24 @@ function DetailDialog({
         reason: rejectReason.trim(),
       }),
     onSuccess: () => {
-      toast({ title: 'Request rejected', variant: 'success' });
+      notify.success('Request rejected');
       onActionSuccess();
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Reject failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Reject failed'),
   });
 
   const cancelMutation = useMutation({
     mutationFn: () =>
       api.post(`/beneficiary-accounts/change-requests/${request.id}/cancel`, {}),
     onSuccess: () => {
-      toast({ title: 'Request cancelled', variant: 'success' });
+      notify.success('Request cancelled');
       onActionSuccess();
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Cancel failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Cancel failed'),
   });
 
   const needsCallback = request.changeType !== 'DEACTIVATE';

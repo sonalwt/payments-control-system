@@ -30,7 +30,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
@@ -55,7 +55,7 @@ export default function BanksPage(): React.ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Bank | null>(null);
   const [deleting, setDeleting] = useState<Bank | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -76,10 +76,10 @@ export default function BanksPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
-      toast({ title: 'Bank added', variant: 'success' });
+      notify.success('Bank added');
     },
     onError: (err: Error) =>
-      toast({ title: 'Add failed', description: err.message, variant: 'error' }),
+      notify.error('Add failed', err),
   });
 
   const updateMutation = useMutation({
@@ -88,10 +88,10 @@ export default function BanksPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setEditing(null);
-      toast({ title: 'Bank updated', variant: 'success' });
+      notify.success('Bank updated');
     },
     onError: (err: Error) =>
-      toast({ title: 'Update failed', description: err.message, variant: 'error' }),
+      notify.error('Update failed', err),
   });
 
   const deleteMutation = useMutation({
@@ -99,10 +99,10 @@ export default function BanksPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setDeleting(null);
-      toast({ title: 'Bank deleted', variant: 'success' });
+      notify.success('Bank deleted');
     },
     onError: (err: Error) =>
-      toast({ title: 'Delete failed', description: err.message, variant: 'error' }),
+      notify.error('Delete failed', err),
   });
 
   return (

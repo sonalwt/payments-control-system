@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 const KEY = 'incoming-receipts';
 
@@ -51,7 +51,7 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const ir = useQuery({
     queryKey: [KEY, id],
@@ -76,10 +76,10 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
     mutationFn: () => api.post<IncomingReceipt>(`/incoming-receipts/${id}/submit`),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY, id] });
-      toast({ title: 'Submitted — awaiting receipt', variant: 'success' });
+      notify.success('Submitted — awaiting receipt');
     },
     onError: (err: Error) =>
-      toast({ title: 'Submit failed', description: err.message, variant: 'error' }),
+      notify.error('Submit failed', err),
   });
 
   const [showForm, setShowForm] = useState(false);
@@ -102,11 +102,11 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
-      toast({ title: 'Marked received — account credited', variant: 'success' });
+      notify.success('Marked received — account credited');
       setShowForm(false);
     },
     onError: (err: Error) =>
-      toast({ title: 'Mark received failed', description: err.message, variant: 'error' }),
+      notify.error('Mark received failed', err),
   });
 
   const cancelMutation = useMutation({
@@ -114,10 +114,10 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
       api.post<IncomingReceipt>(`/incoming-receipts/${id}/cancel`, { reason }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
-      toast({ title: 'Cancelled', variant: 'success' });
+      notify.success('Cancelled');
     },
     onError: (err: Error) =>
-      toast({ title: 'Cancel failed', description: err.message, variant: 'error' }),
+      notify.error('Cancel failed', err),
   });
 
   if (ir.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;

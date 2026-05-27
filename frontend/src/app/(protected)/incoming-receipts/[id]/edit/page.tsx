@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 const KEY = 'incoming-receipts';
 
@@ -38,7 +38,7 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
   const id = params.id;
   const router = useRouter();
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const ir = useQuery({
     queryKey: [KEY, id],
@@ -105,9 +105,9 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
           mimeType: file.type,
         },
       ]);
-      toast({ title: 'Document uploaded', variant: 'success' });
+      notify.success('Document uploaded');
     } catch (err) {
-      toast({ title: 'Upload failed', description: friendlyError(err), variant: 'error' });
+      notify.error('Upload failed');
     } finally {
       setUploading(false);
       e.target.value = '';
@@ -126,11 +126,11 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
-      toast({ title: 'Draft updated', variant: 'success' });
+      notify.success('Draft updated');
       router.push(`/incoming-receipts/${id}`);
     },
     onError: (err) =>
-      toast({ title: 'Update failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Update failed'),
   });
 
   if (ir.isLoading) {

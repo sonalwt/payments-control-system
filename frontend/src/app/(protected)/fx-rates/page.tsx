@@ -29,7 +29,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 
 const KEY = 'fx-rates';
@@ -64,7 +64,7 @@ export default function FxRatesPage(): React.ReactElement {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [overrideOpen, setOverrideOpen] = useState(false);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -82,14 +82,10 @@ export default function FxRatesPage(): React.ReactElement {
     mutationFn: () => api.post<FetchResponse>('/fx-rates/fetch', {}),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: [KEY] });
-      toast({
-        title: `Fetched ${r.fetched} rates from ${r.providerName}`,
-        description: `${r.heldStale} held as stale for ${r.asOfDate}.`,
-        variant: 'success',
-      });
+      notify.success(`Fetched ${r.fetched} rates from ${r.providerName}`, `${r.heldStale} held as stale for ${r.asOfDate}.`);
     },
     onError: (err: Error) =>
-      toast({ title: 'Fetch failed', description: err.message, variant: 'error' }),
+      notify.error('Fetch failed', err),
   });
 
   const overrideMutation = useMutation({
@@ -98,10 +94,10 @@ export default function FxRatesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setOverrideOpen(false);
-      toast({ title: 'Rate overridden', variant: 'success' });
+      notify.success('Rate overridden');
     },
     onError: (err: Error) =>
-      toast({ title: 'Override failed', description: err.message, variant: 'error' }),
+      notify.error('Override failed', err),
   });
 
   return (

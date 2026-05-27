@@ -28,7 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ interface DetailDialogProps {
 }
 
 function DetailDialog({ account, open, onClose, onActionSuccess }: DetailDialogProps): React.ReactElement {
-  const { toast } = useToast();
+  const notify = useNotify();
   const [overrideReason, setOverrideReason] = useState('');
   const [showOverride, setShowOverride] = useState(false);
 
@@ -90,12 +90,12 @@ function DetailDialog({ account, open, onClose, onActionSuccess }: DetailDialogP
   const activateMutation = useMutation({
     mutationFn: () => api.post(`/chairman-beneficiaries/${account.id}/activate`, {}),
     onSuccess: () => {
-      toast({ title: 'Account activated', variant: 'success' });
+      notify.success('Account activated');
       onActionSuccess();
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Activation failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Activation failed'),
   });
 
   const overrideMutation = useMutation({
@@ -104,12 +104,12 @@ function DetailDialog({ account, open, onClose, onActionSuccess }: DetailDialogP
         reason: overrideReason.trim(),
       }),
     onSuccess: () => {
-      toast({ title: 'Cooling-off overridden', variant: 'success' });
+      notify.success('Cooling-off overridden');
       onActionSuccess();
       handleClose();
     },
     onError: (err: Error) =>
-      toast({ title: 'Override failed', description: friendlyError(err), variant: 'error' }),
+      notify.error('Override failed'),
   });
 
   const isCoolingOff =

@@ -29,7 +29,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 // -----------------------------------------------------------------------
 
@@ -71,7 +71,7 @@ function IngestionBadge({
 
 export default function StatementUploadsPage(): React.ReactElement {
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const [filterEntityId, setFilterEntityId] = useState('');
   const [filterAccountId, setFilterAccountId] = useState('');
@@ -136,18 +136,18 @@ export default function StatementUploadsPage(): React.ReactElement {
       void qc.invalidateQueries({ queryKey: ['statement-uploads'] });
       setFormOpen(false);
       resetForm();
-      toast({ title: 'Statement uploaded', variant: 'success' });
+      notify.success('Statement uploaded');
     },
-    onError: (e: Error) => toast({ title: 'Upload failed', description: e.message, variant: 'error' }),
+    onError: (e: Error) => notify.error('Upload failed', e),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.del(`/statement-uploads/${id}`),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['statement-uploads'] });
-      toast({ title: 'Statement removed', variant: 'success' });
+      notify.success('Statement removed');
     },
-    onError: (e: Error) => toast({ title: 'Delete failed', description: e.message, variant: 'error' }),
+    onError: (e: Error) => notify.error('Delete failed', e),
   });
 
   const entities = entitiesData?.data ?? [];
@@ -280,7 +280,7 @@ export default function StatementUploadsPage(): React.ReactElement {
                             setFormFileName(result.fileName);
                             setFormFileUrl(result.url);
                           } catch {
-                            toast({ title: 'Upload failed', variant: 'error' });
+                            notify.error('Upload failed');
                           } finally {
                             setFormUploading(false);
                             e.target.value = '';

@@ -24,7 +24,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 import { GroupForm, type GroupFormData } from './group-form';
@@ -37,7 +37,7 @@ export default function GroupsPage(): React.ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
   const [deleting, setDeleting] = useState<Group | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -56,9 +56,9 @@ export default function GroupsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
-      toast({ title: 'Group created', variant: 'success' });
+      notify.success('Group created');
     },
-    onError: (err: Error) => toast({ title: 'Create failed', description: err.message, variant: 'error' }),
+    onError: (err: Error) => notify.error('Create failed', err),
   });
 
   const updateMutation = useMutation({
@@ -67,9 +67,9 @@ export default function GroupsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setEditing(null);
-      toast({ title: 'Group updated', variant: 'success' });
+      notify.success('Group updated');
     },
-    onError: (err: Error) => toast({ title: 'Update failed', description: err.message, variant: 'error' }),
+    onError: (err: Error) => notify.error('Update failed', err),
   });
 
   const deleteMutation = useMutation({
@@ -77,9 +77,9 @@ export default function GroupsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setDeleting(null);
-      toast({ title: 'Group deleted', variant: 'success' });
+      notify.success('Group deleted');
     },
-    onError: (err: Error) => toast({ title: 'Delete failed', description: err.message, variant: 'error' }),
+    onError: (err: Error) => notify.error('Delete failed', err),
   });
 
   return (

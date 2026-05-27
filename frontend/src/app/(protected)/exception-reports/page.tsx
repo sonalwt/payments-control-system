@@ -23,7 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 
 const KEY = 'exception-reports';
@@ -31,7 +31,7 @@ const KEY = 'exception-reports';
 export default function ExceptionReportsPage(): React.ReactElement {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<ExceptionReport | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -48,10 +48,10 @@ export default function ExceptionReportsPage(): React.ReactElement {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
-      toast({ title: 'Report generated for today', variant: 'success' });
+      notify.success('Report generated for today');
     },
     onError: (e: Error) =>
-      toast({ title: 'Generate failed', description: e.message, variant: 'error' }),
+      notify.error('Generate failed', e),
   });
 
   return (

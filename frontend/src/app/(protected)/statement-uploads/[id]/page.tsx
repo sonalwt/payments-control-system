@@ -39,7 +39,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 function fmtAmount(v: string | number | null | undefined, currency?: string): string {
   if (v == null) return '—';
@@ -75,7 +75,7 @@ export default function StatementUploadDetailPage(): React.ReactElement {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const [unmatchTarget, setUnmatchTarget] = useState<StatementLine | null>(null);
   const [unmatchReason, setUnmatchReason] = useState('');
@@ -99,10 +99,10 @@ export default function StatementUploadDetailPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['statement-upload', id] });
       void qc.invalidateQueries({ queryKey: ['statement-lines', id] });
-      toast({ title: 'Statement ingested', variant: 'success' });
+      notify.success('Statement ingested');
     },
     onError: (e: Error) =>
-      toast({ title: 'Ingest failed', description: friendlyError(e), variant: 'error' }),
+      notify.error('Ingest failed'),
   });
 
   const rerunMutation = useMutation({
@@ -111,10 +111,10 @@ export default function StatementUploadDetailPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['statement-upload', id] });
       void qc.invalidateQueries({ queryKey: ['statement-lines', id] });
-      toast({ title: 'Matcher re-run', variant: 'success' });
+      notify.success('Matcher re-run');
     },
     onError: (e: Error) =>
-      toast({ title: 'Re-run failed', description: friendlyError(e), variant: 'error' }),
+      notify.error('Re-run failed'),
   });
 
   const confirmMutation = useMutation({
@@ -127,10 +127,10 @@ export default function StatementUploadDetailPage(): React.ReactElement {
       void qc.invalidateQueries({ queryKey: ['statement-lines', id] });
       setConfirmTarget(null);
       setConfirmNote('');
-      toast({ title: 'Match confirmed', variant: 'success' });
+      notify.success('Match confirmed');
     },
     onError: (e: Error) =>
-      toast({ title: 'Confirm failed', description: friendlyError(e), variant: 'error' }),
+      notify.error('Confirm failed'),
   });
 
   const unmatchMutation = useMutation({
@@ -143,10 +143,10 @@ export default function StatementUploadDetailPage(): React.ReactElement {
       void qc.invalidateQueries({ queryKey: ['statement-lines', id] });
       setUnmatchTarget(null);
       setUnmatchReason('');
-      toast({ title: 'Line moved to exception', variant: 'success' });
+      notify.success('Line moved to exception');
     },
     onError: (e: Error) =>
-      toast({ title: 'Unmatch failed', description: friendlyError(e), variant: 'error' }),
+      notify.error('Unmatch failed'),
   });
 
   const data = upload.data;

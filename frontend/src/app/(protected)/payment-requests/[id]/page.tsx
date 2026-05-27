@@ -43,7 +43,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 const STATUS_STYLE: Record<PaymentRequestStatus, string> = {
   DRAFT: 'bg-amber-500/10 text-amber-700',
@@ -85,7 +85,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
   const { user } = useAuth();
 
   // §9 — Role-based flags for chairman payment UI gating
@@ -210,8 +210,8 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
 
   const submitMutation = useMutation({
     mutationFn: () => api.post<PaymentRequest>(`/payment-requests/${id}/submit`),
-    onSuccess: () => { invalidate(); toast({ title: 'Submitted for approval', variant: 'success' }); },
-    onError: (e: Error) => toast({ title: 'Submit failed', description: friendlyError(e), variant: 'error' }),
+    onSuccess: () => { invalidate(); notify.success('Submitted for approval'); },
+    onError: (e: Error) => notify.error('Submit failed'),
   });
 
   const approveMutation = useMutation({
@@ -225,9 +225,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       void qc.invalidateQueries({ queryKey: ['payment-requests', id, 'approvals'] });
       setApproveOpen(false);
       setSanctionAcknowledgement('');
-      toast({ title: 'Approved successfully', variant: 'success' });
+      notify.success('Approved successfully');
     },
-    onError: (e: Error) => toast({ title: 'Approval failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Approval failed'),
   });
 
   const rejectMutation = useMutation({
@@ -237,9 +237,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       invalidate();
       void qc.invalidateQueries({ queryKey: ['payment-requests', id, 'approvals'] });
       setRejectOpen(false);
-      toast({ title: 'Request rejected', variant: 'success' });
+      notify.success('Request rejected');
     },
-    onError: (e: Error) => toast({ title: 'Rejection failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Rejection failed'),
   });
 
   const withdrawMutation = useMutation({
@@ -248,9 +248,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onSuccess: () => {
       invalidate();
       setWithdrawOpen(false);
-      toast({ title: 'Request withdrawn', variant: 'success' });
+      notify.success('Request withdrawn');
     },
-    onError: (e: Error) => toast({ title: 'Withdraw failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Withdraw failed'),
   });
 
   const cancelMutation = useMutation({
@@ -259,9 +259,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onSuccess: () => {
       invalidate();
       setCancelOpen(false);
-      toast({ title: 'Request cancelled', variant: 'success' });
+      notify.success('Request cancelled');
     },
-    onError: (e: Error) => toast({ title: 'Cancel failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Cancel failed'),
   });
 
   const releaseMutation = useMutation({
@@ -273,9 +273,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onSuccess: () => {
       invalidate();
       setReleaseOpen(false);
-      toast({ title: 'Released to bank', variant: 'success' });
+      notify.success('Released to bank');
     },
-    onError: (e: Error) => toast({ title: 'Release failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Release failed'),
   });
 
   const markPaidMutation = useMutation({
@@ -288,9 +288,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onSuccess: () => {
       invalidate();
       setPaidOpen(false);
-      toast({ title: 'Marked as Paid', variant: 'success' });
+      notify.success('Marked as Paid');
     },
-    onError: (e: Error) => toast({ title: 'Mark paid failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Mark paid failed'),
   });
 
   // §9 — Chairman-designated accounts for the Prepare dialog
@@ -308,9 +308,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onSuccess: () => {
       invalidate();
       setChairmanSubmitOpen(false);
-      toast({ title: 'Sent to Payments Team', variant: 'success' });
+      notify.success('Sent to Payments Team');
     },
-    onError: (e: Error) => toast({ title: 'Submit failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Submit failed'),
   });
 
   const chairmanPrepareMutation = useMutation({
@@ -324,9 +324,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       setChairmanPrepareOpen(false);
       setChairmanSourceAccountId('');
       setChairmanMakerNotes('');
-      toast({ title: 'TT prepared', variant: 'success' });
+      notify.success('TT prepared');
     },
-    onError: (e: Error) => toast({ title: 'Prepare failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Prepare failed'),
   });
 
   const chairmanVerifyMutation = useMutation({
@@ -338,9 +338,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       invalidate();
       setChairmanVerifyOpen(false);
       setCheckerNotes('');
-      toast({ title: 'Documents verified', variant: 'success' });
+      notify.success('Documents verified');
     },
-    onError: (e: Error) => toast({ title: 'Verify failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Verify failed'),
   });
 
   const chairmanApproveMutation = useMutation({
@@ -352,9 +352,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       invalidate();
       setChairmanApproveOpen(false);
       setChairmanApproveComments('');
-      toast({ title: 'Execution approved', variant: 'success' });
+      notify.success('Execution approved');
     },
-    onError: (e: Error) => toast({ title: 'Approve failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Approve failed'),
   });
 
   const addDocMutation = useMutation({
@@ -373,9 +373,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       setAddDocFileName('');
       setAddDocFileUrl('');
       setAddDocMime('');
-      toast({ title: 'Document added', variant: 'success' });
+      notify.success('Document added');
     },
-    onError: (e: Error) => toast({ title: 'Upload failed', description: friendlyError(e), variant: 'error' }),
+    onError: (e: Error) => notify.error('Upload failed'),
   });
 
   if (isLoading) {
@@ -896,7 +896,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
                         setAddDocFileUrl(result.url);
                         setAddDocMime(file.type);
                       } catch {
-                        toast({ title: 'Upload failed', variant: 'error' });
+                        notify.error('Upload failed');
                       } finally {
                         setAddDocUploading(false);
                         e.target.value = '';
@@ -1363,7 +1363,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
                         setProofFileName(result.fileName);
                         setProofUrl(result.url);
                       } catch {
-                        toast({ title: 'Upload failed', variant: 'error' });
+                        notify.error('Upload failed');
                       } finally {
                         setProofUploading(false);
                         e.target.value = '';

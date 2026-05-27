@@ -38,7 +38,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
@@ -98,7 +98,7 @@ export default function BankAccountsPage(): React.ReactElement {
   const [deleting, setDeleting] = useState<BankAccount | null>(null);
   const [overriding, setOverriding] = useState<BankAccount | null>(null);
   const [historyFor, setHistoryFor] = useState<BankAccount | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -136,10 +136,10 @@ export default function BankAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
-      toast({ title: 'Account added', variant: 'success' });
+      notify.success('Account added');
     },
     onError: (err: Error) =>
-      toast({ title: 'Add failed', description: err.message, variant: 'error' }),
+      notify.error('Add failed', err),
   });
 
   const updateMutation = useMutation({
@@ -148,10 +148,10 @@ export default function BankAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setEditing(null);
-      toast({ title: 'Account updated', variant: 'success' });
+      notify.success('Account updated');
     },
     onError: (err: Error) =>
-      toast({ title: 'Update failed', description: err.message, variant: 'error' }),
+      notify.error('Update failed', err),
   });
 
   const deleteMutation = useMutation({
@@ -159,10 +159,10 @@ export default function BankAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setDeleting(null);
-      toast({ title: 'Account deleted', variant: 'success' });
+      notify.success('Account deleted');
     },
     onError: (err: Error) =>
-      toast({ title: 'Delete failed', description: err.message, variant: 'error' }),
+      notify.error('Delete failed', err),
   });
 
   const overrideMutation = useMutation({
@@ -171,10 +171,10 @@ export default function BankAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setOverriding(null);
-      toast({ title: 'Balance overridden', variant: 'success' });
+      notify.success('Balance overridden');
     },
     onError: (err: Error) =>
-      toast({ title: 'Override failed', description: err.message, variant: 'error' }),
+      notify.error('Override failed', err),
   });
 
   return (

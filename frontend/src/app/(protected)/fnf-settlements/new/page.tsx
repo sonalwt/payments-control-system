@@ -16,13 +16,13 @@ import type {
   SanctionedCountry,
 } from '@/types/domain';
 import { Button } from '@/components/ui/button';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { PaymentRequestForm, type PaymentRequestFormData } from '../../payment-requests/payment-request-form';
 
 export default function NewFnFSettlementPage() {
   const router = useRouter();
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const { data: paymentTypes } = useQuery({
     queryKey: ['payment-types-all'],
@@ -75,11 +75,11 @@ export default function NewFnFSettlementPage() {
     },
     onSuccess: (pr: PaymentRequest) => {
       void qc.invalidateQueries({ queryKey: ['payment-requests'] });
-      toast({ title: 'FnF settlement request created', description: `Draft ${pr.requestNumber} saved.` });
+      notify.success('FnF settlement request created', `Draft ${pr.requestNumber} saved.`);
       router.push(`/payment-requests/${pr.id}`);
     },
     onError: (err: Error) =>
-      toast({ title: 'Create failed', description: err.message, variant: 'error' }),
+      notify.error('Create failed', err),
   });
 
   const isReady = !!(paymentTypes && legalEntities);

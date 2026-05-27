@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 interface DocDraft {
   documentCode: string;
@@ -33,7 +33,7 @@ interface DocDraft {
 
 export default function NewIncomingReceiptPage(): React.ReactElement {
   const router = useRouter();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const [legalEntityId, setLegalEntityId] = useState('');
   const [counterpartyId, setCounterpartyId] = useState('');
@@ -82,13 +82,9 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
           mimeType: file.type,
         },
       ]);
-      toast({ title: 'Document uploaded', variant: 'success' });
+      notify.success('Document uploaded');
     } catch (err) {
-      toast({
-        title: 'Upload failed',
-        description: err instanceof Error ? err.message : 'Unknown error',
-        variant: 'error',
-      });
+      notify.error('Upload failed', err);
     } finally {
       setUploading(false);
       e.target.value = '';
@@ -107,11 +103,11 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
         documents: docs.length > 0 ? docs : undefined,
       }),
     onSuccess: (ir) => {
-      toast({ title: `Receipt ${ir.receiptNumber} created`, variant: 'success' });
+      notify.success(`Receipt ${ir.receiptNumber} created`);
       router.push(`/incoming-receipts/${ir.id}`);
     },
     onError: (err: Error) =>
-      toast({ title: 'Create failed', description: err.message, variant: 'error' }),
+      notify.error('Create failed', err),
   });
 
   const canSubmit =

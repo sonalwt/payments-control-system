@@ -35,7 +35,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 import { PaymentRequestForm, type PaymentRequestFormData } from './payment-request-form';
@@ -93,7 +93,7 @@ export default function PaymentRequestsPage(): React.ReactElement {
   const [entityFilter, setEntityFilter] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [deleting, setDeleting] = useState<PaymentRequest | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -162,10 +162,10 @@ export default function PaymentRequestsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
-      toast({ title: 'Payment request created (Draft)', variant: 'success' });
+      notify.success('Payment request created (Draft)');
     },
     onError: (err: Error) =>
-      toast({ title: 'Create failed', description: err.message, variant: 'error' }),
+      notify.error('Create failed', err),
   });
 
   const deleteMutation = useMutation({
@@ -173,10 +173,10 @@ export default function PaymentRequestsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setDeleting(null);
-      toast({ title: 'Payment request deleted', variant: 'success' });
+      notify.success('Payment request deleted');
     },
     onError: (err: Error) =>
-      toast({ title: 'Delete failed', description: err.message, variant: 'error' }),
+      notify.error('Delete failed', err),
   });
 
   const typeOpts = paymentTypes?.data ?? [];

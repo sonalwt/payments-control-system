@@ -1,6 +1,6 @@
 import { Column, Entity, OneToMany } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
-import { UserEntityRole } from '../user-entity-roles/user-entity-role.entity';
+import { UserRole } from './user-role.entity';
 
 @Entity({ name: 'users' })
 export class User extends BaseEntity {
@@ -25,6 +25,6 @@ export class User extends BaseEntity {
   @Column({ name: 'last_login_at', type: 'timestamptz', nullable: true })
   lastLoginAt?: Date | null;
 
-  @OneToMany(() => UserEntityRole, (uer) => uer.user)
-  entityRoles!: UserEntityRole[];
+  @OneToMany(() => UserRole, (ur) => ur.user)
+  userRoles!: UserRole[];
 }

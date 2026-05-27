@@ -17,7 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 const CHANGE_TYPE_LABEL: Record<EbacChangeType, string> = {
   ADD: 'Add',
@@ -73,7 +73,7 @@ export default function EbacDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
 
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [verifyNotes, setVerifyNotes] = useState('');
@@ -97,7 +97,7 @@ export default function EbacDetailPage() {
         callbackEvidence: verifyCallback || undefined,
       }),
     onSuccess: () => {
-      toast({ title: 'Request verified' });
+      notify.info('Request verified');
       setVerifyOpen(false);
       setVerifyError('');
       qc.invalidateQueries({ queryKey: ['ebac', id] });
@@ -108,18 +108,18 @@ export default function EbacDetailPage() {
   const approveMutation = useMutation({
     mutationFn: () => api.post(`/employee-bank-account-changes/${id}/approve`),
     onSuccess: () => {
-      toast({ title: 'Request approved', description: 'Employee record updated.' });
+      notify.info('Request approved', 'Employee record updated.');
       qc.invalidateQueries({ queryKey: ['ebac', id] });
     },
     onError: (e: Error) =>
-      toast({ title: 'Approve failed', description: e.message, variant: 'error' }),
+      notify.error('Approve failed', e),
   });
 
   const rejectMutation = useMutation({
     mutationFn: () =>
       api.post(`/employee-bank-account-changes/${id}/reject`, { reason: rejectReason }),
     onSuccess: () => {
-      toast({ title: 'Request rejected' });
+      notify.info('Request rejected');
       setRejectOpen(false);
       setRejectError('');
       qc.invalidateQueries({ queryKey: ['ebac', id] });

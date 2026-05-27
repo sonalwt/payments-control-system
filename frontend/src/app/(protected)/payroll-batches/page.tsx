@@ -30,7 +30,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Select } from '@/components/ui/select';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 
 const STATUS_LABEL: Record<PayrollBatchStatus, string> = {
   VALIDATION_FAILED: 'Validation Failed',
@@ -57,7 +57,7 @@ function fmtMinor(minor: number, currency: string) {
 export default function PayrollBatchesPage() {
   const router = useRouter();
   const qc = useQueryClient();
-  const { toast } = useToast();
+  const notify = useNotify();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [page, setPage] = useState(1);
@@ -98,7 +98,7 @@ export default function PayrollBatchesPage() {
     mutationFn: (fd: FormData) =>
       api.postForm<PayrollBatch>('/payroll-batches/upload', fd),
     onSuccess: () => {
-      toast({ title: 'Batch uploaded', description: 'Payroll batch created in Draft status.' });
+      notify.info('Batch uploaded', 'Payroll batch created in Draft status.');
       qc.invalidateQueries({ queryKey: ['payroll-batches'] });
       setOpen(false);
       setCsvFile(null);
@@ -107,12 +107,12 @@ export default function PayrollBatchesPage() {
       setLegalEntityId('');
     },
     onError: (e: Error) =>
-      toast({ title: 'Upload failed', description: e.message, variant: 'error' }),
+      notify.error('Upload failed', e),
   });
 
   function handleUpload() {
     if (!csvFile || !legalEntityId || !periodLabel || !currencyCode) {
-      toast({ title: 'Missing fields', description: 'Please fill all fields and select a CSV file.', variant: 'error' });
+      notify.error('Missing fields', 'Please fill all fields and select a CSV file.');
       return;
     }
     const fd = new FormData();
