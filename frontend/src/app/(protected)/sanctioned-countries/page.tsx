@@ -30,7 +30,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 
 const KEY = 'sanctioned-countries';
@@ -86,7 +86,7 @@ export default function SanctionedCountriesPage(): React.ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<SanctionedCountry | null>(null);
   const [deleting, setDeleting] = useState<SanctionedCountry | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -108,10 +108,10 @@ export default function SanctionedCountriesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
-      toast({ title: 'Country added to sanctions list', variant: 'success' });
+      notify.success('Country added to sanctions list');
     },
     onError: (err: Error) =>
-      toast({ title: 'Add failed', description: err.message, variant: 'error' }),
+      notify.error('Add failed', err),
   });
 
   const updateMutation = useMutation({
@@ -120,10 +120,10 @@ export default function SanctionedCountriesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setEditing(null);
-      toast({ title: 'Sanctioned country updated', variant: 'success' });
+      notify.success('Sanctioned country updated');
     },
     onError: (err: Error) =>
-      toast({ title: 'Update failed', description: err.message, variant: 'error' }),
+      notify.error('Update failed', err),
   });
 
   const removeMutation = useMutation({
@@ -132,13 +132,10 @@ export default function SanctionedCountriesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setDeleting(null);
-      toast({
-        title: 'Country removed from sanctions list',
-        variant: 'success',
-      });
+      notify.success('Country removed from sanctions list');
     },
     onError: (err: Error) =>
-      toast({ title: 'Remove failed', description: err.message, variant: 'error' }),
+      notify.error('Remove failed', err),
   });
 
   return (

@@ -3,10 +3,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Role } from './role.entity';
 import { RolesController } from './roles.controller';
 import { RolesService } from './roles.service';
-import { AuditLogsModule } from '../audit-logs/audit-logs.module';
-
 @Module({
-  imports: [TypeOrmModule.forFeature([Role]), AuditLogsModule],
+  imports: [TypeOrmModule.forFeature([Role])],
   controllers: [RolesController],
   providers: [RolesService],
   exports: [RolesService, TypeOrmModule],

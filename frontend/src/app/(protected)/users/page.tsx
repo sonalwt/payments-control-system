@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
-import { Search } from 'lucide-react';
-import { api } from '@/lib/api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Plus, Search } from 'lucide-react';
+import { api, friendlyError } from '@/lib/api';
 import type { Paginated, User } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Input } from '@/components/ui/input';
@@ -14,10 +14,35 @@ import {
 import { Card } from '@/components/ui/card';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+
+interface CreateUserForm {
+  email: string;
+  fullName: string;
+  password: string;
+  employeeCode: string;
+  isActive: boolean;
+}
+
+const EMPTY_FORM: CreateUserForm = {
+  email: '',
+  fullName: '',
+  password: '',
+  employeeCode: '',
+  isActive: true,
+};
 
 export default function UsersPage(): React.ReactElement {
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [form, setForm] = useState<CreateUserForm>(EMPTY_FORM);
+  const [formError, setFormError] = useState<string | null>(null);
+
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
     if (search) u.set('search', search);
@@ -29,12 +54,49 @@ export default function UsersPage(): React.ReactElement {
     queryFn: () => api.get<Paginated<User>>(`/users?${params}`),
   });
 
+  const createMutation = useMutation({
+    mutationFn: (body: CreateUserForm) =>
+      api.post<User>('/users', {
+        email: body.email,
+        fullName: body.fullName,
+        password: body.password,
+        employeeCode: body.employeeCode || undefined,
+        isActive: body.isActive,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setDialogOpen(false);
+      setForm(EMPTY_FORM);
+      setFormError(null);
+    },
+    onError: (err) => setFormError(friendlyError(err)),
+  });
+
+  function openDialog() {
+    setForm(EMPTY_FORM);
+    setFormError(null);
+    setDialogOpen(true);
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError(null);
+    createMutation.mutate(form);
+  }
+
   return (
     <div>
       <PageHeader
         title="Users"
-        description="Application users; manage their entity-role assignments under User Role Assignment"
+        description="Application users and their role assignments."
+        actions={
+          <Button onClick={openDialog} size="sm">
+            <Plus className="mr-2 h-4 w-4" />
+            Add User
+          </Button>
+        }
       />
+
       <Card>
         <div className="flex items-center gap-2 border-b p-4">
           <Search className="h-4 w-4 text-muted-foreground" />
@@ -51,18 +113,48 @@ export default function UsersPage(): React.ReactElement {
               <TableHead>Full name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Employee code</TableHead>
+              <TableHead>Legal entity</TableHead>
+              <TableHead>Roles</TableHead>
               <TableHead>Last login</TableHead>
-              <TableHead className="w-40 text-right">Assignments</TableHead>
+              <TableHead className="w-36 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={5} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow>
+                <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell>
+              </TableRow>
             ) : data && data.data.length > 0 ? data.data.map((u) => (
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.fullName}</TableCell>
                 <TableCell>{u.email}</TableCell>
                 <TableCell className="text-muted-foreground">{u.employeeCode ?? '—'}</TableCell>
+                <TableCell>
+                  {u.legalEntities && u.legalEntities.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {u.legalEntities.map((le) => (
+                        <span key={le} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-800">
+                          {le}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {u.roles && u.roles.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {u.roles.map((r) => (
+                        <span key={r} className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border">
+                          {r}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="text-muted-foreground">
                   {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}
                 </TableCell>
@@ -73,12 +165,98 @@ export default function UsersPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={5} className="py-12 text-center text-muted-foreground">No users yet.</TableCell></TableRow>
+              <TableRow>
+                <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No users yet.</TableCell>
+              </TableRow>
             )}
           </TableBody>
         </Table>
-        {data && <DataTablePagination page={data.page} totalPages={data.totalPages} total={data.total} limit={data.limit} onPageChange={setPage} />}
+        {data && (
+          <DataTablePagination
+            page={data.page}
+            totalPages={data.totalPages}
+            total={data.total}
+            limit={data.limit}
+            onPageChange={setPage}
+          />
+        )}
       </Card>
+
+      {/* Add User dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add User</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="fullName">Full name <span className="text-destructive">*</span></Label>
+              <Input
+                id="fullName"
+                placeholder="Jane Doe"
+                value={form.fullName}
+                onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="email">Email <span className="text-destructive">*</span></Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="jane.doe@acme.com"
+                value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="password">Password <span className="text-destructive">*</span></Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Min. 8 characters"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                minLength={8}
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="employeeCode">Employee code</Label>
+              <Input
+                id="employeeCode"
+                placeholder="Optional"
+                value={form.employeeCode}
+                onChange={(e) => setForm((f) => ({ ...f, employeeCode: e.target.value }))}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                id="isActive"
+                type="checkbox"
+                checked={form.isActive}
+                onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))}
+                className="h-4 w-4 rounded border-border"
+              />
+              <Label htmlFor="isActive">Active</Label>
+            </div>
+
+            {formError && (
+              <p className="text-sm text-destructive">{formError}</p>
+            )}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? 'Creating…' : 'Create user'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

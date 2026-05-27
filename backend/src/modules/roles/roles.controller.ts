@@ -10,7 +10,6 @@ import {
   Post,
   Put,
   UseGuards,
-  UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RolesService } from './roles.service';
@@ -20,14 +19,10 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RoleCode } from '../../common/enums/role.enum';
-import { AuditInterceptor } from '../../common/interceptors/audit.interceptor';
-import { Audit } from '../../common/decorators/audit.decorator';
 
 @ApiTags('Roles')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@UseInterceptors(AuditInterceptor)
-@Audit('Role')
 @Controller('roles')
 export class RolesController {
   constructor(private readonly service: RolesService) {}

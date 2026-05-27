@@ -3,11 +3,9 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
-  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { UserEntityRole } from '../user-entity-roles/user-entity-role.entity';
 
 @Entity({ name: 'roles' })
 export class Role {
@@ -34,7 +32,4 @@ export class Role {
 
   @DeleteDateColumn({ name: 'deleted_at', type: 'timestamptz', nullable: true })
   deletedAt?: Date | null;
-
-  @OneToMany(() => UserEntityRole, (uer) => uer.role)
-  userAssignments!: UserEntityRole[];
 }

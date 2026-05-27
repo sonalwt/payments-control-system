@@ -11,7 +11,6 @@ import {
   Put,
   Query,
   UseGuards,
-  UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
@@ -23,14 +22,10 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { RoleCode } from '../../common/enums/role.enum';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
-import { AuditInterceptor } from '../../common/interceptors/audit.interceptor';
-import { Audit } from '../../common/decorators/audit.decorator';
 
 @ApiTags('Users')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@UseInterceptors(AuditInterceptor)
-@Audit('User')
 @Controller('users')
 export class UsersController {
   constructor(private readonly service: UsersService) {}

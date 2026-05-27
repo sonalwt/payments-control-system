@@ -24,7 +24,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 import { PaymentTypeForm, type PaymentTypeFormData } from './payment-type-form';
@@ -37,7 +37,7 @@ export default function PaymentTypesPage(): React.ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<PaymentType | null>(null);
   const [deleting, setDeleting] = useState<PaymentType | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -57,10 +57,10 @@ export default function PaymentTypesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
-      toast({ title: 'Payment type created', variant: 'success' });
+      notify.success('Payment type created');
     },
     onError: (err: Error) =>
-      toast({ title: 'Create failed', description: err.message, variant: 'error' }),
+      notify.error('Create failed', err),
   });
 
   const updateMutation = useMutation({
@@ -73,10 +73,10 @@ export default function PaymentTypesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setEditing(null);
-      toast({ title: 'Payment type updated', variant: 'success' });
+      notify.success('Payment type updated');
     },
     onError: (err: Error) =>
-      toast({ title: 'Update failed', description: err.message, variant: 'error' }),
+      notify.error('Update failed', err),
   });
 
   const deleteMutation = useMutation({
@@ -84,10 +84,10 @@ export default function PaymentTypesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setDeleting(null);
-      toast({ title: 'Payment type deleted', variant: 'success' });
+      notify.success('Payment type deleted');
     },
     onError: (err: Error) =>
-      toast({ title: 'Delete failed', description: err.message, variant: 'error' }),
+      notify.error('Delete failed', err),
   });
 
   return (

@@ -1,144 +1,293 @@
-# Payments Control System — Section 1.1
+# Payments Control System
 
-**Entities and Organisational Structure** — full-stack implementation for the SOW.
+Role-based user management platform for the Radiant approval authority matrix.
 
-- Backend: NestJS 10 + TypeORM + PostgreSQL + JWT (`backend/`)
-- Frontend: Next.js 14 App Router + Shadcn UI + Tailwind + React Query (`frontend/`)
-- Architecture: see [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Backend**: NestJS 10 + TypeORM 0.3 + PostgreSQL + JWT (`backend/`)
+- **Frontend**: Next.js 14 App Router + Shadcn UI + Tailwind CSS + React Query (`frontend/`)
+
+---
+
+## What is currently implemented
+
+| Area | Status | Details |
+|------|--------|---------|
+| Authentication | Complete | JWT login, `/auth/me`, bcrypt password hashing |
+| Users | Complete | CRUD, pagination, soft delete, role batch loading |
+| Roles | Complete | CRUD, system vs. custom role protection |
+| Role Assignment | Complete | Assign / revoke roles per user (no legal-entity dimension) |
+| Sidebar | Simplified | Only **Users** and **Roles** nav items |
 
 ---
 
 ## Quick start
 
-### 1. PostgreSQL
+### Prerequisites
 
-```bash
-createdb pcs
-psql -d pcs -f backend/src/database/schema.sql
+- Node.js 20+
+- PostgreSQL 18+ (adjust version as needed)
+
+### 1. Create the database and schema
+
+Connect with psql and run the three table definitions manually:
+
+```sql
+-- users
+CREATE EXTENSION IF NOT EXISTS citext;
+
+CREATE TABLE users (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email           CITEXT NOT NULL UNIQUE,
+  password_hash   VARCHAR(255) NOT NULL,
+  full_name       VARCHAR(150) NOT NULL,
+  employee_code   VARCHAR(50) UNIQUE,
+  is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+  is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE,
+  last_login_at   TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ,
+  created_by      UUID,
+  updated_by      UUID
+);
+
+-- roles
+CREATE TABLE roles (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code        VARCHAR(50) NOT NULL UNIQUE,
+  name        VARCHAR(100) NOT NULL,
+  description TEXT,
+  is_system   BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at  TIMESTAMPTZ
+);
+
+-- user_roles
+CREATE TABLE user_roles (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id    UUID NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_user_role UNIQUE (user_id, role_id)
+);
 ```
 
-This creates every table, index, FK and seeds the system roles and a starter set of currencies.
+> **No migrations are used.** The schema is managed directly via SQL.
 
-### 2. Backend
+### 2. Seed roles
+
+```sql
+INSERT INTO roles (code, name, description, is_system) VALUES
+  ('SUPER_ADMIN', 'Super Administrator', 'Full platform access', TRUE),
+  ('INITIATOR',   'Initiator',           'Submits payment requests', FALSE),
+  ('CHECKER',     'Checker',             'Verifies payment requests', FALSE),
+  ('APPROVER_1',  'Approver Level 1',    'First-level approver', FALSE),
+  ('APPROVER_2',  'Approver Level 2',    'Second-level approver', FALSE);
+```
+
+### 3. Seed the admin user
+
+Generate a bcrypt hash for your chosen password (cost 12), then insert:
+
+```sql
+INSERT INTO users (email, password_hash, full_name, is_active, is_platform_admin)
+VALUES (
+  'admin@radiant.com',
+  '<bcrypt-hash-of-your-password>',
+  'System Administrator',
+  TRUE,
+  TRUE
+);
+```
+
+Default password used during initial seeding: **`Radiant@1234`**
+
+> Assign the `SUPER_ADMIN` role to this user via the Role Assignment page after first login,
+> or insert directly into `user_roles`.
+
+### 4. Backend — install & start
 
 ```bash
 cd backend
-cp .env.example .env          # edit DB_* and JWT_SECRET
+cp .env.example .env          # fill in DB_* and JWT_SECRET
 npm install
-npm run seed                  # creates admin@pcs.local / ChangeMe123! (platform admin)
 npm run start:dev             # http://localhost:4000/api/v1
 ```
 
-Swagger UI: `http://localhost:4000/api/v1/docs`.
+Swagger UI: `http://localhost:4000/api/v1/docs`
 
-### 3. Frontend
+### 5. Frontend — install & start
 
 ```bash
 cd frontend
-cp .env.example .env.local
+cp .env.example .env.local    # set NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
 npm install
 npm run dev                   # http://localhost:3000
 ```
 
-Open `http://localhost:3000`, sign in with the seeded credentials, and start with **Groups → Legal Entities → Countries → Business Units → Departments**, then assign roles under **User Role Assignment**.
+Sign in with the admin credentials, then use the **Roles** page to assign roles to users.
 
 ---
 
-## API reference (Section 1.1)
+## Environment variables
 
-All endpoints sit under `/api/v1` and require `Authorization: Bearer <jwt>` except `POST /auth/login`.
+### Backend (`backend/.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NODE_ENV` | `development` | Node environment |
+| `PORT` | `4000` | HTTP port |
+| `API_PREFIX` | `api/v1` | URL prefix for all routes |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_USERNAME` | `postgres` | Database user |
+| `DB_PASSWORD` | `postgres` | Database password |
+| `DB_NAME` | `pcs` | Database name |
+| `DB_SCHEMA` | `public` | Schema name |
+| `DB_SYNCHRONIZE` | `false` | TypeORM auto-sync (keep false) |
+| `DB_LOGGING` | `false` | Log SQL queries |
+| `JWT_SECRET` | *(required)* | HS256 signing secret — change in production |
+| `JWT_EXPIRES_IN` | `8h` | Token lifetime |
+| `CORS_ORIGIN` | `http://localhost:3000` | Allowed CORS origin(s), comma-separated |
+
+### Frontend (`frontend/.env.local`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:4000/api/v1` | Backend API base URL |
+
+---
+
+## npm scripts (backend)
+
+| Script | What it does |
+|--------|--------------|
+| `npm run start:dev` | NestJS hot-reload dev server |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm run lint` | ESLint with auto-fix |
+
+---
+
+## API reference
+
+All endpoints require `Authorization: Bearer <jwt>` except `POST /auth/login`.
+Base URL: `http://localhost:4000/api/v1`
 
 ### Auth
 
-| Method | Path           | Body / Notes                                  |
-| ------ | -------------- | --------------------------------------------- |
-| POST   | `/auth/login`  | `{ email, password }` → `{ accessToken, … }`  |
-| GET    | `/auth/me`     | Returns the current `AuthenticatedUser`       |
+| Method | Path | Auth | Body | Returns |
+|--------|------|------|------|---------|
+| POST | `/auth/login` | Public | `{ email, password }` | `{ accessToken, expiresIn, user }` |
+| GET | `/auth/me` | Any role | — | Current authenticated user |
 
-### Groups (SUPER_ADMIN-only writes)
+### Users
 
-```http
-POST /api/v1/groups
-Content-Type: application/json
-Authorization: Bearer <jwt>
+All endpoints below require `SUPER_ADMIN` except `GET /users/me`.
 
-{ "name": "Acme Holdings", "code": "ACME", "description": "Parent group" }
-```
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/users` | Create user; hashes password with bcrypt cost 12 |
+| GET | `/users` | Paginated list; `?page=&limit=&search=` (max limit: 500) |
+| GET | `/users/me` | Returns the currently logged-in user (no role check) |
+| GET | `/users/:id` | Single user with role assignments |
+| PUT | `/users/:id` | Update user fields |
+| DELETE | `/users/:id` | Soft delete |
 
-| Method | Path             | Notes                                  |
-| ------ | ---------------- | -------------------------------------- |
-| GET    | `/groups`        | `?page=1&limit=20&search=acme`         |
-| GET    | `/groups/:id`    | Includes `legalEntities[]`             |
-| PUT    | `/groups/:id`    | Partial update of name/code/description|
-| DELETE | `/groups/:id`    | Fails if legal entities still attached |
-
-### Legal Entities
-
+**Pagination response shape:**
 ```json
-POST /api/v1/legal-entities
 {
-  "groupId": "5b6c…",
-  "name": "Acme India Pvt Ltd",
-  "code": "ACME-IN",
-  "registeredCountry": "IN",
-  "baseCurrencyId": "94…",
-  "taxIdentifier": "29ABCDE1234F1Z5"
+  "data": [...],
+  "total": 17,
+  "page": 1,
+  "limit": 20,
+  "totalPages": 1
 }
 ```
 
-`GET /legal-entities?groupId=…` filters to one group.
+### Roles
 
-### Countries / Business Units / Departments
+Read endpoints are open to any authenticated user. Write endpoints require `SUPER_ADMIN`.
 
-```json
-POST /api/v1/countries          { "legalEntityId": "…", "name": "India", "isoCode": "IN" }
-POST /api/v1/business-units     { "countryId": "…", "name": "Retail Banking", "code": "RETAIL" }
-POST /api/v1/departments        { "businessUnitId": "…", "name": "Treasury", "code": "TREASURY" }
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/roles` | List all roles ordered by name |
+| GET | `/roles/:id` | Single role |
+| POST | `/roles` | Create a custom role |
+| PUT | `/roles/:id` | Update role; system roles cannot have their code changed |
+| DELETE | `/roles/:id` | Soft delete; system roles cannot be deleted |
+
+### User-Role Assignment
+
+All endpoints require `SUPER_ADMIN`.
+
+| Method | Path | Body / Notes |
+|--------|------|--------------|
+| POST | `/user-roles` | `{ userId, roleId }` — assign a role to a user |
+| GET | `/user-roles/user/:id` | Get all role assignments for a user (includes role details) |
+| DELETE | `/user-roles/:id` | Revoke a role assignment |
+
+---
+
+## Database schema
+
+Three tables — no joins to legal entities, groups, or other org-hierarchy tables.
+
+```
+users
+├── id (uuid, PK)
+├── email (citext, unique)
+├── password_hash (varchar, hidden from SELECT by default)
+├── full_name (varchar)
+├── employee_code (varchar, unique, nullable)
+├── is_active (boolean)
+├── is_platform_admin (boolean)   ← grants implicit SUPER_ADMIN
+├── last_login_at (timestamptz)
+└── created_at / updated_at / deleted_at / created_by / updated_by
+
+roles
+├── id (uuid, PK)
+├── code (varchar, unique)        ← e.g. SUPER_ADMIN, INITIATOR
+├── name (varchar)
+├── description (text)
+├── is_system (boolean)           ← system roles cannot be deleted
+└── created_at / updated_at / deleted_at
+
+user_roles
+├── id (uuid, PK)
+├── user_id (FK → users, CASCADE)
+├── role_id (FK → roles, RESTRICT)
+└── created_at
 ```
 
-Each supports `GET / GET :id / PUT / DELETE` and respects:
+---
 
-- Unique name & code within the parent
-- Deletion blocked while children exist
-- Audit columns (`created_at`, `updated_at`, `created_by`, `updated_by`)
-- Soft delete (`deleted_at`)
+## Seeded users (Radiant authority matrix)
 
-### Users & Roles
+Default password for all seeded users: **`Radiant@1234`**
 
-```http
-POST /api/v1/users
-{ "email": "jane@acme.com", "fullName": "Jane Doe", "password": "S3cure!pass" }
+| Full name | Email | Role(s) |
+|-----------|-------|---------|
+| System Administrator | admin@radiant.com | SUPER_ADMIN |
+| *(17 users total from authority matrix)* | — | INITIATOR / CHECKER / APPROVER_1 / APPROVER_2 |
 
-GET  /api/v1/roles              # list system + custom roles
-POST /api/v1/roles              { "code": "CUSTOM_ROLE", "name": "Custom" }
-```
+Exact users and assignments are seeded from the **Approval system - Radiant.xlsx** and
+**Payments Authority Matrix** documents.
 
-### User Entity Roles (the mapping)
+---
 
-```http
-POST /api/v1/user-entity-roles
-{
-  "userId":         "…uuid…",
-  "legalEntityId":  "…uuid…",
-  "roleId":         "…uuid (APPROVER)…",
-  "effectiveFrom":  "2026-05-24"
-}
+## Role reference
 
-GET    /api/v1/user-entity-roles/user/:id
-PUT    /api/v1/user-entity-roles/:id          { "isActive": false }
-DELETE /api/v1/user-entity-roles/:id
-```
+| Code | Description |
+|------|-------------|
+| `SUPER_ADMIN` | Full platform access — user/role management |
+| `INITIATOR` | Submits payment requests |
+| `CHECKER` | Verifies payment requests (maker-checker step) |
+| `APPROVER_1` | First-level approver |
+| `APPROVER_2` | Second-level approver |
 
-A given `(user, legal entity, role)` triple is unique. A user can hold any combination
-across entities — e.g. `APPROVER` in India + `FINANCE_HEAD` in UAE.
-
-### Audit log
-
-```http
-GET /api/v1/audit-logs/:entityType/:entityId
-```
-
-Returns up to 200 most recent entries for a single record (Group, LegalEntity, …).
+> `is_platform_admin = true` on a user grants implicit `SUPER_ADMIN` regardless of
+> `user_roles` assignments. This is the bootstrap escape-hatch — assign the role properly
+> and consider setting this flag to `false` afterwards.
 
 ---
 
@@ -146,106 +295,106 @@ Returns up to 200 most recent entries for a single record (Group, LegalEntity, �
 
 ```
 payments-control-system/
-├── ARCHITECTURE.md
 ├── README.md
 ├── backend/
-│   ├── nest-cli.json
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── .env.example
 │   └── src/
-│       ├── main.ts
-│       ├── app.module.ts
-│       ├── config/                # app, database, jwt
+│       ├── main.ts                 App bootstrap (Helmet, CORS, ValidationPipe, Swagger)
+│       ├── app.module.ts           Registers Auth, Users, Roles, UserRoles
+│       ├── config/
+│       │   ├── app.config.ts
+│       │   ├── database.config.ts  TypeORM PostgreSQL (synchronize: false)
+│       │   └── jwt.config.ts
 │       ├── common/
-│       │   ├── entities/base.entity.ts
-│       │   ├── decorators/        # roles, current-user, public, audit
-│       │   ├── enums/             # role.enum, audit-action.enum
-│       │   ├── guards/            # jwt-auth, roles
-│       │   ├── filters/           # http-exception
-│       │   ├── interceptors/      # audit
-│       │   └── dto/               # pagination
-│       ├── database/
-│       │   ├── schema.sql         # canonical DDL
-│       │   ├── data-source.ts     # for TypeORM CLI / seed
-│       │   ├── seed.ts            # bootstrap admin
-│       │   └── migrations/
+│       │   ├── decorators/
+│       │   │   ├── current-user.decorator.ts
+│       │   │   ├── public.decorator.ts
+│       │   │   └── roles.decorator.ts
+│       │   ├── dto/
+│       │   │   └── pagination.dto.ts   (max limit: 500)
+│       │   ├── entities/
+│       │   │   └── base.entity.ts      (id, createdAt, updatedAt, deletedAt, createdBy, updatedBy)
+│       │   ├── enums/
+│       │   │   └── role.enum.ts
+│       │   ├── filters/
+│       │   │   └── http-exception.filter.ts
+│       │   └── guards/
+│       │       ├── jwt-auth.guard.ts
+│       │       └── roles.guard.ts
 │       └── modules/
-│           ├── auth/              # login, JWT strategy
-│           ├── users/             # CRUD + me
-│           ├── roles/             # CRUD
-│           ├── user-entity-roles/ # assignment + revocation
-│           ├── groups/            # CRUD + repository
-│           ├── legal-entities/    # CRUD
-│           ├── countries/         # CRUD
-│           ├── business-units/    # CRUD
-│           ├── departments/       # CRUD
-│           ├── currencies/        # GET (master)
-│           └── audit-logs/        # query
+│           ├── auth/               POST /auth/login, GET /auth/me
+│           ├── users/              CRUD /users, GET /users/me
+│           │   ├── user.entity.ts
+│           │   ├── user-role.entity.ts
+│           │   ├── users.service.ts
+│           │   ├── users.controller.ts
+│           │   └── dto/
+│           ├── roles/              CRUD /roles
+│           │   ├── role.entity.ts
+│           │   ├── roles.service.ts
+│           │   ├── roles.controller.ts
+│           │   └── dto/
+│           └── user-roles/         POST/GET/DELETE /user-roles
+│               ├── user-roles.service.ts
+│               ├── user-roles.controller.ts
+│               └── dto/
 └── frontend/
     ├── package.json
-    ├── tsconfig.json
-    ├── next.config.js
-    ├── tailwind.config.ts
-    ├── postcss.config.js
     ├── .env.example
     └── src/
         ├── app/
-        │   ├── layout.tsx
-        │   ├── globals.css
-        │   ├── page.tsx                       # → /dashboard
-        │   ├── login/page.tsx
+        │   ├── login/              Public login page
         │   └── (protected)/
-        │       ├── layout.tsx                 # AppShell
-        │       ├── dashboard/page.tsx
-        │       ├── groups/{page,group-form}.tsx
-        │       ├── legal-entities/{page,legal-entity-form}.tsx
-        │       ├── countries/page.tsx
-        │       ├── business-units/page.tsx
-        │       ├── departments/page.tsx
-        │       ├── users/page.tsx
-        │       └── user-roles/page.tsx
+        │       ├── layout.tsx      AppShell (sidebar + auth guard)
+        │       ├── users/          User list with search and CRUD dialogs
+        │       └── user-roles/     Role assignment — select user, assign/revoke roles
         ├── components/
-        │   ├── ui/                # button, input, label, dialog, card, table, toast, select, textarea
-        │   ├── layout/            # sidebar, breadcrumbs, app-shell, providers
-        │   └── shared/            # page-header, data-table-pagination, confirm-delete
-        ├── hooks/use-auth.tsx
-        ├── lib/{api,utils}.ts
-        └── types/domain.ts
+        │   ├── ui/                 Shadcn UI components (Button, Dialog, Table, Select …)
+        │   ├── layout/
+        │   │   ├── app-shell.tsx   Root shell with role-based access check
+        │   │   ├── sidebar.tsx     2-item nav: Users + Roles
+        │   │   └── breadcrumbs.tsx
+        │   └── shared/
+        │       ├── page-header.tsx
+        │       └── confirm-delete.tsx
+        ├── hooks/
+        │   ├── use-auth.tsx        Auth state: login, logout, current user
+        │   └── use-notify.ts       Centralised toast: notify.success / .error / .info
+        ├── lib/
+        │   ├── api.ts              Fetch wrapper + friendlyError() translator
+        │   ├── roles.ts            hasAnyRole() utility
+        │   └── route-permissions.ts  requiredRolesFor(pathname)
+        └── types/
+            └── domain.ts           TypeScript interfaces for all domain models
 ```
+
+---
+
+## Security notes
+
+- **JWT HS256** bearer tokens; switch to RS256 for production.
+- `SUPER_ADMIN` required for all write operations via `@Roles` + `RolesGuard`.
+- `is_platform_admin` is a bootstrap escape-hatch — revoke after initial setup.
+- Soft deletes via `deleted_at`; TypeORM adds `WHERE deleted_at IS NULL` automatically.
+- Passwords hashed with **bcrypt cost 12**; `password_hash` column uses `select: false`.
+- `class-validator` whitelist rejects unknown payload fields.
+- `helmet` security headers, configurable CORS allowlist.
+- Database constraint violations (unique, FK) are mapped to HTTP 409 — never expose raw DB errors.
+- Duplicate role assignments are rejected at service level before hitting the DB unique constraint.
 
 ---
 
 ## Setup checklist
 
-- [x] PostgreSQL 14+ running locally
-- [x] `pcs` database created
-- [x] Apply `backend/src/database/schema.sql`
-- [x] Backend `.env` filled in
-- [x] `npm install` in `backend/`
-- [x] `npm run seed`
-- [x] `npm run start:dev`
-- [x] Frontend `.env.local` filled in
-- [x] `npm install` in `frontend/`
-- [x] `npm run dev`
-- [x] Sign in at `http://localhost:3000` with seeded admin credentials
-
----
-
-## Security & compliance notes
-
-- JWT bearer auth (HS256 by default; switch to RS256 for production by providing public/private key files).
-- `SUPER_ADMIN`-gated org-structure mutations via `@Roles` + `RolesGuard`.
-- `is_platform_admin` flag on `users` is the bootstrap escape-hatch — revoke once real `user_entity_roles` are in place.
-- Every state-changing call on a tagged controller writes to `audit_logs` (user, before/after, IP, UA, timestamp).
-- Soft deletes via `deleted_at` — `TypeORM` queries filter automatically.
-- `class-validator` whitelisting rejects unknown payload fields.
-- `helmet`, CORS allowlist, query-failed FK/uniqueness mapping to typed HTTP errors.
-- Passwords hashed with `bcrypt` cost 12; the `passwordHash` column is `select: false` and only loaded by `findByEmailWithPassword`.
-
----
-
-## Roadmap (subsequent SOW sections)
-
-This module establishes the foundation. Sections 1.2 (Payment Types), 1.3 (Counterparty Master), 1.5
-(Approval Matrix) and beyond extend the same patterns — services, controllers, audit, RBAC — already in place.
+- [ ] PostgreSQL running (version 14+)
+- [ ] `createdb pcs` (or update `DB_NAME`)
+- [ ] Run the three `CREATE TABLE` statements above
+- [ ] Seed roles and admin user
+- [ ] `cd backend && cp .env.example .env` — fill in `DB_*`, `JWT_SECRET`
+- [ ] `npm install && npm run start:dev` in `backend/`
+- [ ] `cd frontend && cp .env.example .env.local` — set `NEXT_PUBLIC_API_URL`
+- [ ] `npm install && npm run dev` in `frontend/`
+- [ ] Sign in at `http://localhost:3000`
+- [ ] Assign `SUPER_ADMIN` role to the admin user via Role Assignment page

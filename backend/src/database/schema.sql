@@ -218,14 +218,24 @@ INSERT INTO currencies(code, name) VALUES
     ('CNY','Chinese Yuan')
 ON CONFLICT DO NOTHING;
 
+-- Section 14 — full role catalogue (SoW User Roles and Access Control).
 INSERT INTO roles(code, name, description, is_system) VALUES
-    ('SUPER_ADMIN',       'Super Administrator', 'Full administrative privileges',                 TRUE),
-    ('INITIATOR',         'Payments Initiator',  'Creates payment requests',                       TRUE),
-    ('APPROVER',          'Approver',            'Approves payment requests',                      TRUE),
-    ('PAYMENTS_MAKER',    'Payments Maker',      'Prepares and releases approved payments',        TRUE),
-    ('PAYMENTS_CHECKER',  'Payments Checker',    'Independent check on sensitive payments',        TRUE),
-    ('FINANCE_HEAD',      'Finance Head',        'Country / entity finance head',                  TRUE)
-ON CONFLICT DO NOTHING;
+    ('SUPER_ADMIN',                'Super Administrator',         'Highest privilege; administrative reassignment, cooling-off overrides, emergency operations',  TRUE),
+    ('SYSTEM_ADMIN',               'System Administrator',        'User management, master data, matrix and account configuration, sanctioned-country list, balance override', TRUE),
+    ('INITIATOR',                  'Payments Initiator',          'Creates vendor payment requests and incoming receipt requests',                                TRUE),
+    ('HR_INITIATOR',               'HR Initiator',                'Bulk-uploads payroll, creates reimbursement and FnF requests',                                 TRUE),
+    ('APPROVER',                   'Approver',                    'Approves on mobile against requests routed by the approval matrix',                            TRUE),
+    ('PAYROLL_APPROVER',           'Payroll Approver',            'Batch-level approval of payroll before processing',                                            TRUE),
+    ('PAYMENTS_MAKER',             'Payments Team Maker',         'Verifies documents, prepares TTs, marks payments released and paid, uploads proof of payment', TRUE),
+    ('PAYMENTS_CHECKER',           'Payments Team Checker',       'Independent verifier on chairman payments and beneficiary change requests',                    TRUE),
+    ('PAYMENTS_HEAD',              'Payments Head',               'Approves execution of chairman payments; senior payments-team oversight',                      TRUE),
+    ('BENEFICIARY_CHANGE_MAKER',   'Beneficiary Change Maker',    'Creates bank account change requests under maker-checker',                                     TRUE),
+    ('BENEFICIARY_CHANGE_VERIFIER','Beneficiary Change Verifier', 'Verifies bank account change requests under maker-checker',                                    TRUE),
+    ('FINANCE_HEAD',               'Country / Entity Finance Head','Reviews and reports within entity or country scope',                                          TRUE),
+    ('GROUP_TREASURER',            'Group Treasurer / CFO',       'Group-wide visibility and reporting; recipient for reconciliation exceptions',                 TRUE),
+    ('CHAIRMAN',                   'Chairman',                    'Initiates chairman payments on mobile',                                                        TRUE),
+    ('INTERNAL_AUDITOR',           'Internal Auditor',            'Read-only access across the system, including the full audit log',                             TRUE)
+ON CONFLICT (code) DO NOTHING;
 
 -- =====================================================================
 -- Section 1.2 — Payment Types
@@ -832,3 +842,225 @@ CREATE TABLE balance_changes (
 );
 CREATE INDEX idx_balance_changes_account_time ON balance_changes(account_id, created_at DESC);
 CREATE INDEX idx_balance_changes_kind         ON balance_changes(kind);
+
+-- =====================================================================
+-- Section 3 — Payment Lifecycle
+-- =====================================================================
+
+-- Auto-incrementing sequence for human-readable request numbers.
+CREATE SEQUENCE IF NOT EXISTS payment_request_seq START 1;
+
+-- -----------------------------------------------------------------------
+-- payment_requests
+-- One row per payment request. status follows the canonical lifecycle:
+--   DRAFT → PENDING_APPROVAL → APPROVED → AWAITING_PAYMENT_CONFIRMATION
+--   → PAID  (terminal)
+-- Any non-terminal status may also transition to REJECTED, WITHDRAWN, or
+-- CANCELLED (admin).
+-- -----------------------------------------------------------------------
+CREATE TABLE payment_requests (
+    id                          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_number              VARCHAR(30) NOT NULL UNIQUE,
+    payment_type_code           VARCHAR(30) NOT NULL,
+    legal_entity_id             UUID        NOT NULL REFERENCES legal_entities(id) ON DELETE RESTRICT,
+    counterparty_id             UUID        REFERENCES counterparties(id) ON DELETE RESTRICT,
+    employee_id                 UUID        REFERENCES employees(id) ON DELETE RESTRICT,
+    currency_code               CHAR(3)     NOT NULL,
+    amount                      DECIMAL(20,4) NOT NULL,
+    amount_minor                BIGINT      NOT NULL,
+    purpose_description         TEXT,
+    source_account_id           UUID        REFERENCES bank_accounts(id) ON DELETE RESTRICT,
+    is_cross_currency           BOOLEAN     NOT NULL DEFAULT FALSE,
+    indicative_source_amount    DECIMAL(20,4),
+    bank_reference              VARCHAR(100),
+    value_date                  DATE,
+    proof_of_payment_url        VARCHAR(500),
+    status                      VARCHAR(40) NOT NULL DEFAULT 'DRAFT',
+    submitted_at                TIMESTAMPTZ,
+    approved_at                 TIMESTAMPTZ,
+    paid_at                     TIMESTAMPTZ,
+    matrix_id                   UUID,
+    matrix_version              INTEGER,
+    current_step_order          INTEGER,
+    rejection_reason            TEXT,
+    cancellation_reason         TEXT,
+    maker_notes                 TEXT,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at                  TIMESTAMPTZ,
+    created_by                  UUID,
+    updated_by                  UUID,
+    CONSTRAINT chk_pr_status CHECK (status IN (
+        'DRAFT','PENDING_APPROVAL','APPROVED',
+        'AWAITING_PAYMENT_CONFIRMATION','PAID',
+        'REJECTED','WITHDRAWN','CANCELLED'
+    )),
+    CONSTRAINT chk_pr_currency CHECK (currency_code ~ '^[A-Z]{3}$'),
+    CONSTRAINT chk_pr_amount_positive CHECK (amount > 0)
+);
+
+CREATE INDEX idx_payment_requests_deleted    ON payment_requests(deleted_at)        WHERE deleted_at IS NULL;
+CREATE INDEX idx_payment_requests_status     ON payment_requests(status)            WHERE deleted_at IS NULL;
+CREATE INDEX idx_payment_requests_entity     ON payment_requests(legal_entity_id)   WHERE deleted_at IS NULL;
+CREATE INDEX idx_payment_requests_type       ON payment_requests(payment_type_code) WHERE deleted_at IS NULL;
+CREATE INDEX idx_payment_requests_cp         ON payment_requests(counterparty_id)   WHERE counterparty_id IS NOT NULL;
+CREATE INDEX idx_payment_requests_emp        ON payment_requests(employee_id)       WHERE employee_id IS NOT NULL;
+CREATE INDEX idx_payment_requests_created    ON payment_requests(created_at DESC)   WHERE deleted_at IS NULL;
+
+CREATE TRIGGER trg_payment_requests_touch
+    BEFORE UPDATE ON payment_requests
+    FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+-- -----------------------------------------------------------------------
+-- payment_request_approvals
+-- One row per approval step per request, created when the request is
+-- submitted. Rows are never deleted; the decision column tracks the
+-- outcome of each step.
+-- -----------------------------------------------------------------------
+CREATE TABLE payment_request_approvals (
+    id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    payment_request_id   UUID        NOT NULL REFERENCES payment_requests(id) ON DELETE CASCADE,
+    step_order           INTEGER     NOT NULL,
+    approver_type        VARCHAR(10) NOT NULL,
+    approver_user_id     UUID,
+    approver_role_id     UUID,
+    is_optional          BOOLEAN     NOT NULL DEFAULT FALSE,
+    decision             VARCHAR(10) NOT NULL DEFAULT 'PENDING',
+    decided_by           UUID,
+    decided_at           TIMESTAMPTZ,
+    comments             TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_pra_approver_type CHECK (approver_type IN ('USER','ROLE')),
+    CONSTRAINT chk_pra_decision      CHECK (decision IN ('PENDING','APPROVED','REJECTED'))
+);
+
+CREATE INDEX idx_pra_request  ON payment_request_approvals(payment_request_id);
+CREATE INDEX idx_pra_user     ON payment_request_approvals(approver_user_id) WHERE approver_user_id IS NOT NULL;
+CREATE INDEX idx_pra_role     ON payment_request_approvals(approver_role_id) WHERE approver_role_id IS NOT NULL;
+CREATE INDEX idx_pra_decision ON payment_request_approvals(decision);
+
+-- -----------------------------------------------------------------------
+-- payment_request_documents
+-- Supporting documents attached to a payment request. Stores metadata
+-- only; actual file bytes live in the configured object store.
+-- -----------------------------------------------------------------------
+CREATE TABLE payment_request_documents (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    payment_request_id   UUID         NOT NULL REFERENCES payment_requests(id) ON DELETE CASCADE,
+    document_code        VARCHAR(50)  NOT NULL,
+    document_label       VARCHAR(200),
+    file_name            VARCHAR(255) NOT NULL,
+    file_url             VARCHAR(500) NOT NULL,
+    file_size_bytes      INTEGER,
+    mime_type            VARCHAR(100),
+    uploaded_by          UUID,
+    uploaded_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- =====================================================================
+-- Section 5 — Payroll Batches
+-- =====================================================================
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'payroll_batch_status') THEN
+    CREATE TYPE payroll_batch_status AS ENUM (
+      'VALIDATION_FAILED','DRAFT','PENDING_APPROVAL','APPROVED','REJECTED','CANCELLED'
+    );
+  END IF;
+END $$;
+
+CREATE SEQUENCE IF NOT EXISTS payroll_batch_seq START 1;
+
+CREATE TABLE IF NOT EXISTS payroll_batches (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_number         TEXT NOT NULL UNIQUE,
+    legal_entity_id      UUID NOT NULL REFERENCES legal_entities(id) ON DELETE RESTRICT,
+    period_label         TEXT NOT NULL,
+    currency_code        CHAR(3) NOT NULL,
+    total_gross_minor    BIGINT NOT NULL DEFAULT 0,
+    total_net_minor      BIGINT NOT NULL DEFAULT 0,
+    employee_count       INT NOT NULL DEFAULT 0,
+    variance_flag        BOOLEAN NOT NULL DEFAULT FALSE,
+    headcount_delta      INT,
+    sanity_notes         TEXT,
+    status               payroll_batch_status NOT NULL DEFAULT 'DRAFT',
+    file_url             TEXT NOT NULL,
+    uploaded_by          UUID REFERENCES users(id),
+    submitted_at         TIMESTAMPTZ,
+    approved_by          UUID REFERENCES users(id),
+    approved_at          TIMESTAMPTZ,
+    rejected_by          UUID REFERENCES users(id),
+    rejected_at          TIMESTAMPTZ,
+    rejection_reason     TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at           TIMESTAMPTZ,
+    created_by           UUID,
+    updated_by           UUID
+);
+
+CREATE TABLE IF NOT EXISTS payroll_batch_items (
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id                 UUID NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
+    employee_id              UUID NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+    beneficiary_account_id   UUID REFERENCES beneficiary_accounts(id),
+    gross_amount_minor       BIGINT NOT NULL,
+    net_amount_minor         BIGINT NOT NULL,
+    deductions_minor         BIGINT NOT NULL DEFAULT 0,
+    payslip_url              TEXT,
+    variance_flag            BOOLEAN NOT NULL DEFAULT FALSE,
+    previous_net_minor       BIGINT,
+    variance_pct             NUMERIC(6,2),
+    payment_request_id       UUID REFERENCES payment_requests(id),
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- =====================================================================
+-- Section 5 — Employee Bank Account Change Control
+-- =====================================================================
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ebac_change_type') THEN
+    CREATE TYPE ebac_change_type AS ENUM ('ADD','MODIFY','DEACTIVATE');
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ebac_status') THEN
+    CREATE TYPE ebac_status AS ENUM (
+      'PENDING_VERIFICATION','VERIFIED','APPROVED','REJECTED','CANCELLED'
+    );
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS employee_bank_account_changes (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id          UUID NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+    change_type          ebac_change_type NOT NULL,
+    status               ebac_status NOT NULL DEFAULT 'PENDING_VERIFICATION',
+    proposed_data        JSONB NOT NULL DEFAULT '{}',
+    documents            JSONB NOT NULL DEFAULT '[]',
+    anomaly_flag         BOOLEAN NOT NULL DEFAULT FALSE,
+    anomaly_notes        TEXT,
+    requested_by         UUID NOT NULL REFERENCES users(id),
+    verified_by          UUID REFERENCES users(id),
+    verified_at          TIMESTAMPTZ,
+    verification_notes   TEXT,
+    callback_evidence    TEXT,
+    approved_by          UUID REFERENCES users(id),
+    approved_at          TIMESTAMPTZ,
+    rejected_by          UUID REFERENCES users(id),
+    rejected_at          TIMESTAMPTZ,
+    rejection_reason     TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at           TIMESTAMPTZ,
+    created_by           UUID,
+    updated_by           UUID,
+    CONSTRAINT ebac_maker_checker CHECK (verified_by IS NULL OR verified_by <> requested_by)
+);
+
+CREATE INDEX idx_prd_request ON payment_request_documents(payment_request_id);

@@ -43,7 +43,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 import {
@@ -110,7 +110,7 @@ export default function ApprovalMatricesPage(): React.ReactElement {
   const [viewing, setViewing] = useState<ApprovalMatrix | null>(null);
   const [deleting, setDeleting] = useState<ApprovalMatrix | null>(null);
   const [publishing, setPublishing] = useState<ApprovalMatrix | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
@@ -128,15 +128,15 @@ export default function ApprovalMatricesPage(): React.ReactElement {
 
   const { data: paymentTypes } = useQuery({
     queryKey: ['payment-types-all'],
-    queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?page=1&limit=200'),
+    queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?page=1&limit=100'),
   });
   const { data: currencies } = useQuery({
     queryKey: ['currencies-all'],
-    queryFn: () => api.get<Currency[]>('/currencies'),
+    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
   });
   const { data: users } = useQuery({
     queryKey: ['users-all-min'],
-    queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=200'),
+    queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=100'),
   });
   const { data: roles } = useQuery({
     queryKey: ['roles-all'],
@@ -157,10 +157,10 @@ export default function ApprovalMatricesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
-      toast({ title: 'Draft matrix created', variant: 'success' });
+      notify.success('Draft matrix created');
     },
     onError: (err: Error) =>
-      toast({ title: 'Create failed', description: err.message, variant: 'error' }),
+      notify.error('Create failed', err),
   });
 
   const updateMutation = useMutation({
@@ -172,10 +172,10 @@ export default function ApprovalMatricesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setEditing(null);
-      toast({ title: 'Matrix updated', variant: 'success' });
+      notify.success('Matrix updated');
     },
     onError: (err: Error) =>
-      toast({ title: 'Update failed', description: err.message, variant: 'error' }),
+      notify.error('Update failed', err),
   });
 
   const publishMutation = useMutation({
@@ -183,14 +183,10 @@ export default function ApprovalMatricesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setPublishing(null);
-      toast({
-        title: 'Matrix published',
-        description: 'In-flight requests retain their original chain.',
-        variant: 'success',
-      });
+      notify.success('Matrix published', 'In-flight requests retain their original chain.');
     },
     onError: (err: Error) =>
-      toast({ title: 'Publish failed', description: err.message, variant: 'error' }),
+      notify.error('Publish failed', err),
   });
 
   const deleteMutation = useMutation({
@@ -198,14 +194,14 @@ export default function ApprovalMatricesPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setDeleting(null);
-      toast({ title: 'Matrix deleted', variant: 'success' });
+      notify.success('Matrix deleted');
     },
     onError: (err: Error) =>
-      toast({ title: 'Delete failed', description: err.message, variant: 'error' }),
+      notify.error('Delete failed', err),
   });
 
   const paymentTypeOpts = paymentTypes?.data ?? [];
-  const currencyOpts = currencies ?? [];
+  const currencyOpts = currencies?.data ?? [];
   const userOpts = users?.data ?? [];
   const roleOpts = roles ?? [];
 

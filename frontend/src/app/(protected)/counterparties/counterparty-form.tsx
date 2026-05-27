@@ -13,6 +13,130 @@ import { Select } from '@/components/ui/select';
 import { DialogFooter } from '@/components/ui/dialog';
 import type { Counterparty } from '@/types/domain';
 
+/** ISO 3166-1 alpha-2 country list — sorted alphabetically by name. */
+const COUNTRIES: { label: string; value: string }[] = [
+  { label: 'Afghanistan', value: 'AF' },
+  { label: 'Albania', value: 'AL' },
+  { label: 'Algeria', value: 'DZ' },
+  { label: 'Angola', value: 'AO' },
+  { label: 'Argentina', value: 'AR' },
+  { label: 'Armenia', value: 'AM' },
+  { label: 'Australia', value: 'AU' },
+  { label: 'Austria', value: 'AT' },
+  { label: 'Azerbaijan', value: 'AZ' },
+  { label: 'Bahrain', value: 'BH' },
+  { label: 'Bangladesh', value: 'BD' },
+  { label: 'Belarus', value: 'BY' },
+  { label: 'Belgium', value: 'BE' },
+  { label: 'Bolivia', value: 'BO' },
+  { label: 'Bosnia and Herzegovina', value: 'BA' },
+  { label: 'Brazil', value: 'BR' },
+  { label: 'Bulgaria', value: 'BG' },
+  { label: 'Cambodia', value: 'KH' },
+  { label: 'Cameroon', value: 'CM' },
+  { label: 'Canada', value: 'CA' },
+  { label: 'Chile', value: 'CL' },
+  { label: 'China', value: 'CN' },
+  { label: 'Colombia', value: 'CO' },
+  { label: 'Congo (DRC)', value: 'CD' },
+  { label: 'Costa Rica', value: 'CR' },
+  { label: 'Croatia', value: 'HR' },
+  { label: 'Cuba', value: 'CU' },
+  { label: 'Cyprus', value: 'CY' },
+  { label: 'Czech Republic', value: 'CZ' },
+  { label: 'Denmark', value: 'DK' },
+  { label: 'Dominican Republic', value: 'DO' },
+  { label: 'Ecuador', value: 'EC' },
+  { label: 'Egypt', value: 'EG' },
+  { label: 'El Salvador', value: 'SV' },
+  { label: 'Estonia', value: 'EE' },
+  { label: 'Ethiopia', value: 'ET' },
+  { label: 'Finland', value: 'FI' },
+  { label: 'France', value: 'FR' },
+  { label: 'Georgia', value: 'GE' },
+  { label: 'Germany', value: 'DE' },
+  { label: 'Ghana', value: 'GH' },
+  { label: 'Greece', value: 'GR' },
+  { label: 'Guatemala', value: 'GT' },
+  { label: 'Honduras', value: 'HN' },
+  { label: 'Hong Kong', value: 'HK' },
+  { label: 'Hungary', value: 'HU' },
+  { label: 'Iceland', value: 'IS' },
+  { label: 'India', value: 'IN' },
+  { label: 'Indonesia', value: 'ID' },
+  { label: 'Iran', value: 'IR' },
+  { label: 'Iraq', value: 'IQ' },
+  { label: 'Ireland', value: 'IE' },
+  { label: 'Israel', value: 'IL' },
+  { label: 'Italy', value: 'IT' },
+  { label: 'Jamaica', value: 'JM' },
+  { label: 'Japan', value: 'JP' },
+  { label: 'Jordan', value: 'JO' },
+  { label: 'Kazakhstan', value: 'KZ' },
+  { label: 'Kenya', value: 'KE' },
+  { label: 'Kuwait', value: 'KW' },
+  { label: 'Latvia', value: 'LV' },
+  { label: 'Lebanon', value: 'LB' },
+  { label: 'Libya', value: 'LY' },
+  { label: 'Lithuania', value: 'LT' },
+  { label: 'Luxembourg', value: 'LU' },
+  { label: 'Malaysia', value: 'MY' },
+  { label: 'Maldives', value: 'MV' },
+  { label: 'Malta', value: 'MT' },
+  { label: 'Mexico', value: 'MX' },
+  { label: 'Moldova', value: 'MD' },
+  { label: 'Morocco', value: 'MA' },
+  { label: 'Mozambique', value: 'MZ' },
+  { label: 'Myanmar', value: 'MM' },
+  { label: 'Netherlands', value: 'NL' },
+  { label: 'New Zealand', value: 'NZ' },
+  { label: 'Nicaragua', value: 'NI' },
+  { label: 'Nigeria', value: 'NG' },
+  { label: 'North Korea', value: 'KP' },
+  { label: 'Norway', value: 'NO' },
+  { label: 'Oman', value: 'OM' },
+  { label: 'Pakistan', value: 'PK' },
+  { label: 'Panama', value: 'PA' },
+  { label: 'Paraguay', value: 'PY' },
+  { label: 'Peru', value: 'PE' },
+  { label: 'Philippines', value: 'PH' },
+  { label: 'Poland', value: 'PL' },
+  { label: 'Portugal', value: 'PT' },
+  { label: 'Qatar', value: 'QA' },
+  { label: 'Romania', value: 'RO' },
+  { label: 'Russia', value: 'RU' },
+  { label: 'Saudi Arabia', value: 'SA' },
+  { label: 'Senegal', value: 'SN' },
+  { label: 'Serbia', value: 'RS' },
+  { label: 'Singapore', value: 'SG' },
+  { label: 'Slovakia', value: 'SK' },
+  { label: 'Slovenia', value: 'SI' },
+  { label: 'South Africa', value: 'ZA' },
+  { label: 'South Korea', value: 'KR' },
+  { label: 'Spain', value: 'ES' },
+  { label: 'Sri Lanka', value: 'LK' },
+  { label: 'Sudan', value: 'SD' },
+  { label: 'Sweden', value: 'SE' },
+  { label: 'Switzerland', value: 'CH' },
+  { label: 'Syria', value: 'SY' },
+  { label: 'Taiwan', value: 'TW' },
+  { label: 'Tanzania', value: 'TZ' },
+  { label: 'Thailand', value: 'TH' },
+  { label: 'Tunisia', value: 'TN' },
+  { label: 'Turkey', value: 'TR' },
+  { label: 'Uganda', value: 'UG' },
+  { label: 'Ukraine', value: 'UA' },
+  { label: 'United Arab Emirates', value: 'AE' },
+  { label: 'United Kingdom', value: 'GB' },
+  { label: 'United States', value: 'US' },
+  { label: 'Uruguay', value: 'UY' },
+  { label: 'Uzbekistan', value: 'UZ' },
+  { label: 'Venezuela', value: 'VE' },
+  { label: 'Vietnam', value: 'VN' },
+  { label: 'Yemen', value: 'YE' },
+  { label: 'Zimbabwe', value: 'ZW' },
+];
+
 const taxIdSchema = z.object({
   type: z.enum(['TRN', 'GSTIN', 'VAT', 'PAN', 'EIN', 'OTHER']),
   value: z.string().min(1).max(60),
@@ -41,8 +165,9 @@ export const counterpartySchema = z
     role: z.enum(['VENDOR', 'CUSTOMER', 'BOTH']),
     countryCode: z
       .string()
-      .length(2)
-      .regex(/^[A-Z]{2}$/, 'ISO 3166-1 alpha-2 (e.g. SG, IN)'),
+      .min(1, 'Please select a country')
+      .length(2, 'Please select a country')
+      .regex(/^[A-Z]{2}$/, 'Please select a country'),
     taxIdentifiers: z.array(taxIdSchema),
     addresses: z.array(addressSchema),
     primaryContactName: z.string().max(150).optional().or(z.literal('')),
@@ -171,14 +296,11 @@ export function CounterpartyForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="countryCode">Country (ISO alpha-2)</Label>
-          <Input
+          <Label htmlFor="countryCode">Country</Label>
+          <Select
             id="countryCode"
-            placeholder="SG"
-            maxLength={2}
-            {...register('countryCode', {
-              setValueAs: (v) => (typeof v === 'string' ? v.toUpperCase() : v),
-            })}
+            options={[{ label: 'Select country…', value: '' }, ...COUNTRIES]}
+            {...register('countryCode')}
           />
           {errors.countryCode && (
             <p className="text-xs text-destructive">

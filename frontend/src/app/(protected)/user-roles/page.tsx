@@ -1,16 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
-import type {
-  LegalEntity, Paginated, Role, User, UserEntityRole,
-} from '@/types/domain';
+import type { Paginated, Role, User, UserRole } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -22,38 +19,33 @@ import {
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
 const schema = z.object({
   userId: z.string().uuid(),
-  legalEntityId: z.string().uuid(),
   roleId: z.string().uuid(),
 });
 type FormData = z.infer<typeof schema>;
 
 export default function UserRolesPage(): React.ReactElement {
-  const searchParams = useSearchParams();
-  const userIdFromQuery = searchParams?.get('userId') ?? '';
-  const [selectedUserId, setSelectedUserId] = useState<string>(userIdFromQuery);
+  const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [assignOpen, setAssignOpen] = useState(false);
-  const [deleting, setDeleting] = useState<UserEntityRole | null>(null);
-  const { toast } = useToast();
+  const [deleting, setDeleting] = useState<UserRole | null>(null);
+  const notify = useNotify();
   const qc = useQueryClient();
 
   const { data: users } = useQuery({
     queryKey: ['users-all'],
     queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=200'),
   });
-  const { data: legalEntities } = useQuery({
-    queryKey: ['les-all'],
-    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
-  });
+
   const { data: roles } = useQuery({
     queryKey: ['roles-all'],
     queryFn: () => api.get<Role[]>('/roles'),
   });
 
+  // Auto-select first user once loaded
   useEffect(() => {
     if (!selectedUserId && users && users.data.length > 0) {
       setSelectedUserId(users.data[0]!.id);
@@ -61,57 +53,68 @@ export default function UserRolesPage(): React.ReactElement {
   }, [users, selectedUserId]);
 
   const { data: assignments, isLoading } = useQuery({
-    queryKey: ['user-entity-roles', selectedUserId],
-    queryFn: () => api.get<UserEntityRole[]>(`/user-entity-roles/user/${selectedUserId}`),
+    queryKey: ['user-roles', selectedUserId],
+    queryFn: () => api.get<UserRole[]>(`/user-roles/user/${selectedUserId}`),
     enabled: Boolean(selectedUserId),
   });
 
   const userOptions = useMemo(
-    () => (users?.data ?? []).map((u) => ({ label: `${u.fullName} <${u.email}>`, value: u.id })),
+    () => (users?.data ?? []).map((u) => ({ label: `${u.fullName} — ${u.email}`, value: u.id })),
     [users],
   );
+
+  // Only offer roles the user doesn't already have
+  const assignableRoles = useMemo(() => {
+    const assigned = new Set((assignments ?? []).map((a) => a.roleId));
+    return (roles ?? []).filter((r) => !assigned.has(r.id));
+  }, [roles, assignments]);
 
   const {
     register, handleSubmit, formState: { errors }, reset, setValue,
   } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { userId: selectedUserId, legalEntityId: '', roleId: '' },
+    defaultValues: { userId: selectedUserId, roleId: '' },
   });
+
   useEffect(() => { setValue('userId', selectedUserId); }, [selectedUserId, setValue]);
 
   const assignMut = useMutation({
-    mutationFn: (i: FormData) => api.post<UserEntityRole>('/user-entity-roles', i),
+    mutationFn: (data: FormData) => api.post<UserRole>('/user-roles', data),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['user-entity-roles', selectedUserId] });
+      void qc.invalidateQueries({ queryKey: ['user-roles', selectedUserId] });
       setAssignOpen(false);
-      reset({ userId: selectedUserId, legalEntityId: '', roleId: '' });
-      toast({ title: 'Role assigned', variant: 'success' });
+      reset({ userId: selectedUserId, roleId: '' });
+      notify.success('Role assigned');
     },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'error' }),
+    onError: (err: Error) => notify.error('Failed to assign role', err),
   });
+
   const revokeMut = useMutation({
-    mutationFn: (id: string) => api.del<void>(`/user-entity-roles/${id}`),
+    mutationFn: (id: string) => api.del<void>(`/user-roles/${id}`),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['user-entity-roles', selectedUserId] });
+      void qc.invalidateQueries({ queryKey: ['user-roles', selectedUserId] });
       setDeleting(null);
-      toast({ title: 'Revoked', variant: 'success' });
+      notify.success('Role revoked');
     },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'error' }),
+    onError: (err: Error) => notify.error('Failed to revoke role', err),
   });
+
+  const selectedUser = (users?.data ?? []).find((u) => u.id === selectedUserId);
 
   return (
     <div>
       <PageHeader
-        title="User Role Assignment"
-        description="Each row grants a user a role within a single legal entity"
+        title="Role Assignment"
+        description="Assign or revoke roles for each user"
       />
 
+      {/* User picker */}
       <Card className="mb-6">
         <CardHeader><CardTitle>Select user</CardTitle></CardHeader>
         <CardContent>
           <div className="max-w-xl">
             <Select
-              placeholder="Choose a user"
+              placeholder="Choose a user…"
               options={userOptions}
               value={selectedUserId}
               onChange={(e) => setSelectedUserId(e.target.value)}
@@ -120,34 +123,38 @@ export default function UserRolesPage(): React.ReactElement {
         </CardContent>
       </Card>
 
-      {selectedUserId ? (
+      {/* Assignments table */}
+      {selectedUserId && (
         <Card>
-          <div className="flex items-center justify-between border-b p-4">
-            <p className="text-sm text-muted-foreground">Active assignments</p>
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <div>
+              <p className="text-sm font-medium">{selectedUser?.fullName}</p>
+              <p className="text-xs text-muted-foreground">{selectedUser?.email}</p>
+            </div>
             <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
               <DialogTrigger asChild>
-                <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Assign role</Button>
+                <Button size="sm" disabled={assignableRoles.length === 0}>
+                  <Plus className="mr-2 h-4 w-4" /> Assign role
+                </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader><DialogTitle>Assign role</DialogTitle></DialogHeader>
-                <form
-                  onSubmit={handleSubmit((d) => assignMut.mutate(d))}
-                  className="space-y-4"
-                >
+                <form onSubmit={handleSubmit((d) => assignMut.mutate(d))} className="space-y-4">
                   <input type="hidden" {...register('userId')} />
                   <div className="space-y-2">
-                    <Label htmlFor="legalEntityId">Legal entity</Label>
-                    <Select id="legalEntityId" placeholder="Select"
-                      options={(legalEntities?.data ?? []).map((l) => ({ label: l.name, value: l.id }))}
-                      {...register('legalEntityId')} />
-                    {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
-                  </div>
-                  <div className="space-y-2">
                     <Label htmlFor="roleId">Role</Label>
-                    <Select id="roleId" placeholder="Select"
-                      options={(roles ?? []).map((r) => ({ label: `${r.name} (${r.code})`, value: r.id }))}
-                      {...register('roleId')} />
-                    {errors.roleId && <p className="text-xs text-destructive">{errors.roleId.message}</p>}
+                    <Select
+                      id="roleId"
+                      placeholder="Select a role…"
+                      options={assignableRoles.map((r) => ({
+                        label: `${r.name} (${r.code})`,
+                        value: r.id,
+                      }))}
+                      {...register('roleId')}
+                    />
+                    {errors.roleId && (
+                      <p className="text-xs text-destructive">{errors.roleId.message}</p>
+                    )}
                   </div>
                   <DialogFooter>
                     <Button type="submit" disabled={assignMut.isPending}>
@@ -158,54 +165,64 @@ export default function UserRolesPage(): React.ReactElement {
               </DialogContent>
             </Dialog>
           </div>
+
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Legal entity</TableHead>
                 <TableHead>Role</TableHead>
-                <TableHead>Effective from</TableHead>
-                <TableHead>Effective to</TableHead>
-                <TableHead>Active</TableHead>
-                <TableHead className="w-24 text-right">Action</TableHead>
+                <TableHead>Code</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead className="w-20 text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
-              ) : assignments && assignments.length > 0 ? assignments.map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell className="font-medium">{a.legalEntity?.name ?? '—'}</TableCell>
-                  <TableCell>{a.role?.name ?? '—'}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {new Date(a.effectiveFrom).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {a.effectiveTo ? new Date(a.effectiveTo).toLocaleDateString() : '—'}
-                  </TableCell>
-                  <TableCell>
-                    <span className={a.isActive ? 'text-green-600' : 'text-muted-foreground'}>
-                      {a.isActive ? 'Yes' : 'No'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button size="icon" variant="ghost" onClick={() => setDeleting(a)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
+                <TableRow>
+                  <TableCell colSpan={4} className="py-12 text-center text-muted-foreground">
+                    Loading…
                   </TableCell>
                 </TableRow>
-              )) : (
-                <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No assignments.</TableCell></TableRow>
+              ) : assignments && assignments.length > 0 ? (
+                assignments.map((a) => (
+                  <TableRow key={a.id}>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="h-4 w-4 text-primary" />
+                        {a.role?.name ?? '—'}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="rounded bg-muted px-2 py-0.5 text-xs font-mono">
+                        {a.role?.code ?? '—'}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {a.role?.description ?? '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button size="icon" variant="ghost" onClick={() => setDeleting(a)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-12 text-center text-muted-foreground">
+                    No roles assigned to this user.
+                  </TableCell>
+                </TableRow>
               )}
             </TableBody>
           </Table>
         </Card>
-      ) : null}
+      )}
 
       <ConfirmDelete
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
-        title="Revoke assignment?"
-        description="The user immediately loses this role within this entity."
+        title="Revoke role?"
+        description={`Remove "${deleting?.role?.name}" from this user?`}
         loading={revokeMut.isPending}
         onConfirm={() => deleting && revokeMut.mutate(deleting.id)}
       />

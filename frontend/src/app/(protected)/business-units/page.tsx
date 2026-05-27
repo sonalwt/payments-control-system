@@ -21,7 +21,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
@@ -91,7 +91,7 @@ export default function BusinessUnitsPage(): React.ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<BusinessUnit | null>(null);
   const [deleting, setDeleting] = useState<BusinessUnit | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
@@ -105,18 +105,18 @@ export default function BusinessUnitsPage(): React.ReactElement {
   });
   const createMut = useMutation({
     mutationFn: (i: FormData) => api.post<BusinessUnit>('/business-units', i),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['business-units'] }); setCreateOpen(false); toast({ title: 'Created', variant: 'success' }); },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'error' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['business-units'] }); setCreateOpen(false); notify.success('Created'); },
+    onError: (e: Error) => notify.error('Failed', e),
   });
   const updateMut = useMutation({
     mutationFn: ({ id, i }: { id: string; i: FormData }) => api.put<BusinessUnit>(`/business-units/${id}`, i),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['business-units'] }); setEditing(null); toast({ title: 'Updated', variant: 'success' }); },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'error' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['business-units'] }); setEditing(null); notify.success('Updated'); },
+    onError: (e: Error) => notify.error('Failed', e),
   });
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.del<void>(`/business-units/${id}`),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['business-units'] }); setDeleting(null); toast({ title: 'Deleted', variant: 'success' }); },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'error' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['business-units'] }); setDeleting(null); notify.success('Deleted'); },
+    onError: (e: Error) => notify.error('Failed', e),
   });
 
   return (

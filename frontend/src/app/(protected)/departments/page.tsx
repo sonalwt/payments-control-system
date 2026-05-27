@@ -21,7 +21,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { Card } from '@/components/ui/card';
-import { useToast } from '@/components/ui/toast';
+import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
@@ -91,7 +91,7 @@ export default function DepartmentsPage(): React.ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Department | null>(null);
   const [deleting, setDeleting] = useState<Department | null>(null);
-  const { toast } = useToast();
+  const notify = useNotify();
   const qc = useQueryClient();
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
@@ -105,18 +105,18 @@ export default function DepartmentsPage(): React.ReactElement {
   });
   const createMut = useMutation({
     mutationFn: (i: FormData) => api.post<Department>('/departments', i),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['departments'] }); setCreateOpen(false); toast({ title: 'Created', variant: 'success' }); },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'error' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['departments'] }); setCreateOpen(false); notify.success('Created'); },
+    onError: (e: Error) => notify.error('Failed', e),
   });
   const updateMut = useMutation({
     mutationFn: ({ id, i }: { id: string; i: FormData }) => api.put<Department>(`/departments/${id}`, i),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['departments'] }); setEditing(null); toast({ title: 'Updated', variant: 'success' }); },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'error' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['departments'] }); setEditing(null); notify.success('Updated'); },
+    onError: (e: Error) => notify.error('Failed', e),
   });
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.del<void>(`/departments/${id}`),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['departments'] }); setDeleting(null); toast({ title: 'Deleted', variant: 'success' }); },
-    onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'error' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['departments'] }); setDeleting(null); notify.success('Deleted'); },
+    onError: (e: Error) => notify.error('Failed', e),
   });
 
   return (
