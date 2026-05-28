@@ -8,22 +8,13 @@ import type { Paginated, PaymentType } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Card } from '@/components/ui/card';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
-import { Card } from '@/components/ui/card';
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
@@ -41,7 +32,7 @@ export default function PaymentTypesPage(): React.ReactElement {
   const qc = useQueryClient();
 
   const params = useMemo(() => {
-    const u = new URLSearchParams({ page: String(page), limit: '20' });
+    const u = new URLSearchParams({ page: String(page), limit: '50' });
     if (search) u.set('search', search);
     return u.toString();
   }, [page, search]);
@@ -51,82 +42,43 @@ export default function PaymentTypesPage(): React.ReactElement {
     queryFn: () => api.get<Paginated<PaymentType>>(`/payment-types?${params}`),
   });
 
-  const createMutation = useMutation({
-    mutationFn: (input: PaymentTypeFormData) =>
-      api.post<PaymentType>('/payment-types', input),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setCreateOpen(false);
-      notify.success('Payment type created');
-    },
-    onError: (err: Error) =>
-      notify.error('Create failed', err),
+  const createMut = useMutation({
+    mutationFn: (i: PaymentTypeFormData) => api.post<PaymentType>('/payment-types', i),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setCreateOpen(false); notify.success('Payment type created'); },
+    onError: (e: Error) => notify.error('Create failed', e),
   });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: PaymentTypeFormData }) => {
-      // `code` is immutable on update — strip it before sending.
-      const { code: _code, ...rest } = input;
-      void _code;
-      return api.put<PaymentType>(`/payment-types/${id}`, rest);
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setEditing(null);
-      notify.success('Payment type updated');
-    },
-    onError: (err: Error) =>
-      notify.error('Update failed', err),
+  const updateMut = useMutation({
+    mutationFn: ({ id, i }: { id: string; i: PaymentTypeFormData }) => api.put<PaymentType>(`/payment-types/${id}`, i),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setEditing(null); notify.success('Updated'); },
+    onError: (e: Error) => notify.error('Update failed', e),
   });
-
-  const deleteMutation = useMutation({
+  const deleteMut = useMutation({
     mutationFn: (id: string) => api.del<void>(`/payment-types/${id}`),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setDeleting(null);
-      notify.success('Payment type deleted');
-    },
-    onError: (err: Error) =>
-      notify.error('Delete failed', err),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setDeleting(null); notify.success('Deleted'); },
+    onError: (e: Error) => notify.error('Delete failed', e),
   });
 
   return (
     <div>
       <PageHeader
         title="Payment Types"
-        description="Configurable catalogue. Each type carries its own workflow behaviour, document policy, and field configuration."
+        description="Configurable catalogue of payment types (SoW §1.2). Each type carries its own workflow behaviour, attachment policy, and field configuration."
         actions={
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" /> New payment type
-              </Button>
+              <Button><Plus className="mr-2 h-4 w-4" /> New payment type</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-4xl">
-              <DialogHeader>
-                <DialogTitle>Create payment type</DialogTitle>
-              </DialogHeader>
-              <PaymentTypeForm
-                submitting={createMutation.isPending}
-                onSubmit={(d) => createMutation.mutate(d)}
-              />
+            <DialogContent className="sm:max-w-2xl">
+              <DialogHeader><DialogTitle>Create payment type</DialogTitle></DialogHeader>
+              <PaymentTypeForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
             </DialogContent>
           </Dialog>
         }
       />
-
       <Card>
         <div className="flex items-center gap-2 border-b p-4">
           <Search className="h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search by name or code"
-            value={search}
-            onChange={(e) => {
-              setPage(1);
-              setSearch(e.target.value);
-            }}
-            className="max-w-sm"
-          />
+          <Input placeholder="Search by name or code" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} className="max-w-sm" />
         </div>
         <Table>
           <TableHeader>
@@ -134,134 +86,103 @@ export default function PaymentTypesPage(): React.ReactElement {
               <TableHead>Code</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Direction</TableHead>
-              <TableHead>Behaviour</TableHead>
-              <TableHead>Active</TableHead>
-              <TableHead className="w-32 text-right">Actions</TableHead>
+              <TableHead>Workflow</TableHead>
+              <TableHead>Docs</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-36 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
-                  Loading…
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : data && data.data.length > 0 ? data.data.map((pt) => (
+              <TableRow key={pt.id}>
+                <TableCell>
+                  <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{pt.code}</code>
                 </TableCell>
-              </TableRow>
-            ) : data && data.data.length > 0 ? (
-              data.data.map((pt) => (
-                <TableRow key={pt.id}>
-                  <TableCell>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{pt.code}</code>
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      {pt.name}
-                      {pt.isSystem && (
-                        <span title="System type">
-                          <Lock className="h-3 w-3 text-muted-foreground" />
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge tone={pt.direction === 'OUTGOING' ? 'amber' : 'blue'}>
-                      {pt.direction}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="space-x-1">
-                    {pt.requiresApprovalChain && <Badge>Approval</Badge>}
-                    {pt.isBatchBased && <Badge>Batch</Badge>}
-                    {pt.isConfidential && <Badge tone="red">Confidential</Badge>}
-                    {pt.mobileInitiationOnly && <Badge>Mobile-only</Badge>}
-                  </TableCell>
-                  <TableCell>
-                    <Badge tone={pt.isActive ? 'green' : 'gray'}>
-                      {pt.isActive ? 'Active' : 'Inactive'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button size="icon" variant="ghost" onClick={() => setEditing(pt)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
+                <TableCell className="font-medium">
+                  <span className="inline-flex items-center gap-1">
+                    {pt.name}
+                    {pt.isSystem && <Lock className="h-3 w-3 text-muted-foreground" />}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span
+                    className={
+                      pt.direction === 'OUTGOING'
+                        ? 'inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-800'
+                        : 'inline-flex items-center rounded-md bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:ring-purple-800'
+                    }
+                  >
+                    {pt.direction}
+                  </span>
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  <div className="flex flex-wrap gap-1">
+                    {pt.requiresApprovalChain && <span className="rounded bg-muted px-1.5 py-0.5">approval-chain</span>}
+                    {pt.isBatchBased && <span className="rounded bg-muted px-1.5 py-0.5">batch</span>}
+                    {pt.isConfidential && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">confidential</span>}
+                    {pt.mobileInitiationOnly && <span className="rounded bg-muted px-1.5 py-0.5">mobile-only</span>}
+                    {!pt.allowsCrossCurrency && <span className="rounded bg-muted px-1.5 py-0.5">single-ccy</span>}
+                  </div>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {pt.documentPolicy.length === 0 ? '—' : `${pt.documentPolicy.filter((d) => d.required).length} required / ${pt.documentPolicy.length} total`}
+                </TableCell>
+                <TableCell>
+                  <span
+                    className={
+                      pt.isActive
+                        ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
+                        : 'inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border'
+                    }
+                  >
+                    {pt.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="inline-flex items-center gap-1 whitespace-nowrap">
+                    <Button size="icon" variant="ghost" onClick={() => setEditing(pt)} title="Edit"><Pencil className="h-4 w-4" /></Button>
                     <Button
                       size="icon"
                       variant="ghost"
+                      onClick={() => !pt.isSystem && setDeleting(pt)}
                       disabled={pt.isSystem}
-                      onClick={() => setDeleting(pt)}
-                      title={pt.isSystem ? 'System types cannot be deleted' : 'Delete'}
+                      title={pt.isSystem ? 'System type — cannot delete, deactivate instead' : 'Delete'}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
-                  No payment types yet.
+                  </div>
                 </TableCell>
               </TableRow>
+            )) : (
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No payment types yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-        {data && (
-          <DataTablePagination
-            page={data.page}
-            totalPages={data.totalPages}
-            total={data.total}
-            limit={data.limit}
-            onPageChange={setPage}
-          />
-        )}
+        {data && <DataTablePagination page={data.page} totalPages={data.totalPages} total={data.total} limit={data.limit} onPageChange={setPage} />}
       </Card>
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Edit payment type</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>Edit payment type</DialogTitle></DialogHeader>
           {editing && (
             <PaymentTypeForm
               defaultValues={editing}
-              codeLocked
-              submitting={updateMutation.isPending}
-              onSubmit={(d) => updateMutation.mutate({ id: editing.id, input: d })}
+              submitting={updateMut.isPending}
+              onSubmit={(d) => updateMut.mutate({ id: editing.id, i: d })}
             />
           )}
         </DialogContent>
       </Dialog>
-
       <ConfirmDelete
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
-        title={`Delete payment type "${deleting?.name}"?`}
-        description="Soft-deletes the payment type. System types cannot be deleted; deactivate them instead."
-        loading={deleteMutation.isPending}
-        onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+        title={`Delete "${deleting?.name}"?`}
+        description="This will soft-delete the payment type."
+        loading={deleteMut.isPending}
+        onConfirm={() => deleting && deleteMut.mutate(deleting.id)}
       />
     </div>
-  );
-}
-
-type BadgeTone = 'gray' | 'green' | 'amber' | 'blue' | 'red';
-function Badge({
-  children,
-  tone = 'gray',
-}: {
-  children: React.ReactNode;
-  tone?: BadgeTone;
-}): React.ReactElement {
-  const tones: Record<BadgeTone, string> = {
-    gray: 'bg-muted text-foreground',
-    green: 'bg-green-500/10 text-green-700 dark:text-green-400',
-    amber: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
-    blue: 'bg-blue-500/10 text-blue-700 dark:text-blue-400',
-    red: 'bg-destructive/10 text-destructive',
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${tones[tone]}`}
-    >
-      {children}
-    </span>
   );
 }

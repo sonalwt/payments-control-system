@@ -126,6 +126,7 @@ export default function LegalEntitiesPage(): React.ReactElement {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Code</TableHead>
+              <TableHead>Country</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-32 text-right">Actions</TableHead>
             </TableRow>
@@ -133,7 +134,7 @@ export default function LegalEntitiesPage(): React.ReactElement {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={4} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
@@ -143,6 +144,9 @@ export default function LegalEntitiesPage(): React.ReactElement {
                   <TableCell className="font-medium">{le.name}</TableCell>
                   <TableCell>
                     <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{le.code}</code>
+                  </TableCell>
+                  <TableCell>
+                    {le.country ? `${le.country.code} — ${le.country.countryName}` : '—'}
                   </TableCell>
                   <TableCell>
                     <span
@@ -167,7 +171,7 @@ export default function LegalEntitiesPage(): React.ReactElement {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={4} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
                   No legal entities yet.
                 </TableCell>
               </TableRow>

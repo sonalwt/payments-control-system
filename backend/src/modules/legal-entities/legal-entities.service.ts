@@ -29,6 +29,7 @@ export class LegalEntitiesService {
     const entity = this.repo.create({
       name: dto.name,
       code: dto.code,
+      countryId: dto.countryId,
       isActive: dto.isActive ?? true,
       createdBy: actorId,
       updatedBy: actorId,
@@ -42,6 +43,7 @@ export class LegalEntitiesService {
     const { page = 1, limit = 20, search } = query;
     const qb = this.repo
       .createQueryBuilder('le')
+      .leftJoinAndSelect('le.country', 'country')
       .orderBy('le.name', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -59,7 +61,7 @@ export class LegalEntitiesService {
   }
 
   async findOne(id: string): Promise<LegalEntity> {
-    const le = await this.repo.findOne({ where: { id } });
+    const le = await this.repo.findOne({ where: { id }, relations: ['country'] });
     if (!le) throw new NotFoundException(`Legal entity ${id} not found`);
     return le;
   }

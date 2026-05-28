@@ -36,6 +36,8 @@ export interface Group extends AuditFields {
 export interface LegalEntity extends AuditFields {
   name: string;
   code: string;
+  countryId?: string | null;
+  country?: Country | null;
   isActive: boolean;
   // Optional richer-org fields — present on legacy/seeded rows, not set by
   // the SUPER_ADMIN master form.
@@ -55,6 +57,7 @@ export interface Country extends AuditFields {
   currencyId: string;
   currency?: Currency | null;
   isActive: boolean;
+  isSanctioned: boolean;
   // Optional legacy aliases — preserved on rows that used the older
   // master shape. Prefer the canonical field names above.
   name?: string;
@@ -65,22 +68,28 @@ export interface Country extends AuditFields {
 }
 
 export interface BusinessUnit extends AuditFields {
-  countryId: string;
-  country?: Country;
   name: string;
-  code: string;
-  description?: string | null;
+  legalEntityId?: string | null;
+  legalEntity?: LegalEntity | null;
   isActive: boolean;
+  // Optional legacy fields preserved on rows seeded under the original
+  // org hierarchy; not collected by the SUPER_ADMIN master form.
+  countryId?: string;
+  country?: Country;
+  code?: string;
+  description?: string | null;
 }
 
 export interface Department extends AuditFields {
-  name: string;
   code: string;
+  name: string;
+  legalEntityId?: string | null;
+  legalEntity?: LegalEntity | null;
+  businessUnitId?: string | null;
+  businessUnit?: BusinessUnit | null;
   isActive: boolean;
-  // Optional legacy fields — preserved on rows seeded under the original
-  // org hierarchy; not collected by the SUPER_ADMIN master form.
-  businessUnitId?: string;
-  businessUnit?: BusinessUnit;
+  // Optional legacy field — preserved on older rows; not collected by
+  // the SUPER_ADMIN master form.
   description?: string | null;
 }
 
@@ -100,6 +109,7 @@ export interface User extends AuditFields {
   lastLoginAt?: string | null;
   roles?: string[];
   legalEntities?: string[];
+  departments?: { id: string; name: string }[];
 }
 
 export interface UserEntityRole {
@@ -173,7 +183,8 @@ export interface Counterparty extends AuditFields {
   name: string;
   legalName?: string | null;
   role: CounterpartyRole;
-  countryCode: string;
+  countryId?: string | null;
+  country?: Country | null;
   taxIdentifiers: TaxIdentifier[];
   addresses: Address[];
   primaryContactName?: string | null;
@@ -181,6 +192,9 @@ export interface Counterparty extends AuditFields {
   primaryContactPhone?: string | null;
   notes?: string | null;
   isActive: boolean;
+  kycDone: boolean;
+  // Legacy alias kept for older rows where country was a plain ISO code
+  countryCode?: string;
 }
 
 export interface Employee extends AuditFields {
@@ -227,22 +241,26 @@ export interface ApprovalMatrixStep {
   approverType: ApproverType;
   approverUserId?: string | null;
   approverRoleId?: string | null;
+  approverUser?: User | null;
+  approverRole?: Role | null;
   isOptional: boolean;
 }
 
 export interface ApprovalMatrixBand {
   id?: string;
-  currencyCode: string;
-  minAmountMinor: number;
-  maxAmountMinor?: number | null;
-  sortOrder?: number;
+  sortOrder: number;
+  minAmount: number;
+  maxAmount?: number | null;
   steps: ApprovalMatrixStep[];
 }
 
 export interface ApprovalMatrix extends AuditFields {
   name: string;
   description?: string | null;
-  paymentTypeCode: string;
+  paymentTypeId: string;
+  paymentType?: PaymentType;
+  currencyId: string;
+  currency?: Currency;
   version: number;
   status: ApprovalMatrixStatus;
   effectiveFrom: string;
@@ -251,6 +269,8 @@ export interface ApprovalMatrix extends AuditFields {
   publishedBy?: string | null;
   isActive: boolean;
   bands?: ApprovalMatrixBand[];
+  // Legacy alias (older rows / resolved-chain output)
+  paymentTypeCode?: string;
 }
 
 export interface ResolvedChainStep {

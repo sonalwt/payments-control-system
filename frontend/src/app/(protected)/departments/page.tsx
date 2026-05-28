@@ -1,17 +1,18 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Department, Paginated } from '@/types/domain';
+import type { BusinessUnit, Department, LegalEntity, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -28,6 +29,8 @@ const KEY = 'departments';
 const schema = z.object({
   code: z.string().min(2).max(30).regex(/^[A-Z0-9_-]+$/, 'Uppercase letters, digits, underscore or hyphen'),
   name: z.string().min(2).max(150),
+  legalEntityId: z.string().uuid('Select a legal entity'),
+  businessUnitId: z.string().uuid('Select a business unit'),
   isActive: z.boolean().optional(),
 });
 type FormData = z.infer<typeof schema>;
@@ -39,25 +42,87 @@ function DeptForm({
   onSubmit: (d: FormData) => void;
   submitting?: boolean;
 }): React.ReactElement {
-  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       code: defaultValues?.code ?? '',
       name: defaultValues?.name ?? '',
+      legalEntityId: defaultValues?.legalEntityId ?? '',
+      businessUnitId: defaultValues?.businessUnitId ?? '',
       isActive: defaultValues?.isActive ?? true,
     },
   });
+
+  const selectedLegalEntityId = watch('legalEntityId');
+
+  const { data: legalEntities } = useQuery({
+    queryKey: ['legal-entities-all'],
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
+  });
+  const { data: businessUnits } = useQuery({
+    queryKey: ['business-units-by-legal-entity', selectedLegalEntityId],
+    queryFn: () =>
+      api.get<Paginated<BusinessUnit>>(
+        `/business-units?page=1&limit=200&legalEntityId=${selectedLegalEntityId}`,
+      ),
+    enabled: !!selectedLegalEntityId,
+  });
+  const legalEntityOptions = (legalEntities?.data ?? [])
+    .filter((le) => le.isActive)
+    .map((le) => ({ label: `${le.code} — ${le.name}`, value: le.id }));
+  const businessUnitOptions = (businessUnits?.data ?? [])
+    .filter((bu) => bu.isActive)
+    .map((bu) => ({ label: bu.name, value: bu.id }));
+
+  // When the legal entity changes (after the first render), clear the
+  // business unit selection — the previously picked BU may not belong to
+  // the newly chosen LE.
+  const prevLegalEntityIdRef = useRef(selectedLegalEntityId);
+  useEffect(() => {
+    if (
+      prevLegalEntityIdRef.current &&
+      prevLegalEntityIdRef.current !== selectedLegalEntityId
+    ) {
+      setValue('businessUnitId', '');
+    }
+    prevLegalEntityIdRef.current = selectedLegalEntityId;
+  }, [selectedLegalEntityId, setValue]);
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="code">Code <span className="text-destructive">*</span></Label>
-        <Input id="code" placeholder="FIN" {...register('code')} />
-        {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
+          <Select
+            id="legalEntityId"
+            placeholder="Select legal entity"
+            options={legalEntityOptions}
+            {...register('legalEntityId')}
+          />
+          {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="businessUnitId">Business unit <span className="text-destructive">*</span></Label>
+          <Select
+            id="businessUnitId"
+            placeholder={selectedLegalEntityId ? 'Select business unit' : 'Pick a legal entity first'}
+            options={businessUnitOptions}
+            disabled={!selectedLegalEntityId}
+            {...register('businessUnitId')}
+          />
+          {errors.businessUnitId && <p className="text-xs text-destructive">{errors.businessUnitId.message}</p>}
+        </div>
       </div>
-      <div className="space-y-2">
-        <Label htmlFor="name">Name <span className="text-destructive">*</span></Label>
-        <Input id="name" placeholder="Finance" {...register('name')} />
-        {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="code">Code <span className="text-destructive">*</span></Label>
+          <Input id="code" placeholder="FIN" {...register('code')} />
+          {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="name">Name <span className="text-destructive">*</span></Label>
+          <Input id="name" placeholder="Finance" {...register('name')} />
+          {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -138,17 +203,21 @@ export default function DepartmentsPage(): React.ReactElement {
             <TableRow>
               <TableHead>Code</TableHead>
               <TableHead>Name</TableHead>
+              <TableHead>Legal entity</TableHead>
+              <TableHead>Business unit</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-32 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={4} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((d) => (
               <TableRow key={d.id}>
                 <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.code}</code></TableCell>
                 <TableCell className="font-medium">{d.name}</TableCell>
+                <TableCell>{d.legalEntity ? `${d.legalEntity.code} — ${d.legalEntity.name}` : '—'}</TableCell>
+                <TableCell>{d.businessUnit?.name ?? '—'}</TableCell>
                 <TableCell>
                   <span
                     className={
@@ -166,7 +235,7 @@ export default function DepartmentsPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={4} className="py-12 text-center text-muted-foreground">No departments yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No departments yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

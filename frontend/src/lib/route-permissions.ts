@@ -37,16 +37,17 @@ const RULES: RouteRule[] = [
   { prefix: '/groups', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/legal-entities', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/countries', roles: [RoleCode.SUPER_ADMIN] },
-  { prefix: '/business-units', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/business-units', roles: [RoleCode.SUPER_ADMIN] }, // duplicate prefix safe — same role
+
   { prefix: '/departments', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/users', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/user-roles', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/employees', roles: [RoleCode.SUPER_ADMIN] },
 
   // Lookup masters — read access for everyone in the payment flow
-  { prefix: '/payment-types', roles: OPERATIONAL_READ },
-  { prefix: '/counterparties', roles: OPERATIONAL_READ },
-  { prefix: '/approval-matrices', roles: OPERATIONAL_READ },
+  { prefix: '/payment-types', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/counterparties', roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY] },
+  { prefix: '/approval-matrices', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/sanctioned-countries', roles: OPERATIONAL_READ },
 
   // Currencies / banking masters — SUPER_ADMIN only

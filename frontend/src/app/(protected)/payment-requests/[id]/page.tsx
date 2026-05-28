@@ -207,7 +207,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const isBeneSanctioned =
     !!pr?.beneficiaryAccount && sanctionedSet.has(pr.beneficiaryAccount.countryCode.toUpperCase());
   const isCounterpartySanctioned =
-    !!pr?.counterparty && sanctionedSet.has(pr.counterparty.countryCode.toUpperCase());
+    !!pr?.counterparty?.countryCode && sanctionedSet.has(pr.counterparty.countryCode.toUpperCase());
   const hasSanctionWarning = pr?.sanctionWarning || isBeneSanctioned || isCounterpartySanctioned;
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['payment-requests', id] });

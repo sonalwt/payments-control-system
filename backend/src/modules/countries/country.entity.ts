@@ -22,4 +22,7 @@ export class Country extends BaseEntity {
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive!: boolean;
+
+  @Column({ name: 'is_sanctioned', type: 'boolean', default: false })
+  isSanctioned!: boolean;
 }

@@ -35,4 +35,9 @@ export class CreateCountryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ default: false, description: 'Sanctioned country (SoW §1.6 / §6.5)' })
+  @IsOptional()
+  @IsBoolean()
+  isSanctioned?: boolean;
 }

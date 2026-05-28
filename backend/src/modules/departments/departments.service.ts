@@ -29,6 +29,8 @@ export class DepartmentsService {
     const dept = this.repo.create({
       code: dto.code,
       name: dto.name,
+      legalEntityId: dto.legalEntityId,
+      businessUnitId: dto.businessUnitId,
       isActive: dto.isActive ?? true,
       createdBy: actorId,
       updatedBy: actorId,
@@ -40,6 +42,8 @@ export class DepartmentsService {
     const { page = 1, limit = 20, search } = query;
     const qb = this.repo
       .createQueryBuilder('d')
+      .leftJoinAndSelect('d.legalEntity', 'legalEntity')
+      .leftJoinAndSelect('d.businessUnit', 'businessUnit')
       .orderBy('d.name', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -51,7 +55,10 @@ export class DepartmentsService {
   }
 
   async findOne(id: string): Promise<Department> {
-    const d = await this.repo.findOne({ where: { id } });
+    const d = await this.repo.findOne({
+      where: { id },
+      relations: ['legalEntity', 'businessUnit'],
+    });
     if (!d) throw new NotFoundException(`Department ${id} not found`);
     return d;
   }

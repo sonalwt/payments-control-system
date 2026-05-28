@@ -31,6 +31,7 @@ export class CountriesService {
       code: dto.code,
       currencyId: dto.currencyId,
       isActive: dto.isActive ?? true,
+      isSanctioned: dto.isSanctioned ?? false,
       createdBy: actorId,
       updatedBy: actorId,
     });

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  BadgeCheck, Building, Building2, ChevronDown, Coins, Database, Globe2, Handshake,
+  BadgeCheck, Briefcase, Building, Building2, ChevronDown, Coins, Database, FileType2, Globe2, GitBranch, Handshake,
   Landmark, ListChecks, LogOut, Network, ShieldCheck, Users2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -26,10 +26,7 @@ interface NavGroup {
   roles?: readonly RoleCode[];
 }
 
-const TOP_LEVEL: NavItem[] = [
-  { href: '/users',      label: 'Users', icon: Users2      },
-  { href: '/user-roles', label: 'Roles', icon: ShieldCheck },
-];
+const TOP_LEVEL: NavItem[] = [];
 
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -37,14 +34,19 @@ const NAV_GROUPS: NavGroup[] = [
     icon: Database,
     roles: [RoleCode.SUPER_ADMIN],
     items: [
-      { href: '/legal-entities', label: 'Legal Entities', icon: Building2 },
       { href: '/currencies',     label: 'Currencies',     icon: Coins },
       { href: '/countries',      label: 'Countries',      icon: Globe2 },
-      { href: '/account-types',  label: 'Account Types',  icon: ListChecks },
-      { href: '/banks',          label: 'Banks',          icon: Building },
-      { href: '/bank-accounts',  label: 'Bank Accounts',  icon: Landmark },
+      { href: '/legal-entities', label: 'Legal Entities', icon: Building2 },
+      { href: '/business-units', label: 'Business Units', icon: Building2 },
       { href: '/departments',    label: 'Departments',    icon: Network },
+      { href: '/user-roles',     label: 'Roles',          icon: ShieldCheck },
+      { href: '/users',          label: 'Users',          icon: Users2 },
       { href: '/employees',      label: 'Employees',      icon: BadgeCheck },
+      { href: '/banks',          label: 'Banks',          icon: Building },
+      { href: '/account-types',  label: 'Account Types',  icon: ListChecks },
+      { href: '/bank-accounts',  label: 'Bank Accounts',  icon: Landmark },
+      { href: '/payment-types',     label: 'Payment Types',     icon: FileType2 },
+      { href: '/approval-matrices', label: 'Approval Matrices', icon: GitBranch },
     ],
   },
   {
@@ -52,8 +54,9 @@ const NAV_GROUPS: NavGroup[] = [
     icon: Handshake,
     roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY],
     items: [
-      { href: '/counterparty/banks',         label: 'Banks',         icon: Building },
-      { href: '/counterparty/bank-accounts', label: 'Bank Accounts', icon: Landmark },
+      { href: '/counterparties',             label: 'Counterparties', icon: Briefcase },
+      { href: '/counterparty/banks',         label: 'Banks',          icon: Building },
+      { href: '/counterparty/bank-accounts', label: 'Bank Accounts',  icon: Landmark },
     ],
   },
 ];

@@ -19,6 +19,10 @@ import { BankAccountsModule } from './modules/bank-accounts/bank-accounts.module
 import { DepartmentsModule } from './modules/departments/departments.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { BanksModule } from './modules/banks/banks.module';
+import { BusinessUnitsModule } from './modules/business-units/business-units.module';
+import { PaymentTypesModule } from './modules/payment-types/payment-types.module';
+import { CounterpartiesModule } from './modules/counterparties/counterparties.module';
+import { ApprovalMatricesModule } from './modules/approval-matrices/approval-matrices.module';
 
 @Module({
   imports: [
@@ -53,6 +57,10 @@ import { BanksModule } from './modules/banks/banks.module';
     DepartmentsModule,
     EmployeesModule,
     BanksModule,
+    BusinessUnitsModule,
+    PaymentTypesModule,
+    CounterpartiesModule,
+    ApprovalMatricesModule,
   ],
 })
 export class AppModule {}

@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Length,
   Matches,
 } from 'class-validator';
@@ -22,6 +23,10 @@ export class CreateLegalEntityDto {
     message: 'code must contain only uppercase letters, digits, underscore or hyphen',
   })
   code!: string;
+
+  @ApiProperty({ description: 'Country master UUID' })
+  @IsUUID()
+  countryId!: string;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()

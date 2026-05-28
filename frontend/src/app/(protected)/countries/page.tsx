@@ -30,6 +30,7 @@ const schema = z.object({
   code: z.string().min(2).max(10),
   currencyId: z.string().uuid('Select a currency'),
   isActive: z.boolean().optional(),
+  isSanctioned: z.boolean().optional(),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -59,6 +60,7 @@ function CountryForm({
       code: defaultValues?.code ?? '',
       currencyId: defaultValues?.currencyId ?? '',
       isActive: defaultValues?.isActive ?? true,
+      isSanctioned: defaultValues?.isSanctioned ?? false,
     },
   });
 
@@ -93,14 +95,23 @@ function CountryForm({
           {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          id="isActive"
-          type="checkbox"
-          className="h-4 w-4 rounded border-border"
-          {...register('isActive')}
-        />
-        <Label htmlFor="isActive">Active</Label>
+      <div className="flex flex-wrap items-center gap-6">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-border"
+            {...register('isActive')}
+          />
+          <span className="text-sm">Active</span>
+        </label>
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-border"
+            {...register('isSanctioned')}
+          />
+          <span className="text-sm">Sanctioned country?</span>
+        </label>
       </div>
       <DialogFooter>
         <Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</Button>
@@ -171,13 +182,14 @@ export default function CountriesPage(): React.ReactElement {
               <TableHead>Short name</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Currency</TableHead>
+              <TableHead>Sanctioned</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-32 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((c) => (
               <TableRow key={c.id}>
                 <TableCell className="font-medium">{c.countryName}</TableCell>
@@ -190,6 +202,15 @@ export default function CountriesPage(): React.ReactElement {
                     </span>
                   ) : (
                     <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {c.isSanctioned ? (
+                    <span className="inline-flex items-center rounded-md bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:ring-rose-800">
+                      Sanctioned
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">No</span>
                   )}
                 </TableCell>
                 <TableCell>
@@ -209,7 +230,7 @@ export default function CountriesPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No countries yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No countries yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

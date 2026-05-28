@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Length,
   Matches,
 } from 'class-validator';
@@ -22,6 +23,14 @@ export class CreateDepartmentDto {
   @IsNotEmpty()
   @Length(2, 150)
   name!: string;
+
+  @ApiProperty({ description: 'Legal entity master UUID' })
+  @IsUUID()
+  legalEntityId!: string;
+
+  @ApiProperty({ description: 'Business unit master UUID' })
+  @IsUUID()
+  businessUnitId!: string;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()
