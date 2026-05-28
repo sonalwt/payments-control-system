@@ -1,6 +1,7 @@
-import { Column, Entity, OneToMany } from 'typeorm';
+import { Column, Entity, JoinTable, ManyToMany, OneToMany } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { UserRole } from './user-role.entity';
+import { Department } from '../departments/department.entity';
 
 @Entity({ name: 'users' })
 export class User extends BaseEntity {
@@ -27,4 +28,12 @@ export class User extends BaseEntity {
 
   @OneToMany(() => UserRole, (ur) => ur.user)
   userRoles!: UserRole[];
+
+  @ManyToMany(() => Department)
+  @JoinTable({
+    name: 'user_departments',
+    joinColumn: { name: 'user_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'department_id', referencedColumnName: 'id' },
+  })
+  departments?: Department[];
 }

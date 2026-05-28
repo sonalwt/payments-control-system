@@ -11,6 +11,18 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { UserRolesModule } from './modules/user-roles/user-roles.module';
+import { LegalEntitiesModule } from './modules/legal-entities/legal-entities.module';
+import { CurrenciesModule } from './modules/currencies/currencies.module';
+import { CountriesModule } from './modules/countries/countries.module';
+import { AccountTypesModule } from './modules/account-types/account-types.module';
+import { BankAccountsModule } from './modules/bank-accounts/bank-accounts.module';
+import { DepartmentsModule } from './modules/departments/departments.module';
+import { EmployeesModule } from './modules/employees/employees.module';
+import { BanksModule } from './modules/banks/banks.module';
+import { BusinessUnitsModule } from './modules/business-units/business-units.module';
+import { PaymentTypesModule } from './modules/payment-types/payment-types.module';
+import { CounterpartiesModule } from './modules/counterparties/counterparties.module';
+import { ApprovalMatricesModule } from './modules/approval-matrices/approval-matrices.module';
 
 @Module({
   imports: [
@@ -37,6 +49,18 @@ import { UserRolesModule } from './modules/user-roles/user-roles.module';
     UsersModule,
     RolesModule,
     UserRolesModule,
+    LegalEntitiesModule,
+    CurrenciesModule,
+    CountriesModule,
+    AccountTypesModule,
+    BankAccountsModule,
+    DepartmentsModule,
+    EmployeesModule,
+    BanksModule,
+    BusinessUnitsModule,
+    PaymentTypesModule,
+    CounterpartiesModule,
+    ApprovalMatricesModule,
   ],
 })
 export class AppModule {}

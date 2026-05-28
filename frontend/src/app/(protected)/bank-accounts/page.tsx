@@ -2,41 +2,23 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { History, Pencil, Plus, Search, Trash2, Wallet } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type {
-  Bank,
-  BalanceChange,
-  BankAccount,
-  BankAccountType,
-  Currency,
-  LegalEntity,
-  Paginated,
-} from '@/types/domain';
+import type { AccountType, Bank, BankAccount, Currency, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
@@ -44,877 +26,328 @@ import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
 const KEY = 'bank-accounts';
 
-const TYPE_OPTIONS: { label: string; value: BankAccountType }[] = [
-  { label: 'Current', value: 'CURRENT' },
-  { label: 'Collateral', value: 'COLLATERAL' },
-  { label: 'Deposit', value: 'DEPOSIT' },
-];
+const schema = z.object({
+  bankId: z.string().uuid('Select a bank'),
+  bankNickname: z.string().max(100).optional().or(z.literal('')),
+  currencyId: z.string().uuid('Select a currency'),
+  accountTypeId: z.string().uuid('Select an account type'),
+  accountNumber: z.string().min(1).max(50),
+  branchName: z.string().max(120).optional().or(z.literal('')),
+  branchCode: z.string().max(30).optional().or(z.literal('')),
+  openingBalance: z.coerce.number().min(0).optional(),
+  minimumBalance: z.coerce.number().min(0).optional(),
+  isChairmanDesignated: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+});
+type FormData = z.infer<typeof schema>;
 
-const TYPE_STYLES: Record<BankAccountType, string> = {
-  CURRENT: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-  COLLATERAL: 'bg-purple-500/10 text-purple-700 dark:text-purple-400',
-  DEPOSIT: 'bg-blue-500/10 text-blue-700 dark:text-blue-400',
-};
+function BankAccountForm({
+  defaultValues, onSubmit, submitting,
+}: {
+  defaultValues?: Partial<BankAccount>;
+  onSubmit: (d: FormData) => void;
+  submitting?: boolean;
+}): React.ReactElement {
+  const { data: banks } = useQuery({
+    queryKey: ['banks-all'],
+    queryFn: () => api.get<Paginated<Bank>>('/banks?page=1&limit=200'),
+  });
+  const { data: currencies } = useQuery({
+    queryKey: ['currencies-all'],
+    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
+  });
+  const { data: accountTypes } = useQuery({
+    queryKey: ['account-types-all'],
+    queryFn: () => api.get<Paginated<AccountType>>('/account-types?page=1&limit=200'),
+  });
 
-interface CreatePayload {
-  nickname: string;
-  legalEntityId: string;
-  bankId: string;
-  currencyId: string;
-  accountNumber: string;
-  iban?: string;
-  accountType: BankAccountType;
-  branchName?: string;
-  branchCode?: string;
-  openingBalance?: string;
-  minimumBalance?: string;
-  isChairmanDesignated?: boolean;
-  isActive?: boolean;
+  const bankOptions = (banks?.data ?? [])
+    .filter((b) => b.isActive)
+    .map((b) => ({ label: b.shortName ? `${b.name} (${b.shortName})` : b.name, value: b.id }));
+  const currencyOptions = (currencies?.data ?? []).map((c) => ({
+    label: c.code ? `${c.code} — ${c.name}` : c.name,
+    value: c.id,
+  }));
+  const accountTypeOptions = (accountTypes?.data ?? [])
+    .filter((at) => at.isActive)
+    .map((at) => ({ label: at.name, value: at.id }));
+
+  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      bankId: defaultValues?.bankId ?? '',
+      bankNickname: defaultValues?.bankNickname ?? '',
+      currencyId: defaultValues?.currencyId ?? '',
+      accountTypeId: defaultValues?.accountTypeId ?? '',
+      accountNumber: defaultValues?.accountNumber ?? '',
+      branchName: defaultValues?.branchName ?? '',
+      branchCode: defaultValues?.branchCode ?? '',
+      openingBalance:
+        defaultValues?.openingBalance != null
+          ? Number(defaultValues.openingBalance)
+          : undefined,
+      minimumBalance:
+        defaultValues?.minimumBalance != null
+          ? Number(defaultValues.minimumBalance)
+          : undefined,
+      isChairmanDesignated: defaultValues?.isChairmanDesignated ?? false,
+      isActive: defaultValues?.isActive ?? true,
+    },
+  });
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="bankId">Bank name <span className="text-destructive">*</span></Label>
+          <Select
+            id="bankId"
+            placeholder="Select bank"
+            options={bankOptions}
+            {...register('bankId')}
+          />
+          {errors.bankId && <p className="text-xs text-destructive">{errors.bankId.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="bankNickname">Bank nickname</Label>
+          <Input id="bankNickname" placeholder="HDFC – Main Operating" {...register('bankNickname')} />
+          {errors.bankNickname && <p className="text-xs text-destructive">{errors.bankNickname.message}</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
+          <Select
+            id="currencyId"
+            placeholder="Select currency"
+            options={currencyOptions}
+            {...register('currencyId')}
+          />
+          {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="accountTypeId">Account type <span className="text-destructive">*</span></Label>
+          <Select
+            id="accountTypeId"
+            placeholder="Select account type"
+            options={accountTypeOptions}
+            {...register('accountTypeId')}
+          />
+          {errors.accountTypeId && <p className="text-xs text-destructive">{errors.accountTypeId.message}</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2 col-span-3">
+          <Label htmlFor="accountNumber">Account number <span className="text-destructive">*</span></Label>
+          <Input id="accountNumber" placeholder="50100123456789" {...register('accountNumber')} />
+          {errors.accountNumber && <p className="text-xs text-destructive">{errors.accountNumber.message}</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="branchName">Branch name</Label>
+          <Input id="branchName" {...register('branchName')} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="branchCode">Branch code</Label>
+          <Input id="branchCode" {...register('branchCode')} />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="openingBalance">Opening balance</Label>
+          <Input id="openingBalance" type="number" step="0.0001" min={0} {...register('openingBalance')} />
+          {errors.openingBalance && <p className="text-xs text-destructive">{errors.openingBalance.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="minimumBalance">Minimum balance</Label>
+          <Input id="minimumBalance" type="number" step="0.0001" min={0} {...register('minimumBalance')} />
+          {errors.minimumBalance && <p className="text-xs text-destructive">{errors.minimumBalance.message}</p>}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id="isChairmanDesignated"
+          type="checkbox"
+          className="h-4 w-4 rounded border-border"
+          {...register('isChairmanDesignated')}
+        />
+        <Label htmlFor="isChairmanDesignated">Chairman-designated account</Label>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id="isActive"
+          type="checkbox"
+          className="h-4 w-4 rounded border-border"
+          {...register('isActive')}
+        />
+        <Label htmlFor="isActive">Active</Label>
+      </div>
+      <DialogFooter>
+        <Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</Button>
+      </DialogFooter>
+    </form>
+  );
 }
 
-interface UpdatePayload {
-  nickname?: string;
-  iban?: string;
-  branchName?: string;
-  branchCode?: string;
-  minimumBalance?: string;
-  isChairmanDesignated?: boolean;
-  isActive?: boolean;
-}
-
-interface OverridePayload {
-  newBalance: string;
-  reason: string;
+function normalize(d: FormData) {
+  return {
+    bankId: d.bankId,
+    bankNickname: d.bankNickname ? d.bankNickname : undefined,
+    currencyId: d.currencyId,
+    accountTypeId: d.accountTypeId,
+    accountNumber: d.accountNumber,
+    branchName: d.branchName ? d.branchName : undefined,
+    branchCode: d.branchCode ? d.branchCode : undefined,
+    openingBalance: d.openingBalance,
+    minimumBalance: d.minimumBalance,
+    isChairmanDesignated: d.isChairmanDesignated ?? false,
+    isActive: d.isActive ?? true,
+  };
 }
 
 export default function BankAccountsPage(): React.ReactElement {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
-  const [entityFilter, setEntityFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'' | BankAccountType>('');
-  const [activeFilter, setActiveFilter] = useState<'' | 'true' | 'false'>('');
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<BankAccount | null>(null);
   const [deleting, setDeleting] = useState<BankAccount | null>(null);
-  const [overriding, setOverriding] = useState<BankAccount | null>(null);
-  const [historyFor, setHistoryFor] = useState<BankAccount | null>(null);
   const notify = useNotify();
   const qc = useQueryClient();
 
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
     if (search) u.set('search', search);
-    if (entityFilter) u.set('legalEntityId', entityFilter);
-    if (typeFilter) u.set('accountType', typeFilter);
-    if (activeFilter) u.set('isActive', activeFilter);
     return u.toString();
-  }, [page, search, entityFilter, typeFilter, activeFilter]);
+  }, [page, search]);
 
   const { data, isLoading } = useQuery({
     queryKey: [KEY, params],
     queryFn: () => api.get<Paginated<BankAccount>>(`/bank-accounts?${params}`),
   });
 
-  const { data: entities } = useQuery({
-    queryKey: ['legal-entities', 'all'],
-    queryFn: () =>
-      api.get<Paginated<LegalEntity>>(`/legal-entities?page=1&limit=100`),
+  const createMut = useMutation({
+    mutationFn: (i: FormData) => api.post<BankAccount>('/bank-accounts', normalize(i)),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setCreateOpen(false); notify.success('Bank account created'); },
+    onError: (e: Error) => notify.error('Create failed', e),
   });
-  const { data: banks } = useQuery({
-    queryKey: ['banks', 'all-active'],
-    queryFn: () => api.get<Paginated<Bank>>(`/banks?page=1&limit=100&isActive=true`),
+  const updateMut = useMutation({
+    mutationFn: ({ id, i }: { id: string; i: FormData }) => api.put<BankAccount>(`/bank-accounts/${id}`, normalize(i)),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setEditing(null); notify.success('Updated'); },
+    onError: (e: Error) => notify.error('Update failed', e),
   });
-  const { data: currencies } = useQuery({
-    queryKey: ['currencies', 'all-active'],
-    queryFn: () =>
-      api.get<Paginated<Currency>>(`/currencies?page=1&limit=100&isActive=true`),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: (input: CreatePayload) =>
-      api.post<BankAccount>('/bank-accounts', input),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setCreateOpen(false);
-      notify.success('Account added');
-    },
-    onError: (err: Error) =>
-      notify.error('Add failed', err),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: UpdatePayload }) =>
-      api.put<BankAccount>(`/bank-accounts/${id}`, input),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setEditing(null);
-      notify.success('Account updated');
-    },
-    onError: (err: Error) =>
-      notify.error('Update failed', err),
-  });
-
-  const deleteMutation = useMutation({
+  const deleteMut = useMutation({
     mutationFn: (id: string) => api.del<void>(`/bank-accounts/${id}`),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setDeleting(null);
-      notify.success('Account deleted');
-    },
-    onError: (err: Error) =>
-      notify.error('Delete failed', err),
-  });
-
-  const overrideMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: OverridePayload }) =>
-      api.post<BankAccount>(`/bank-accounts/${id}/balance-override`, input),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setOverriding(null);
-      notify.success('Balance overridden');
-    },
-    onError: (err: Error) =>
-      notify.error('Override failed', err),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setDeleting(null); notify.success('Deleted'); },
+    onError: (e: Error) => notify.error('Delete failed', e),
   });
 
   return (
     <div>
       <PageHeader
         title="Bank Accounts"
-        description="Group-owned accounts (§2.4). Current accounts fund TT payments; minimum-balance control blocks releases that would breach it (§2.5). Collateral and Deposit accounts are visibility-only."
+        description="Master list of bank accounts (Super Admin only)."
         actions={
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" /> Add account
-              </Button>
+              <Button><Plus className="mr-2 h-4 w-4" /> New bank account</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Add bank account</DialogTitle>
-                <DialogDescription>
-                  Opening balance seeds the running balance; minimum balance
-                  is mandatory for CURRENT accounts and disallowed for
-                  Collateral / Deposit.
-                </DialogDescription>
-              </DialogHeader>
-              <AccountForm
-                entities={entities?.data ?? []}
-                banks={banks?.data ?? []}
-                currencies={currencies?.data ?? []}
-                submitting={createMutation.isPending}
-                onSubmit={(d) => createMutation.mutate(d)}
-              />
+            <DialogContent className="sm:max-w-2xl">
+              <DialogHeader><DialogTitle>Create bank account</DialogTitle></DialogHeader>
+              <BankAccountForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
             </DialogContent>
           </Dialog>
         }
       />
-
       <Card>
-        <div className="flex flex-wrap items-center gap-2 border-b p-4">
-          <div className="flex items-center gap-2">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by nickname, account no., IBAN"
-              value={search}
-              onChange={(e) => {
-                setPage(1);
-                setSearch(e.target.value);
-              }}
-              className="w-80"
-            />
-          </div>
-          <Select
-            className="w-56"
-            options={[
-              { label: 'All entities', value: '' },
-              ...(entities?.data ?? []).map((e) => ({
-                label: e.name,
-                value: e.id,
-              })),
-            ]}
-            value={entityFilter}
-            onChange={(e) => {
-              setPage(1);
-              setEntityFilter(e.target.value);
-            }}
-          />
-          <Select
-            className="w-40"
-            options={[
-              { label: 'All types', value: '' },
-              ...TYPE_OPTIONS.map((t) => ({ label: t.label, value: t.value })),
-            ]}
-            value={typeFilter}
-            onChange={(e) => {
-              setPage(1);
-              setTypeFilter(e.target.value as '' | BankAccountType);
-            }}
-          />
-          <Select
-            className="w-36"
-            options={[
-              { label: 'All', value: '' },
-              { label: 'Active', value: 'true' },
-              { label: 'Inactive', value: 'false' },
-            ]}
-            value={activeFilter}
-            onChange={(e) => {
-              setPage(1);
-              setActiveFilter(e.target.value as '' | 'true' | 'false');
-            }}
-          />
+        <div className="flex items-center gap-2 border-b p-4">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search by bank, nickname or account number" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} className="max-w-md" />
         </div>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Account</TableHead>
-              <TableHead>Bank</TableHead>
-              <TableHead className="w-24">Currency</TableHead>
-              <TableHead className="w-28">Type</TableHead>
-              <TableHead className="w-40 text-right">Balance</TableHead>
-              <TableHead className="w-40 text-right">Min balance</TableHead>
-              <TableHead className="w-24">Status</TableHead>
-              <TableHead className="w-40 text-right">Actions</TableHead>
+              <TableHead>Bank / Nickname</TableHead>
+              <TableHead>Account #</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Currency</TableHead>
+              <TableHead>Branch</TableHead>
+              <TableHead className="text-right">Opening</TableHead>
+              <TableHead className="text-right">Min</TableHead>
+              <TableHead>Chairman</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-24 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
-                  Loading…
+              <TableRow><TableCell colSpan={10} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : data && data.data.length > 0 ? data.data.map((a) => (
+              <TableRow key={a.id}>
+                <TableCell>
+                  <div className="font-medium">{a.bank?.name ?? a.bankName ?? '—'}</div>
+                  <div className="text-xs text-muted-foreground">{a.bankNickname ?? '—'}</div>
+                </TableCell>
+                <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{a.accountNumber}</code></TableCell>
+                <TableCell className="text-muted-foreground">{a.accountTypeMaster?.name ?? '—'}</TableCell>
+                <TableCell>{a.currency?.code ?? a.currency?.name ?? '—'}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  {a.branchName ?? '—'}
+                  {a.branchCode ? <span className="ml-1 text-xs">({a.branchCode})</span> : null}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {a.openingBalance != null ? Number(a.openingBalance).toLocaleString() : '—'}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {a.minimumBalance != null ? Number(a.minimumBalance).toLocaleString() : '—'}
+                </TableCell>
+                <TableCell>
+                  {a.isChairmanDesignated ? (
+                    <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800">
+                      Yes
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">No</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <span
+                    className={
+                      a.isActive
+                        ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
+                        : 'inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border'
+                    }
+                  >
+                    {a.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button size="icon" variant="ghost" onClick={() => setEditing(a)}><Pencil className="h-4 w-4" /></Button>
+                  <Button size="icon" variant="ghost" onClick={() => setDeleting(a)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
-            ) : data && data.data.length > 0 ? (
-              data.data.map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span className="font-medium">{a.nickname}</span>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {a.accountNumber}
-                      </span>
-                      {a.isChairmanDesignated && (
-                        <span className="mt-0.5 inline-flex w-fit items-center rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 dark:text-purple-400">
-                          CHAIRMAN
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    <div>{a.bank?.name ?? '—'}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {a.bank?.countryCode}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-semibold">
-                      {a.currency?.code ?? '—'}
-                    </code>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${TYPE_STYLES[a.accountType]}`}
-                    >
-                      {a.accountType}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="font-mono tabular-nums">
-                      {Number(a.balance).toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 4,
-                      })}
-                    </div>
-                    <div className="text-[10px] uppercase text-muted-foreground">
-                      {a.balanceSource.replace('_', ' ')}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">
-                    {a.accountType === 'CURRENT' && a.minimumBalance
-                      ? Number(a.minimumBalance).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 4,
-                        })
-                      : '—'}
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className={
-                        a.isActive
-                          ? 'inline-flex items-center rounded bg-emerald-500/10 px-1.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400'
-                          : 'inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-xs font-medium'
-                      }
-                    >
-                      {a.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      title="Balance history"
-                      onClick={() => setHistoryFor(a)}
-                    >
-                      <History className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      title="Manual balance override"
-                      onClick={() => setOverriding(a)}
-                    >
-                      <Wallet className="h-4 w-4" />
-                    </Button>
-                    <Button size="icon" variant="ghost" onClick={() => setEditing(a)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button size="icon" variant="ghost" onClick={() => setDeleting(a)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
-                  No accounts match the filters.
-                </TableCell>
-              </TableRow>
+            )) : (
+              <TableRow><TableCell colSpan={10} className="py-12 text-center text-muted-foreground">No bank accounts yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-        {data && (
-          <DataTablePagination
-            page={data.page}
-            totalPages={data.totalPages}
-            total={data.total}
-            limit={data.limit}
-            onPageChange={setPage}
-          />
-        )}
+        {data && <DataTablePagination page={data.page} totalPages={data.totalPages} total={data.total} limit={data.limit} onPageChange={setPage} />}
       </Card>
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Edit bank account</DialogTitle>
-            <DialogDescription>
-              Identity fields (entity, bank, currency, account number, type)
-              are immutable. Edit descriptive fields and min-balance only.
-            </DialogDescription>
-          </DialogHeader>
-          {editing && (
-            <EditForm
-              account={editing}
-              submitting={updateMutation.isPending}
-              onSubmit={(d) =>
-                updateMutation.mutate({ id: editing.id, input: d })
-              }
-            />
-          )}
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>Edit bank account</DialogTitle></DialogHeader>
+          {editing && <BankAccountForm defaultValues={editing} submitting={updateMut.isPending} onSubmit={(d) => updateMut.mutate({ id: editing.id, i: d })} />}
         </DialogContent>
       </Dialog>
-
-      <Dialog
-        open={!!overriding}
-        onOpenChange={(o) => !o && setOverriding(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Manual balance override</DialogTitle>
-            <DialogDescription>
-              §2.5 — Logged with user, timestamp, previous value, new value,
-              and reason. Use between reconciliations only.
-            </DialogDescription>
-          </DialogHeader>
-          {overriding && (
-            <OverrideForm
-              account={overriding}
-              submitting={overrideMutation.isPending}
-              onSubmit={(d) =>
-                overrideMutation.mutate({ id: overriding.id, input: d })
-              }
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!historyFor}
-        onOpenChange={(o) => !o && setHistoryFor(null)}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Balance movements — {historyFor?.nickname}</DialogTitle>
-            <DialogDescription>
-              Append-only ledger of every change to the recorded balance (§2.5).
-            </DialogDescription>
-          </DialogHeader>
-          {historyFor && <HistoryTable accountId={historyFor.id} />}
-        </DialogContent>
-      </Dialog>
-
       <ConfirmDelete
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
-        title={`Delete ${deleting?.nickname}?`}
-        description="Soft-delete only; the balance history is retained for audit."
-        loading={deleteMutation.isPending}
-        onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+        title={`Delete "${deleting?.bankNickname ?? deleting?.bankName ?? deleting?.accountNumber}"?`}
+        description="This will soft-delete the bank account."
+        loading={deleteMut.isPending}
+        onConfirm={() => deleting && deleteMut.mutate(deleting.id)}
       />
     </div>
-  );
-}
-
-function AccountForm({
-  entities,
-  banks,
-  currencies,
-  submitting,
-  onSubmit,
-}: {
-  entities: LegalEntity[];
-  banks: Bank[];
-  currencies: Currency[];
-  submitting: boolean;
-  onSubmit: (data: CreatePayload) => void;
-}): React.ReactElement {
-  const [nickname, setNickname] = useState('');
-  const [legalEntityId, setLegalEntityId] = useState('');
-  const [bankId, setBankId] = useState('');
-  const [currencyId, setCurrencyId] = useState('');
-  const [accountNumber, setAccountNumber] = useState('');
-  const [iban, setIban] = useState('');
-  const [accountType, setAccountType] = useState<BankAccountType>('CURRENT');
-  const [branchName, setBranchName] = useState('');
-  const [branchCode, setBranchCode] = useState('');
-  const [openingBalance, setOpeningBalance] = useState('0');
-  const [minimumBalance, setMinimumBalance] = useState('0');
-  const [isChairmanDesignated, setChairman] = useState(false);
-  const [isActive, setIsActive] = useState(true);
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({
-          nickname: nickname.trim(),
-          legalEntityId,
-          bankId,
-          currencyId,
-          accountNumber: accountNumber.trim(),
-          iban: iban.trim() || undefined,
-          accountType,
-          branchName: branchName.trim() || undefined,
-          branchCode: branchCode.trim() || undefined,
-          openingBalance: openingBalance.trim() || '0',
-          minimumBalance:
-            accountType === 'CURRENT' ? minimumBalance.trim() || '0' : undefined,
-          isChairmanDesignated,
-          isActive,
-        });
-      }}
-      className="space-y-4"
-    >
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2">
-          <Label htmlFor="nickname">Nickname</Label>
-          <Input
-            id="nickname"
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-            required
-            placeholder="DBS Singapore — Operating"
-          />
-        </div>
-        <div>
-          <Label htmlFor="entity">Legal entity</Label>
-          <Select
-            id="entity"
-            options={[
-              { label: 'Select…', value: '' },
-              ...entities.map((e) => ({ label: e.name, value: e.id })),
-            ]}
-            value={legalEntityId}
-            onChange={(e) => setLegalEntityId(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <Label htmlFor="bank">Bank</Label>
-          <Select
-            id="bank"
-            options={[
-              { label: 'Select…', value: '' },
-              ...banks.map((b) => ({
-                label: `${b.name} (${b.countryCode})`,
-                value: b.id,
-              })),
-            ]}
-            value={bankId}
-            onChange={(e) => setBankId(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <Label htmlFor="currency">Currency</Label>
-          <Select
-            id="currency"
-            options={[
-              { label: 'Select…', value: '' },
-              ...currencies.map((c) => ({
-                label: `${c.code} — ${c.name}`,
-                value: c.id,
-              })),
-            ]}
-            value={currencyId}
-            onChange={(e) => setCurrencyId(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <Label htmlFor="type">Account type</Label>
-          <Select
-            id="type"
-            options={TYPE_OPTIONS}
-            value={accountType}
-            onChange={(e) => setAccountType(e.target.value as BankAccountType)}
-            required
-          />
-        </div>
-        <div>
-          <Label htmlFor="accountNumber">Account number</Label>
-          <Input
-            id="accountNumber"
-            value={accountNumber}
-            onChange={(e) => setAccountNumber(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <Label htmlFor="iban">IBAN</Label>
-          <Input
-            id="iban"
-            value={iban}
-            onChange={(e) => setIban(e.target.value.toUpperCase())}
-            maxLength={34}
-          />
-        </div>
-        <div>
-          <Label htmlFor="branchName">Branch name</Label>
-          <Input
-            id="branchName"
-            value={branchName}
-            onChange={(e) => setBranchName(e.target.value)}
-          />
-        </div>
-        <div>
-          <Label htmlFor="branchCode">Branch code</Label>
-          <Input
-            id="branchCode"
-            value={branchCode}
-            onChange={(e) => setBranchCode(e.target.value)}
-          />
-        </div>
-        <div>
-          <Label htmlFor="opening">Opening balance</Label>
-          <Input
-            id="opening"
-            value={openingBalance}
-            onChange={(e) => setOpeningBalance(e.target.value)}
-            placeholder="0"
-          />
-        </div>
-        {accountType === 'CURRENT' && (
-          <div>
-            <Label htmlFor="min">Minimum balance</Label>
-            <Input
-              id="min"
-              value={minimumBalance}
-              onChange={(e) => setMinimumBalance(e.target.value)}
-              required
-              placeholder="0"
-            />
-          </div>
-        )}
-      </div>
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <input
-            id="chairman"
-            type="checkbox"
-            checked={isChairmanDesignated}
-            onChange={(e) => setChairman(e.target.checked)}
-          />
-          <Label htmlFor="chairman" className="cursor-pointer">
-            Chairman-designated (§9.2)
-          </Label>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            id="isActiveNewAcct"
-            type="checkbox"
-            checked={isActive}
-            onChange={(e) => setIsActive(e.target.checked)}
-          />
-          <Label htmlFor="isActiveNewAcct" className="cursor-pointer">
-            Active
-          </Label>
-        </div>
-      </div>
-      <DialogFooter className="gap-2">
-        <DialogClose asChild>
-          <Button type="button" variant="outline">Cancel</Button>
-        </DialogClose>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? 'Adding…' : 'Add account'}
-        </Button>
-      </DialogFooter>
-    </form>
-  );
-}
-
-function EditForm({
-  account,
-  submitting,
-  onSubmit,
-}: {
-  account: BankAccount;
-  submitting: boolean;
-  onSubmit: (data: UpdatePayload) => void;
-}): React.ReactElement {
-  const [nickname, setNickname] = useState(account.nickname);
-  const [iban, setIban] = useState(account.iban ?? '');
-  const [branchName, setBranchName] = useState(account.branchName ?? '');
-  const [branchCode, setBranchCode] = useState(account.branchCode ?? '');
-  const [minimumBalance, setMinimumBalance] = useState(
-    account.minimumBalance ?? '',
-  );
-  const [isChairmanDesignated, setChairman] = useState(
-    account.isChairmanDesignated,
-  );
-  const [isActive, setIsActive] = useState(account.isActive);
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({
-          nickname: nickname.trim(),
-          iban: iban.trim() || undefined,
-          branchName: branchName.trim() || undefined,
-          branchCode: branchCode.trim() || undefined,
-          minimumBalance:
-            account.accountType === 'CURRENT'
-              ? minimumBalance.trim() || '0'
-              : undefined,
-          isChairmanDesignated,
-          isActive,
-        });
-      }}
-      className="space-y-4"
-    >
-      <div>
-        <Label htmlFor="editNickname">Nickname</Label>
-        <Input
-          id="editNickname"
-          value={nickname}
-          onChange={(e) => setNickname(e.target.value)}
-          required
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label htmlFor="editIban">IBAN</Label>
-          <Input
-            id="editIban"
-            value={iban}
-            onChange={(e) => setIban(e.target.value.toUpperCase())}
-            maxLength={34}
-          />
-        </div>
-        <div>
-          <Label htmlFor="editBranchName">Branch name</Label>
-          <Input
-            id="editBranchName"
-            value={branchName}
-            onChange={(e) => setBranchName(e.target.value)}
-          />
-        </div>
-        <div>
-          <Label htmlFor="editBranchCode">Branch code</Label>
-          <Input
-            id="editBranchCode"
-            value={branchCode}
-            onChange={(e) => setBranchCode(e.target.value)}
-          />
-        </div>
-        {account.accountType === 'CURRENT' && (
-          <div>
-            <Label htmlFor="editMin">Minimum balance</Label>
-            <Input
-              id="editMin"
-              value={minimumBalance}
-              onChange={(e) => setMinimumBalance(e.target.value)}
-            />
-          </div>
-        )}
-      </div>
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <input
-            id="editChairman"
-            type="checkbox"
-            checked={isChairmanDesignated}
-            onChange={(e) => setChairman(e.target.checked)}
-          />
-          <Label htmlFor="editChairman" className="cursor-pointer">
-            Chairman-designated
-          </Label>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            id="editAcctActive"
-            type="checkbox"
-            checked={isActive}
-            onChange={(e) => setIsActive(e.target.checked)}
-          />
-          <Label htmlFor="editAcctActive" className="cursor-pointer">Active</Label>
-        </div>
-      </div>
-      <DialogFooter className="gap-2">
-        <DialogClose asChild>
-          <Button type="button" variant="outline">Cancel</Button>
-        </DialogClose>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : 'Save changes'}
-        </Button>
-      </DialogFooter>
-    </form>
-  );
-}
-
-function OverrideForm({
-  account,
-  submitting,
-  onSubmit,
-}: {
-  account: BankAccount;
-  submitting: boolean;
-  onSubmit: (data: OverridePayload) => void;
-}): React.ReactElement {
-  const [newBalance, setNewBalance] = useState(account.balance);
-  const [reason, setReason] = useState('');
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!reason.trim()) return;
-        onSubmit({
-          newBalance: newBalance.trim(),
-          reason: reason.trim(),
-        });
-      }}
-      className="space-y-4"
-    >
-      <div>
-        <Label>Current recorded balance</Label>
-        <Input
-          value={`${account.currency?.code ?? ''} ${Number(account.balance).toLocaleString(
-            undefined,
-            { minimumFractionDigits: 2, maximumFractionDigits: 4 },
-          )}`}
-          disabled
-        />
-      </div>
-      <div>
-        <Label htmlFor="newBalance">New balance</Label>
-        <Input
-          id="newBalance"
-          value={newBalance}
-          onChange={(e) => setNewBalance(e.target.value)}
-          required
-        />
-      </div>
-      <div>
-        <Label htmlFor="overrideReason">Reason</Label>
-        <Textarea
-          id="overrideReason"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          rows={3}
-          required
-          placeholder="e.g. Inward wire credited intra-day; bank advice attached out-of-band."
-        />
-      </div>
-      <DialogFooter className="gap-2">
-        <DialogClose asChild>
-          <Button type="button" variant="outline">Cancel</Button>
-        </DialogClose>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : 'Override balance'}
-        </Button>
-      </DialogFooter>
-    </form>
-  );
-}
-
-function HistoryTable({ accountId }: { accountId: string }): React.ReactElement {
-  const { data, isLoading } = useQuery({
-    queryKey: ['bank-accounts', accountId, 'history'],
-    queryFn: () => api.get<BalanceChange[]>(`/bank-accounts/${accountId}/history`),
-  });
-
-  if (isLoading) {
-    return <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>;
-  }
-  if (!data || data.length === 0) {
-    return <p className="py-6 text-center text-sm text-muted-foreground">No movements yet.</p>;
-  }
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-40">When</TableHead>
-          <TableHead className="w-32">Kind</TableHead>
-          <TableHead className="text-right">Previous</TableHead>
-          <TableHead className="text-right">Delta</TableHead>
-          <TableHead className="text-right">New</TableHead>
-          <TableHead>Reason</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {data.map((row) => {
-          const delta = Number(row.delta);
-          return (
-            <TableRow key={row.id}>
-              <TableCell className="text-xs text-muted-foreground">
-                {new Date(row.createdAt).toLocaleString()}
-              </TableCell>
-              <TableCell className="text-xs uppercase">
-                {row.kind.replace('_', ' ')}
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">
-                {Number(row.previousBalance).toFixed(2)}
-              </TableCell>
-              <TableCell
-                className={`text-right font-mono tabular-nums ${delta >= 0 ? 'text-emerald-600' : 'text-red-600'}`}
-              >
-                {delta >= 0 ? '+' : ''}
-                {delta.toFixed(2)}
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">
-                {Number(row.newBalance).toFixed(2)}
-              </TableCell>
-              <TableCell className="max-w-md text-sm text-muted-foreground">
-                <p className="line-clamp-2">{row.reason ?? '—'}</p>
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
   );
 }

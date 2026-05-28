@@ -1,354 +1,194 @@
 'use client';
 
-import * as React from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, Trash2 } from 'lucide-react';
+import type { PaymentType } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Select } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { DialogFooter } from '@/components/ui/dialog';
-import type { PaymentType } from '@/types/domain';
 
-const documentPolicySchema = z.object({
+const docSchema = z.object({
+  code: z.string().min(1).max(40),
+  label: z.string().min(1).max(100),
+  required: z.boolean(),
+});
+
+export const paymentTypeSchema = z.object({
   code: z
     .string()
     .min(2)
-    .max(50)
-    .regex(/^[A-Z0-9_]+$/, 'Uppercase alphanumeric only'),
-  label: z.string().min(1).max(120),
-  required: z.boolean(),
-  amountThresholdMinor: z
-    .union([z.literal('').transform(() => null), z.coerce.number().int().min(0)])
-    .nullable()
-    .optional(),
-  currencyCode: z
-    .union([z.literal('').transform(() => null), z.string().length(3)])
-    .nullable()
-    .optional(),
+    .max(40)
+    .regex(/^[A-Z][A-Z0-9_]*$/, 'UPPER_SNAKE_CASE'),
+  name: z.string().min(2).max(100),
+  description: z.string().optional().or(z.literal('')),
+  direction: z.enum(['OUTGOING', 'INCOMING']),
+  requiresApprovalChain: z.boolean().optional(),
+  isBatchBased: z.boolean().optional(),
+  isConfidential: z.boolean().optional(),
+  mobileInitiationOnly: z.boolean().optional(),
+  allowsCrossCurrency: z.boolean().optional(),
+  documentPolicy: z.array(docSchema).optional(),
+  isActive: z.boolean().optional(),
 });
-
-const fieldConfigSchema = z.object({
-  key: z
-    .string()
-    .min(1)
-    .max(60)
-    .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/, 'camelCase / snake_case identifier'),
-  label: z.string().min(1).max(120),
-  visible: z.boolean(),
-  required: z.boolean(),
-  readOnly: z.boolean(),
-  sortOrder: z.coerce.number().int().min(0),
-  helpText: z.string().max(500).optional().or(z.literal('')),
-});
-
-export const paymentTypeSchema = z
-  .object({
-    code: z
-      .string()
-      .min(2)
-      .max(50)
-      .regex(/^[A-Z0-9_]+$/, 'Uppercase alphanumeric only'),
-    name: z.string().min(2).max(120),
-    description: z.string().max(2000).optional().or(z.literal('')),
-    direction: z.enum(['OUTGOING', 'INCOMING']),
-    requiresApprovalChain: z.boolean(),
-    isBatchBased: z.boolean(),
-    isConfidential: z.boolean(),
-    mobileInitiationOnly: z.boolean(),
-    allowsCrossCurrency: z.boolean(),
-    isActive: z.boolean(),
-    documentPolicy: z.array(documentPolicySchema),
-    fieldConfig: z.array(fieldConfigSchema),
-  })
-  .refine((v) => !(v.isConfidential && v.requiresApprovalChain), {
-    message: 'Confidential types cannot require a standard approval chain',
-    path: ['requiresApprovalChain'],
-  });
-
 export type PaymentTypeFormData = z.infer<typeof paymentTypeSchema>;
 
 interface Props {
   defaultValues?: Partial<PaymentType>;
   onSubmit: (data: PaymentTypeFormData) => void | Promise<void>;
   submitting?: boolean;
-  /** Code is immutable after creation. */
-  codeLocked?: boolean;
 }
 
 export function PaymentTypeForm({
   defaultValues,
   onSubmit,
   submitting,
-  codeLocked,
 }: Props): React.ReactElement {
-  const form = useForm<PaymentTypeFormData>({
+  const {
+    register,
+    control,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<PaymentTypeFormData>({
     resolver: zodResolver(paymentTypeSchema),
     defaultValues: {
       code: defaultValues?.code ?? '',
       name: defaultValues?.name ?? '',
       description: defaultValues?.description ?? '',
-      direction: defaultValues?.direction ?? 'OUTGOING',
+      direction: (defaultValues?.direction ?? 'OUTGOING') as 'OUTGOING' | 'INCOMING',
       requiresApprovalChain: defaultValues?.requiresApprovalChain ?? true,
       isBatchBased: defaultValues?.isBatchBased ?? false,
       isConfidential: defaultValues?.isConfidential ?? false,
       mobileInitiationOnly: defaultValues?.mobileInitiationOnly ?? false,
       allowsCrossCurrency: defaultValues?.allowsCrossCurrency ?? true,
+      documentPolicy:
+        defaultValues?.documentPolicy?.map((d) => ({
+          code: d.code,
+          label: d.label,
+          required: d.required,
+        })) ?? [],
       isActive: defaultValues?.isActive ?? true,
-      documentPolicy: (defaultValues?.documentPolicy ?? []).map((d) => ({
-        code: d.code,
-        label: d.label,
-        required: d.required,
-        amountThresholdMinor: d.amountThresholdMinor ?? null,
-        currencyCode: d.currencyCode ?? null,
-      })),
-      fieldConfig: (defaultValues?.fieldConfig ?? []).map((f) => ({
-        key: f.key,
-        label: f.label,
-        visible: f.visible,
-        required: f.required,
-        readOnly: f.readOnly,
-        sortOrder: f.sortOrder,
-        helpText: f.helpText ?? '',
-      })),
     },
   });
-  const { register, handleSubmit, control, formState } = form;
-  const { errors } = formState;
 
-  const docs = useFieldArray({ control, name: 'documentPolicy' });
-  const fields = useFieldArray({ control, name: 'fieldConfig' });
+  const { fields, append, remove } = useFieldArray({
+    control,
+    name: 'documentPolicy',
+  });
+
+  const isSystem = defaultValues?.isSystem ?? false;
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="max-h-[80vh] space-y-6 overflow-y-auto pr-2">
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
+      <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="code">Code</Label>
-          <Input
-            id="code"
-            placeholder="VENDOR_PAYMENT"
-            disabled={codeLocked}
-            {...register('code')}
-          />
+          <Label htmlFor="code">Code <span className="text-destructive">*</span></Label>
+          <Input id="code" placeholder="VENDOR_PAYMENT" disabled={isSystem} {...register('code')} />
           {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
+          {isSystem && <p className="text-xs text-muted-foreground">System code is locked.</p>}
         </div>
         <div className="space-y-2">
-          <Label htmlFor="name">Name</Label>
-          <Input id="name" {...register('name')} />
+          <Label htmlFor="name">Name <span className="text-destructive">*</span></Label>
+          <Input id="name" placeholder="Vendor Payment" {...register('name')} />
           {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
         </div>
-        <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="description">Description</Label>
-          <Textarea id="description" rows={2} {...register('description')} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="direction">Direction</Label>
-          <Select
-            id="direction"
-            options={[
-              { label: 'Outgoing', value: 'OUTGOING' },
-              { label: 'Incoming', value: 'INCOMING' },
-            ]}
-            {...register('direction')}
-          />
-        </div>
-      </section>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="description">Description</Label>
+        <Textarea id="description" rows={2} {...register('description')} />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="direction">Direction <span className="text-destructive">*</span></Label>
+        <Select
+          id="direction"
+          options={[
+            { label: 'Outgoing (payment)', value: 'OUTGOING' },
+            { label: 'Incoming (receipt)', value: 'INCOMING' },
+          ]}
+          {...register('direction')}
+        />
+        {errors.direction && <p className="text-xs text-destructive">{errors.direction.message}</p>}
+      </div>
 
-      <section>
-        <h3 className="mb-2 text-sm font-semibold">Workflow behaviour</h3>
-        <div className="grid grid-cols-1 gap-2 rounded-md border p-3 md:grid-cols-2">
-          <CheckboxRow
-            id="requiresApprovalChain"
-            label="Requires approval chain"
-            description="Routes through the per-type matrix (Section 1.5)."
-            {...register('requiresApprovalChain')}
-          />
-          <CheckboxRow
-            id="isBatchBased"
-            label="Batch-based"
-            description="Approval is given at batch level (payroll)."
-            {...register('isBatchBased')}
-          />
-          <CheckboxRow
-            id="isConfidential"
-            label="Confidential"
-            description="Beneficiary identity is suppressed outside the payments team."
-            {...register('isConfidential')}
-          />
-          <CheckboxRow
-            id="mobileInitiationOnly"
-            label="Mobile initiation only"
-            description="Initiation permitted only from the mobile app."
-            {...register('mobileInitiationOnly')}
-          />
-          <CheckboxRow
-            id="allowsCrossCurrency"
-            label="Allows cross-currency"
-            description="Maker may pick a current account in another currency."
-            {...register('allowsCrossCurrency')}
-          />
-          <CheckboxRow id="isActive" label="Active" {...register('isActive')} />
+      <div className="rounded-md border p-3 space-y-2">
+        <p className="text-sm font-medium">Workflow behaviour</p>
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('requiresApprovalChain')} />
+            <span>Requires approval chain</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('isBatchBased')} />
+            <span>Batch-based (e.g. payroll)</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('isConfidential')} />
+            <span>Confidential (chairman-style)</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('mobileInitiationOnly')} />
+            <span>Mobile initiation only</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('allowsCrossCurrency')} />
+            <span>Allows cross-currency</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('isActive')} />
+            <span>Active</span>
+          </label>
         </div>
-        {errors.requiresApprovalChain?.message && (
-          <p className="mt-2 text-xs text-destructive">
-            {errors.requiresApprovalChain.message}
-          </p>
-        )}
-      </section>
+      </div>
 
-      <section>
-        <div className="mb-2 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold">Document-attachment policy</h3>
-            <p className="text-xs text-muted-foreground">
-              Mandatory and threshold-gated attachments enforced at request creation.
-            </p>
-          </div>
+      <div className="rounded-md border p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium">Document policy</p>
           <Button
             type="button"
-            variant="outline"
             size="sm"
-            onClick={() =>
-              docs.append({
-                code: '',
-                label: '',
-                required: true,
-                amountThresholdMinor: null,
-                currencyCode: null,
-              })
-            }
+            variant="outline"
+            onClick={() => append({ code: '', label: '', required: true })}
           >
             <Plus className="mr-1 h-3 w-3" /> Add document
           </Button>
         </div>
-        {docs.fields.length === 0 ? (
-          <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
-            No documents configured.
-          </p>
+        {fields.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No documents required.</p>
         ) : (
           <div className="space-y-2">
-            {docs.fields.map((f, i) => (
-              <div key={f.id} className="grid grid-cols-12 items-end gap-2 rounded-md border p-2">
-                <div className="col-span-3 space-y-1">
+            {fields.map((f, idx) => (
+              <div key={f.id} className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
+                <div>
                   <Label className="text-xs">Code</Label>
-                  <Input placeholder="INVOICE_PDF" {...register(`documentPolicy.${i}.code`)} />
+                  <Input placeholder="INVOICE" {...register(`documentPolicy.${idx}.code`)} />
                 </div>
-                <div className="col-span-4 space-y-1">
+                <div>
                   <Label className="text-xs">Label</Label>
-                  <Input placeholder="Invoice PDF" {...register(`documentPolicy.${i}.label`)} />
+                  <Input placeholder="Invoice PDF" {...register(`documentPolicy.${idx}.label`)} />
                 </div>
-                <div className="col-span-2 space-y-1">
-                  <Label className="text-xs">Threshold (minor)</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    placeholder="—"
-                    {...register(`documentPolicy.${i}.amountThresholdMinor`)}
-                  />
-                </div>
-                <div className="col-span-1 space-y-1">
-                  <Label className="text-xs">Ccy</Label>
-                  <Input placeholder="USD" maxLength={3} {...register(`documentPolicy.${i}.currencyCode`)} />
-                </div>
-                <div className="col-span-1 flex items-center pb-2">
-                  <label className="flex items-center gap-1 text-xs">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4"
-                      {...register(`documentPolicy.${i}.required`)}
-                    />
-                    Req
-                  </label>
-                </div>
-                <div className="col-span-1 flex justify-end">
-                  <Button type="button" size="icon" variant="ghost" onClick={() => docs.remove(i)}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
+                <label className="mb-2 flex items-center gap-1 text-xs">
+                  <input type="checkbox" className="h-4 w-4 rounded border-border" {...register(`documentPolicy.${idx}.required`)} />
+                  Required
+                </label>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="mb-1"
+                  onClick={() => remove(idx)}
+                  title="Remove"
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
               </div>
             ))}
           </div>
         )}
-      </section>
-
-      <section>
-        <div className="mb-2 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold">Field-level configuration</h3>
-            <p className="text-xs text-muted-foreground">
-              Controls field visibility, required and read-only status on the request form.
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              fields.append({
-                key: '',
-                label: '',
-                visible: true,
-                required: false,
-                readOnly: false,
-                sortOrder: (fields.fields.length + 1) * 10,
-                helpText: '',
-              })
-            }
-          >
-            <Plus className="mr-1 h-3 w-3" /> Add field
-          </Button>
-        </div>
-        {fields.fields.length === 0 ? (
-          <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
-            No fields configured.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {fields.fields.map((f, i) => (
-              <div key={f.id} className="grid grid-cols-12 items-end gap-2 rounded-md border p-2">
-                <div className="col-span-3 space-y-1">
-                  <Label className="text-xs">Key</Label>
-                  <Input placeholder="invoiceNumber" {...register(`fieldConfig.${i}.key`)} />
-                </div>
-                <div className="col-span-3 space-y-1">
-                  <Label className="text-xs">Label</Label>
-                  <Input placeholder="Invoice Number" {...register(`fieldConfig.${i}.label`)} />
-                </div>
-                <div className="col-span-1 space-y-1">
-                  <Label className="text-xs">Order</Label>
-                  <Input type="number" min={0} {...register(`fieldConfig.${i}.sortOrder`)} />
-                </div>
-                <div className="col-span-3 flex items-center gap-3 pb-2">
-                  <label className="flex items-center gap-1 text-xs">
-                    <input type="checkbox" className="h-4 w-4" {...register(`fieldConfig.${i}.visible`)} />
-                    Visible
-                  </label>
-                  <label className="flex items-center gap-1 text-xs">
-                    <input type="checkbox" className="h-4 w-4" {...register(`fieldConfig.${i}.required`)} />
-                    Required
-                  </label>
-                  <label className="flex items-center gap-1 text-xs">
-                    <input type="checkbox" className="h-4 w-4" {...register(`fieldConfig.${i}.readOnly`)} />
-                    Read-only
-                  </label>
-                </div>
-                <div className="col-span-1 space-y-1">
-                  <Label className="text-xs">Help</Label>
-                  <Input placeholder="—" {...register(`fieldConfig.${i}.helpText`)} />
-                </div>
-                <div className="col-span-1 flex justify-end">
-                  <Button type="button" size="icon" variant="ghost" onClick={() => fields.remove(i)}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      </div>
 
       <DialogFooter>
         <Button type="submit" disabled={submitting}>
@@ -358,24 +198,3 @@ export function PaymentTypeForm({
     </form>
   );
 }
-
-interface CheckboxRowProps extends React.InputHTMLAttributes<HTMLInputElement> {
-  id: string;
-  label: string;
-  description?: string;
-}
-
-const CheckboxRow = React.forwardRef<HTMLInputElement, CheckboxRowProps>(
-  ({ id, label, description, ...rest }, ref) => (
-    <label htmlFor={id} className="flex items-start gap-2 rounded-sm p-1 text-sm">
-      <input ref={ref} id={id} type="checkbox" className="mt-0.5 h-4 w-4" {...rest} />
-      <span>
-        <span className="font-medium">{label}</span>
-        {description ? (
-          <span className="block text-xs text-muted-foreground">{description}</span>
-        ) : null}
-      </span>
-    </label>
-  ),
-);
-CheckboxRow.displayName = 'CheckboxRow';

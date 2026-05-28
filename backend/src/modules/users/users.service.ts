@@ -4,9 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './user.entity';
+import { Department } from '../departments/department.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import {
@@ -20,7 +21,17 @@ const BCRYPT_ROUNDS = 12;
 export class UsersService {
   constructor(
     @InjectRepository(User) private readonly repo: Repository<User>,
+    @InjectRepository(Department) private readonly departmentRepo: Repository<Department>,
   ) {}
+
+  private async loadDepartments(ids: string[]): Promise<Department[]> {
+    if (!ids?.length) return [];
+    const rows = await this.departmentRepo.find({ where: { id: In(ids) } });
+    if (rows.length !== ids.length) {
+      throw new NotFoundException('One or more departments not found');
+    }
+    return rows;
+  }
 
   async create(dto: CreateUserDto, actorId: string): Promise<User> {
     const existing = await this.repo.findOne({ where: { email: dto.email } });
@@ -28,12 +39,14 @@ export class UsersService {
       throw new ConflictException(`User with email "${dto.email}" already exists`);
     }
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    const departments = await this.loadDepartments(dto.departmentIds ?? []);
     const user = this.repo.create({
       email: dto.email,
       fullName: dto.fullName,
       employeeCode: dto.employeeCode ?? null,
       isActive: dto.isActive ?? true,
       passwordHash,
+      departments,
       createdBy: actorId,
       updatedBy: actorId,
     });
@@ -54,22 +67,36 @@ export class UsersService {
     }
     const [data, total] = await qb.getManyAndCount();
 
-    // Batch-load role names for all users on this page.
+    // Batch-load role names + department names for users on this page.
     const roleMap = new Map<string, string[]>();
+    const deptMap = new Map<string, { id: string; name: string }[]>();
     if (data.length > 0) {
       const ids = data.map((u) => u.id);
-      const rows = await this.repo
+      const roleRows = await this.repo
         .createQueryBuilder('u')
         .leftJoin('u.userRoles', 'ur')
         .leftJoin('ur.role', 'r')
         .where('u.id IN (:...ids)', { ids })
         .select(['u.id AS uid', 'r.name AS role_name'])
         .getRawMany<{ uid: string; role_name: string | null }>();
-      for (const row of rows) {
+      for (const row of roleRows) {
         if (row.role_name) {
           if (!roleMap.has(row.uid)) roleMap.set(row.uid, []);
           if (!roleMap.get(row.uid)!.includes(row.role_name))
             roleMap.get(row.uid)!.push(row.role_name);
+        }
+      }
+
+      const deptRows = await this.repo
+        .createQueryBuilder('u')
+        .leftJoin('u.departments', 'd')
+        .where('u.id IN (:...ids)', { ids })
+        .select(['u.id AS uid', 'd.id AS d_id', 'd.name AS d_name'])
+        .getRawMany<{ uid: string; d_id: string | null; d_name: string | null }>();
+      for (const row of deptRows) {
+        if (row.d_id && row.d_name) {
+          if (!deptMap.has(row.uid)) deptMap.set(row.uid, []);
+          deptMap.get(row.uid)!.push({ id: row.d_id, name: row.d_name });
         }
       }
     }
@@ -77,6 +104,7 @@ export class UsersService {
     return {
       data: data.map((u) => Object.assign(u, {
         roles: roleMap.get(u.id) ?? [],
+        departments: deptMap.get(u.id) ?? [],
       })),
       total,
       page,
@@ -88,7 +116,7 @@ export class UsersService {
   async findOne(id: string): Promise<User> {
     const u = await this.repo.findOne({
       where: { id },
-      relations: ['userRoles', 'userRoles.role'],
+      relations: ['userRoles', 'userRoles.role', 'departments'],
     });
     if (!u) throw new NotFoundException(`User ${id} not found`);
     return u;
@@ -110,7 +138,11 @@ export class UsersService {
         throw new ConflictException(`User with email "${dto.email}" already exists`);
       }
     }
-    Object.assign(user, dto, { updatedBy: actorId });
+    const { departmentIds, ...rest } = dto;
+    Object.assign(user, rest, { updatedBy: actorId });
+    if (departmentIds !== undefined) {
+      user.departments = await this.loadDepartments(departmentIds);
+    }
     return this.repo.save(user);
   }
 

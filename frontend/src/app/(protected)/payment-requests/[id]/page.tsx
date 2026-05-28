@@ -88,12 +88,16 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const notify = useNotify();
   const { user } = useAuth();
 
-  // §9 — Role-based flags for chairman payment UI gating
+  // §9 — Role-based flags for chairman payment UI gating.
+  // The legacy PAYMENTS_MAKER/CHECKER/HEAD/CHAIRMAN roles no longer exist
+  // in the trimmed role set; these flags stay for the gating expressions
+  // below but resolve to false until that workflow is re-mapped onto the
+  // current role taxonomy.
   const userRoles: string[] = user?.roles ?? [];
-  const hasMakerRole = userRoles.includes(RoleCode.PAYMENTS_MAKER);
-  const hasCheckerRole = userRoles.includes(RoleCode.PAYMENTS_CHECKER);
-  const hasHeadRole = userRoles.includes(RoleCode.PAYMENTS_HEAD);
-  const isChairmanRole = userRoles.includes(RoleCode.CHAIRMAN);
+  const hasMakerRole = userRoles.includes('PAYMENTS_MAKER');
+  const hasCheckerRole = userRoles.includes('PAYMENTS_CHECKER');
+  const hasHeadRole = userRoles.includes('PAYMENTS_HEAD');
+  const isChairmanRole = userRoles.includes('CHAIRMAN');
   const isSuperAdmin = userRoles.includes(RoleCode.SUPER_ADMIN);
   const canSeeConfidential = hasMakerRole || hasCheckerRole || hasHeadRole || isSuperAdmin;
 
@@ -203,7 +207,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const isBeneSanctioned =
     !!pr?.beneficiaryAccount && sanctionedSet.has(pr.beneficiaryAccount.countryCode.toUpperCase());
   const isCounterpartySanctioned =
-    !!pr?.counterparty && sanctionedSet.has(pr.counterparty.countryCode.toUpperCase());
+    !!pr?.counterparty?.countryCode && sanctionedSet.has(pr.counterparty.countryCode.toUpperCase());
   const hasSanctionWarning = pr?.sanctionWarning || isBeneSanctioned || isCounterpartySanctioned;
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['payment-requests', id] });
