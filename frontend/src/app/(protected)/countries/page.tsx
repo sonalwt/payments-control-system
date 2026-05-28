@@ -7,7 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Country, LegalEntity, Paginated } from '@/types/domain';
+import type { Country, Currency, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,9 +25,11 @@ import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
 const schema = z.object({
-  legalEntityId: z.string().uuid(),
-  name: z.string().min(2).max(120),
-  isoCode: z.string().regex(/^[A-Z]{2}$/, 'ISO alpha-2'),
+  countryName: z.string().min(2).max(120),
+  countryShortName: z.string().min(1).max(20),
+  code: z.string().min(2).max(10),
+  currencyId: z.string().uuid('Select a currency'),
+  isActive: z.boolean().optional(),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -38,41 +40,67 @@ function CountryForm({
   onSubmit: (d: FormData) => void;
   submitting?: boolean;
 }): React.ReactElement {
-  const { data: les } = useQuery({
-    queryKey: ['legal-entities-all'],
-    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=100'),
+  const { data: currencies } = useQuery({
+    queryKey: ['currencies-all'],
+    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
   });
+  const currencyOptions = (currencies?.data ?? [])
+    .filter((c) => c.isActive)
+    .map((c) => ({
+      label: c.code ? `${c.code} — ${c.name}` : c.name,
+      value: c.id,
+    }));
+
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      legalEntityId: defaultValues?.legalEntityId ?? '',
-      name: defaultValues?.name ?? '',
-      isoCode: defaultValues?.isoCode ?? '',
+      countryName: defaultValues?.countryName ?? '',
+      countryShortName: defaultValues?.countryShortName ?? '',
+      code: defaultValues?.code ?? '',
+      currencyId: defaultValues?.currencyId ?? '',
+      isActive: defaultValues?.isActive ?? true,
     },
   });
+
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="legalEntityId">Legal entity</Label>
-        <Select
-          id="legalEntityId"
-          placeholder="Select"
-          options={(les?.data ?? []).map((l) => ({ label: l.name, value: l.id }))}
-          {...register('legalEntityId')}
-        />
-        {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="countryName">Country name <span className="text-destructive">*</span></Label>
+          <Input id="countryName" placeholder="India" {...register('countryName')} />
+          {errors.countryName && <p className="text-xs text-destructive">{errors.countryName.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="countryShortName">Short name <span className="text-destructive">*</span></Label>
+          <Input id="countryShortName" placeholder="IND" {...register('countryShortName')} />
+          {errors.countryShortName && <p className="text-xs text-destructive">{errors.countryShortName.message}</p>}
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="name">Name</Label>
-          <Input id="name" {...register('name')} />
-          {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+          <Label htmlFor="code">Code <span className="text-destructive">*</span></Label>
+          <Input id="code" maxLength={10} placeholder="IN" {...register('code')} />
+          {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
         </div>
         <div className="space-y-2">
-          <Label htmlFor="isoCode">ISO code</Label>
-          <Input id="isoCode" maxLength={2} placeholder="IN" {...register('isoCode')} />
-          {errors.isoCode && <p className="text-xs text-destructive">{errors.isoCode.message}</p>}
+          <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
+          <Select
+            id="currencyId"
+            placeholder="Select currency"
+            options={currencyOptions}
+            {...register('currencyId')}
+          />
+          {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
         </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id="isActive"
+          type="checkbox"
+          className="h-4 w-4 rounded border-border"
+          {...register('isActive')}
+        />
+        <Label htmlFor="isActive">Active</Label>
       </div>
       <DialogFooter>
         <Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</Button>
@@ -99,6 +127,7 @@ export default function CountriesPage(): React.ReactElement {
     queryKey: ['countries', params],
     queryFn: () => api.get<Paginated<Country>>(`/countries?${params}`),
   });
+
   const createMut = useMutation({
     mutationFn: (i: FormData) => api.post<Country>('/countries', i),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['countries'] }); setCreateOpen(false); notify.success('Created'); },
@@ -119,7 +148,7 @@ export default function CountriesPage(): React.ReactElement {
     <div>
       <PageHeader
         title="Countries"
-        description="Operating countries within each legal entity"
+        description="Master list of countries with their default currency (Super Admin only)."
         actions={
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild><Button><Plus className="mr-2 h-4 w-4" /> New country</Button></DialogTrigger>
@@ -133,32 +162,54 @@ export default function CountriesPage(): React.ReactElement {
       <Card>
         <div className="flex items-center gap-2 border-b p-4">
           <Search className="h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} className="max-w-sm" />
+          <Input placeholder="Search by name or code" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} className="max-w-sm" />
         </div>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>ISO</TableHead>
-              <TableHead>Legal entity</TableHead>
+              <TableHead>Country name</TableHead>
+              <TableHead>Short name</TableHead>
+              <TableHead>Code</TableHead>
+              <TableHead>Currency</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead className="w-32 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={4} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((c) => (
               <TableRow key={c.id}>
-                <TableCell className="font-medium">{c.name}</TableCell>
-                <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{c.isoCode}</code></TableCell>
-                <TableCell className="text-muted-foreground">{c.legalEntity?.name ?? '—'}</TableCell>
+                <TableCell className="font-medium">{c.countryName}</TableCell>
+                <TableCell className="text-muted-foreground">{c.countryShortName}</TableCell>
+                <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{c.code}</code></TableCell>
+                <TableCell>
+                  {c.currency ? (
+                    <span className="text-sm">
+                      {c.currency.code ? `${c.currency.code} — ${c.currency.name}` : c.currency.name}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <span
+                    className={
+                      c.isActive
+                        ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
+                        : 'inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border'
+                    }
+                  >
+                    {c.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </TableCell>
                 <TableCell className="text-right">
                   <Button size="icon" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
                   <Button size="icon" variant="ghost" onClick={() => setDeleting(c)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={4} className="py-12 text-center text-muted-foreground">No countries yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No countries yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -174,8 +225,8 @@ export default function CountriesPage(): React.ReactElement {
       <ConfirmDelete
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
-        title={`Delete "${deleting?.name}"?`}
-        description="Fails if business units are attached."
+        title={`Delete "${deleting?.countryName}"?`}
+        description="This will soft-delete the country."
         loading={deleteMut.isPending}
         onConfirm={() => deleting && deleteMut.mutate(deleting.id)}
       />

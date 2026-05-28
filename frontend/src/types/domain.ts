@@ -16,13 +16,15 @@ export interface AuditFields {
 }
 
 export interface Currency extends AuditFields {
-  code: string;
   name: string;
-  numericCode?: string | null;
-  minorUnit: number;
-  symbol?: string | null;
   isActive: boolean;
-  isSystem: boolean;
+  // Optional legacy attributes — present on seeded rows from the original
+  // ISO 4217 master; not collected by the simplified SUPER_ADMIN form.
+  code?: string | null;
+  numericCode?: string | null;
+  minorUnit?: number;
+  symbol?: string | null;
+  isSystem?: boolean;
 }
 
 export interface Group extends AuditFields {
@@ -32,24 +34,34 @@ export interface Group extends AuditFields {
 }
 
 export interface LegalEntity extends AuditFields {
-  groupId: string;
-  group?: Group;
   name: string;
   code: string;
-  registeredCountry: string;
-  baseCurrencyId: string;
+  isActive: boolean;
+  // Optional richer-org fields — present on legacy/seeded rows, not set by
+  // the SUPER_ADMIN master form.
+  groupId?: string;
+  group?: Group;
+  registeredCountry?: string;
+  baseCurrencyId?: string;
   baseCurrency?: Currency;
   approvalMatrixRef?: string | null;
   taxIdentifier?: string | null;
-  isActive: boolean;
 }
 
 export interface Country extends AuditFields {
-  legalEntityId: string;
-  legalEntity?: LegalEntity;
-  name: string;
-  isoCode: string;
+  countryName: string;
+  countryShortName: string;
+  code: string;
+  currencyId: string;
+  currency?: Currency | null;
   isActive: boolean;
+  // Optional legacy aliases — preserved on rows that used the older
+  // master shape. Prefer the canonical field names above.
+  name?: string;
+  shortName?: string | null;
+  isoCode?: string;
+  legalEntityId?: string;
+  legalEntity?: LegalEntity;
 }
 
 export interface BusinessUnit extends AuditFields {
@@ -62,12 +74,14 @@ export interface BusinessUnit extends AuditFields {
 }
 
 export interface Department extends AuditFields {
-  businessUnitId: string;
-  businessUnit?: BusinessUnit;
   name: string;
   code: string;
-  description?: string | null;
   isActive: boolean;
+  // Optional legacy fields — preserved on rows seeded under the original
+  // org hierarchy; not collected by the SUPER_ADMIN master form.
+  businessUnitId?: string;
+  businessUnit?: BusinessUnit;
+  description?: string | null;
 }
 
 export interface Role {
@@ -172,23 +186,36 @@ export interface Counterparty extends AuditFields {
 export interface Employee extends AuditFields {
   employeeCode: string;
   fullName: string;
-  preferredName?: string | null;
-  workEmail?: string | null;
-  legalEntityId: string;
-  legalEntity?: LegalEntity;
-  countryCode: string;
-  baseCurrencyId: string;
-  baseCurrency?: Currency;
-  payrollCategory: string;
-  employeeBankAccountId?: string | null;
-  employmentStartDate?: string | null;
-  employmentEndDate?: string | null;
+  workEmail: string;
+  countryOfEmploymentId: string;
+  countryOfEmployment?: Country;
+  departmentId: string;
+  department?: Department;
+  startDate?: string | null;
+  endDate?: string | null;
   // Sensitive — returned as '••••' unless the caller holds PAYROLL_PII_ACCESS.
   nationalId?: string | null;
   taxIdentifier?: string | null;
   dateOfBirth?: string | null;
+  mobileNumber?: string | null;
+  address?: string | null;
   compensationBand?: string | null;
   isActive: boolean;
+  // Optional legacy fields — preserved on rows that used the older shape.
+  preferredName?: string | null;
+  legalEntityId?: string;
+  legalEntity?: LegalEntity;
+  countryCode?: string;
+  baseCurrencyId?: string;
+  baseCurrency?: Currency;
+  payrollCategory?: string;
+  employeeBankAccountId?: string | null;
+  // Older alias fields kept for backwards-compat with pages that haven't
+  // migrated to the canonical names yet.
+  countryId?: string | null;
+  country?: Country | null;
+  employmentStartDate?: string | null;
+  employmentEndDate?: string | null;
 }
 
 export type ApprovalMatrixStatus = 'DRAFT' | 'PUBLISHED' | 'SUPERSEDED';
@@ -300,10 +327,13 @@ export interface ResolvedFxRate {
 export interface Bank extends AuditFields {
   name: string;
   shortName?: string | null;
-  countryCode: string;
+  countryId: string;
+  country?: Country | null;
   swiftBic?: string | null;
-  address?: string | null;
   isActive: boolean;
+  // Legacy aliases
+  countryCode?: string;
+  address?: string | null;
 }
 
 export type BankAccountType = 'CURRENT' | 'COLLATERAL' | 'DEPOSIT';
@@ -313,25 +343,37 @@ export type BalanceSource =
   | 'STATEMENT_RECONCILED'
   | 'MANUAL_OVERRIDE';
 
+export interface AccountType extends AuditFields {
+  name: string;
+  isActive: boolean;
+}
+
 export interface BankAccount extends AuditFields {
-  nickname: string;
-  legalEntityId: string;
-  legalEntity?: LegalEntity;
-  bankId: string;
-  bank?: Bank;
+  bankId?: string | null;
+  bank?: Bank | null;
+  bankNickname?: string | null;
   currencyId: string;
   currency?: Currency;
   accountNumber: string;
-  iban?: string | null;
-  accountType: BankAccountType;
   branchName?: string | null;
   branchCode?: string | null;
-  balance: string;
-  balanceAsOf: string;
-  balanceSource: BalanceSource;
-  minimumBalance?: string | null;
+  openingBalance: number | string;
+  minimumBalance: number | string;
   isChairmanDesignated: boolean;
   isActive: boolean;
+  // Account-type master FK + joined master row
+  accountTypeId?: string | null;
+  accountTypeMaster?: AccountType | null;
+  // Legacy fields preserved for older consumers (statements, reconciliation, etc.)
+  bankName?: string | null;
+  nickname?: string;
+  accountType?: BankAccountType;
+  legalEntityId?: string;
+  legalEntity?: LegalEntity;
+  iban?: string | null;
+  balance?: string;
+  balanceAsOf?: string;
+  balanceSource?: BalanceSource;
 }
 
 export type BalanceChangeKind =

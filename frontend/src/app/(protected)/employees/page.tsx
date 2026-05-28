@@ -2,29 +2,19 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { Eye, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Employee, LegalEntity, Paginated } from '@/types/domain';
+import type { Employee, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
+import { Card } from '@/components/ui/card';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
-import { Card } from '@/components/ui/card';
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
@@ -32,325 +22,203 @@ import { EmployeeForm, type EmployeeFormData } from './employee-form';
 
 const KEY = 'employees';
 
+function Field({ label, value }: { label: string; value: React.ReactNode }): React.ReactElement {
+  return (
+    <div className="space-y-0.5">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-sm">{value === '' || value == null ? <span className="text-muted-foreground">—</span> : value}</div>
+    </div>
+  );
+}
+
+function EmployeeDetails({ employee: e }: { employee: Employee }): React.ReactElement {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Employee code" value={<code className="rounded bg-muted px-1.5 py-0.5 text-xs">{e.employeeCode}</code>} />
+        <Field label="Status" value={
+          <span
+            className={
+              e.isActive
+                ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
+                : 'inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border'
+            }
+          >
+            {e.isActive ? 'Active' : 'Inactive'}
+          </span>
+        } />
+        <Field label="Full name" value={e.fullName} />
+        <Field label="Work email" value={e.workEmail} />
+        <Field label="Country of employment" value={e.countryOfEmployment ? `${e.countryOfEmployment.code} — ${e.countryOfEmployment.countryName}` : null} />
+        <Field label="Department" value={e.department ? `${e.department.code} — ${e.department.name}` : null} />
+        <Field label="Start date" value={e.startDate} />
+        <Field label="End date" value={e.endDate} />
+        <Field label="National ID" value={e.nationalId} />
+        <Field label="Tax identifier" value={e.taxIdentifier} />
+        <Field label="Date of birth" value={e.dateOfBirth} />
+        <Field label="Mobile number" value={e.mobileNumber} />
+        <Field label="Compensation band" value={e.compensationBand} />
+      </div>
+      <Field label="Address" value={e.address ? <span className="whitespace-pre-wrap">{e.address}</span> : null} />
+    </div>
+  );
+}
+
+function normalize(d: EmployeeFormData) {
+  const blank = (v?: string) => (v && v.length > 0 ? v : undefined);
+  return {
+    employeeCode: d.employeeCode,
+    fullName: d.fullName,
+    workEmail: d.workEmail,
+    countryOfEmploymentId: d.countryOfEmploymentId,
+    departmentId: d.departmentId,
+    startDate: blank(d.startDate),
+    endDate: blank(d.endDate),
+    nationalId: blank(d.nationalId),
+    taxIdentifier: blank(d.taxIdentifier),
+    dateOfBirth: blank(d.dateOfBirth),
+    mobileNumber: blank(d.mobileNumber),
+    address: blank(d.address),
+    compensationBand: blank(d.compensationBand),
+    isActive: d.isActive ?? true,
+  };
+}
+
 export default function EmployeesPage(): React.ReactElement {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
-  const [legalEntityId, setLegalEntityId] = useState<string>('');
-  const [payrollCategory, setPayrollCategory] = useState<string>('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [viewing, setViewing] = useState<Employee | null>(null);
   const [editing, setEditing] = useState<Employee | null>(null);
   const [deleting, setDeleting] = useState<Employee | null>(null);
   const notify = useNotify();
   const qc = useQueryClient();
 
-  const { data: entities } = useQuery({
-    queryKey: ['legal-entities-all'],
-    queryFn: () =>
-      api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=100'),
-  });
-
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
     if (search) u.set('search', search);
-    if (legalEntityId) u.set('legalEntityId', legalEntityId);
-    if (payrollCategory) u.set('payrollCategory', payrollCategory);
     return u.toString();
-  }, [page, search, legalEntityId, payrollCategory]);
+  }, [page, search]);
 
   const { data, isLoading } = useQuery({
     queryKey: [KEY, params],
     queryFn: () => api.get<Paginated<Employee>>(`/employees?${params}`),
   });
 
-  const createMutation = useMutation({
-    mutationFn: (input: EmployeeFormData) =>
-      api.post<Employee>('/employees', sanitize(input)),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setCreateOpen(false);
-      notify.success('Employee created');
-    },
-    onError: (err: Error) =>
-      notify.error('Create failed', err),
+  const createMut = useMutation({
+    mutationFn: (i: EmployeeFormData) => api.post<Employee>('/employees', normalize(i)),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setCreateOpen(false); notify.success('Employee created'); },
+    onError: (e: Error) => notify.error('Create failed', e),
   });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: EmployeeFormData }) => {
-      const sanitized = sanitize(input);
-      const {
-        employeeCode: _code,
-        legalEntityId: _entity,
-        ...rest
-      } = sanitized;
-      void _code;
-      void _entity;
-      return api.put<Employee>(`/employees/${id}`, rest);
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setEditing(null);
-      notify.success('Employee updated');
-    },
-    onError: (err: Error) =>
-      notify.error('Update failed', err),
+  const updateMut = useMutation({
+    mutationFn: ({ id, i }: { id: string; i: EmployeeFormData }) => api.put<Employee>(`/employees/${id}`, normalize(i)),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setEditing(null); notify.success('Updated'); },
+    onError: (e: Error) => notify.error('Update failed', e),
   });
-
-  const deleteMutation = useMutation({
+  const deleteMut = useMutation({
     mutationFn: (id: string) => api.del<void>(`/employees/${id}`),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setDeleting(null);
-      notify.success('Employee deleted');
-    },
-    onError: (err: Error) =>
-      notify.error('Delete failed', err),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setDeleting(null); notify.success('Deleted'); },
+    onError: (e: Error) => notify.error('Delete failed', e),
   });
 
   return (
     <div>
       <PageHeader
         title="Employees"
-        description="Employee master. Sensitive payroll fields (national ID, tax ID, DOB, compensation band) are masked unless your role grants Payroll PII access. Bank account changes flow through the dedicated change-control workflow."
+        description="Master list of employees (Super Admin only)."
         actions={
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" /> New employee
-              </Button>
+              <Button><Plus className="mr-2 h-4 w-4" /> New employee</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-4xl">
-              <DialogHeader>
-                <DialogTitle>Create employee</DialogTitle>
-              </DialogHeader>
-              <EmployeeForm
-                submitting={createMutation.isPending}
-                onSubmit={(d) => createMutation.mutate(d)}
-              />
+            <DialogContent className="sm:max-w-2xl">
+              <DialogHeader><DialogTitle>Create employee</DialogTitle></DialogHeader>
+              <EmployeeForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
             </DialogContent>
           </Dialog>
         }
       />
-
       <Card>
-        <div className="flex flex-wrap items-center gap-2 border-b p-4">
-          <div className="flex items-center gap-2">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by name, code or email"
-              value={search}
-              onChange={(e) => {
-                setPage(1);
-                setSearch(e.target.value);
-              }}
-              className="w-80"
-            />
-          </div>
-          <Select
-            className="w-56"
-            options={[
-              { label: 'All entities', value: '' },
-              ...(entities?.data ?? []).map((e) => ({
-                label: `${e.code} — ${e.name}`,
-                value: e.id,
-              })),
-            ]}
-            value={legalEntityId}
-            onChange={(e) => {
-              setPage(1);
-              setLegalEntityId(e.target.value);
-            }}
-          />
-          <Select
-            className="w-44"
-            options={[
-              { label: 'All categories', value: '' },
-              { label: 'Staff', value: 'STAFF' },
-              { label: 'Executive', value: 'EXEC' },
-              { label: 'Contractor', value: 'CONTRACTOR' },
-              { label: 'Intern', value: 'INTERN' },
-            ]}
-            value={payrollCategory}
-            onChange={(e) => {
-              setPage(1);
-              setPayrollCategory(e.target.value);
-            }}
-          />
+        <div className="flex items-center gap-2 border-b p-4">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search by name, code or email" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} className="max-w-md" />
         </div>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Code</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Entity</TableHead>
+              <TableHead>Full name</TableHead>
+              <TableHead>Work email</TableHead>
               <TableHead>Country</TableHead>
-              <TableHead>Currency</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>Bank account</TableHead>
-              <TableHead>Active</TableHead>
-              <TableHead className="w-32 text-right">Actions</TableHead>
+              <TableHead>Department</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-36 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow>
-                <TableCell
-                  colSpan={9}
-                  className="py-12 text-center text-muted-foreground"
-                >
-                  Loading…
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : data && data.data.length > 0 ? data.data.map((e) => (
+              <TableRow key={e.id}>
+                <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{e.employeeCode}</code></TableCell>
+                <TableCell className="font-medium">{e.fullName}</TableCell>
+                <TableCell className="text-muted-foreground">{e.workEmail ?? '—'}</TableCell>
+                <TableCell>{e.countryOfEmployment ? `${e.countryOfEmployment.code} — ${e.countryOfEmployment.countryName}` : '—'}</TableCell>
+                <TableCell>{e.department ? `${e.department.code} — ${e.department.name}` : '—'}</TableCell>
+                <TableCell>
+                  <span
+                    className={
+                      e.isActive
+                        ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
+                        : 'inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border'
+                    }
+                  >
+                    {e.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="inline-flex items-center gap-1 whitespace-nowrap">
+                    <Button size="icon" variant="ghost" onClick={() => setViewing(e)} title="View"><Eye className="h-4 w-4" /></Button>
+                    <Button size="icon" variant="ghost" onClick={() => setEditing(e)} title="Edit"><Pencil className="h-4 w-4" /></Button>
+                    <Button size="icon" variant="ghost" onClick={() => setDeleting(e)} title="Delete"><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  </div>
                 </TableCell>
               </TableRow>
-            ) : data && data.data.length > 0 ? (
-              data.data.map((emp) => (
-                <TableRow key={emp.id}>
-                  <TableCell>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                      {emp.employeeCode}
-                    </code>
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <div>{emp.fullName}</div>
-                    {emp.workEmail && (
-                      <div className="text-xs text-muted-foreground">
-                        {emp.workEmail}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {emp.legalEntity?.code ?? '—'}
-                  </TableCell>
-                  <TableCell>
-                    <code className="text-xs">{emp.countryCode}</code>
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {emp.baseCurrency?.code ?? '—'}
-                  </TableCell>
-                  <TableCell>
-                    <Badge tone="blue">{emp.payrollCategory}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    {emp.employeeBankAccountId ? (
-                      <Badge tone="green">Linked</Badge>
-                    ) : (
-                      <Badge tone="amber">Not linked</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge tone={emp.isActive ? 'green' : 'gray'}>
-                      {emp.isActive ? 'Active' : 'Inactive'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => setEditing(emp)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => setDeleting(emp)}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={9}
-                  className="py-12 text-center text-muted-foreground"
-                >
-                  No employees yet.
-                </TableCell>
-              </TableRow>
+            )) : (
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No employees yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-        {data && (
-          <DataTablePagination
-            page={data.page}
-            totalPages={data.totalPages}
-            total={data.total}
-            limit={data.limit}
-            onPageChange={setPage}
-          />
-        )}
+        {data && <DataTablePagination page={data.page} totalPages={data.totalPages} total={data.total} limit={data.limit} onPageChange={setPage} />}
       </Card>
 
+      <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>Employee details</DialogTitle></DialogHeader>
+          {viewing && <EmployeeDetails employee={viewing} />}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Edit employee</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>Edit employee</DialogTitle></DialogHeader>
           {editing && (
             <EmployeeForm
               defaultValues={editing}
-              identityLocked
-              submitting={updateMutation.isPending}
-              onSubmit={(d) =>
-                updateMutation.mutate({ id: editing.id, input: d })
-              }
+              submitting={updateMut.isPending}
+              onSubmit={(d) => updateMut.mutate({ id: editing.id, i: d })}
             />
           )}
         </DialogContent>
       </Dialog>
-
       <ConfirmDelete
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
-        title={`Delete employee "${deleting?.fullName}"?`}
-        description="Soft-deletes the employee. Historical payroll references are preserved."
-        loading={deleteMutation.isPending}
-        onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+        title={`Delete "${deleting?.fullName}"?`}
+        description="This will soft-delete the employee."
+        loading={deleteMut.isPending}
+        onConfirm={() => deleting && deleteMut.mutate(deleting.id)}
       />
     </div>
-  );
-}
-
-// Strip empty optional strings so the backend treats them as omitted, not as
-// empty-string values that fail @IsEmail / @IsDateString.
-function sanitize(input: EmployeeFormData): EmployeeFormData {
-  const blank = (s?: string | null): string | null =>
-    s && s.length > 0 ? s : null;
-  return {
-    ...input,
-    preferredName: blank(input.preferredName) ?? undefined,
-    workEmail: blank(input.workEmail) ?? undefined,
-    employmentStartDate: blank(input.employmentStartDate) ?? undefined,
-    employmentEndDate: blank(input.employmentEndDate) ?? undefined,
-    nationalId: blank(input.nationalId) ?? undefined,
-    taxIdentifier: blank(input.taxIdentifier) ?? undefined,
-    dateOfBirth: blank(input.dateOfBirth) ?? undefined,
-    compensationBand: blank(input.compensationBand) ?? undefined,
-  } as EmployeeFormData;
-}
-
-type BadgeTone = 'gray' | 'green' | 'amber' | 'blue' | 'purple' | 'red';
-
-function Badge({
-  children,
-  tone = 'gray',
-}: {
-  children: React.ReactNode;
-  tone?: BadgeTone;
-}): React.ReactElement {
-  const tones: Record<BadgeTone, string> = {
-    gray: 'bg-muted text-foreground',
-    green: 'bg-green-500/10 text-green-700 dark:text-green-400',
-    amber: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
-    blue: 'bg-blue-500/10 text-blue-700 dark:text-blue-400',
-    purple: 'bg-purple-500/10 text-purple-700 dark:text-purple-400',
-    red: 'bg-destructive/10 text-destructive',
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${tones[tone]}`}
-    >
-      {children}
-    </span>
   );
 }
