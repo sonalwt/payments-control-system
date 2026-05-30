@@ -53,9 +53,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: Handshake,
     roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY],
     items: [
-      { href: '/counterparties',             label: 'Counterparties', icon: Briefcase },
-      { href: '/counterparty/banks',         label: 'Banks',          icon: Building },
-      { href: '/counterparty/bank-accounts', label: 'Bank Accounts',  icon: Landmark },
+      { href: '/counterparties', label: 'Counterparties', icon: Briefcase },
     ],
   },
   {

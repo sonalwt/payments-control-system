@@ -156,6 +156,13 @@ export class PaymentRequest extends BaseEntity {
   @Column({ name: 'sanction_override_reason', type: 'text', nullable: true })
   sanctionOverrideReason?: string | null;
 
+  // §6.4 — anomaly flagging (rule-based, set at submit time, does not block)
+  @Column({ name: 'anomaly_flag', type: 'boolean', default: false })
+  anomalyFlag!: boolean;
+
+  @Column({ name: 'anomaly_notes', type: 'text', nullable: true })
+  anomalyNotes?: string | null;
+
   // §1.3 / §4.2 snapshots frozen at submit
   @Column({ name: 'counterparty_snapshot', type: 'jsonb', nullable: true })
   counterpartySnapshot?: Record<string, unknown> | null;

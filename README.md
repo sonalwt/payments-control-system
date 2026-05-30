@@ -1,111 +1,80 @@
-# Payments Control System
+# Payments Control System (PCS)
 
-Role-based user management platform for the Radiant approval authority matrix.
+A role-based payment authorisation platform implementing a maker-checker-approver workflow with multi-level approval matrices.
 
-- **Backend**: NestJS 10 + TypeORM 0.3 + PostgreSQL + JWT (`backend/`)
-- **Frontend**: Next.js 14 App Router + Shadcn UI + Tailwind CSS + React Query (`frontend/`)
+- **Backend**: NestJS 10 · TypeORM 0.3 · PostgreSQL · JWT (`backend/`)
+- **Frontend**: Next.js 14 App Router · Shadcn UI · Tailwind CSS · React Query (`frontend/`)
 
 ---
 
-## What is currently implemented
+## What is implemented
 
-| Area | Status | Details |
-|------|--------|---------|
-| Authentication | Complete | JWT login, `/auth/me`, bcrypt password hashing |
+| Area | Status | Notes |
+|------|--------|-------|
+| Authentication | Complete | JWT login, `/auth/me`, bcrypt (cost 12) |
 | Users | Complete | CRUD, pagination, soft delete, role batch loading |
 | Roles | Complete | CRUD, system vs. custom role protection |
-| Role Assignment | Complete | Assign / revoke roles per user (no legal-entity dimension) |
-| Sidebar | Simplified | Only **Users** and **Roles** nav items |
+| Role Assignment | Complete | Assign / revoke roles per user |
+| Legal Entities | Complete | CRUD, active flag |
+| Counterparties | Complete | CRUD, country linkage |
+| Countries | Complete | CRUD, sanctioned-country flag |
+| Currencies | Complete | CRUD |
+| Bank Accounts | Complete | Company's own accounts, minimum-balance enforcement |
+| Beneficiary Accounts | Complete | Verified accounts with ADD / MODIFY / CLOSE change-request workflow, cooling-off period, sanctions check |
+| Payment Types | Complete | Maker / Checker config, document policy, active flag |
+| Approval Matrices | Complete | DRAFT → PUBLISHED → SUPERSEDED lifecycle, bands (amount ranges), steps (approver per band) |
+| Payment Requests | Complete | Full lifecycle — see flow below |
+| File Uploads | Complete | PDF / JPEG / PNG, max 10 MB, served as static assets |
+| Anomaly Detection | Complete | Rule-based flags at submit time (amount spike, rapid repeat, recent modify, new account) |
 
 ---
 
-## Quick start
+## Payment Request Lifecycle
+
+```
+DRAFT ──submit──▶ PENDING_APPROVAL ──all steps approved──▶ APPROVED ──release──▶ AWAITING_PAYMENT_CONFIRMATION ──mark-paid──▶ PAID
+
+Any non-terminal status:
+  ├─ WITHDRAWN   (maker withdraws)
+  ├─ CANCELLED   (SUPER_ADMIN cancels)
+  └─ REJECTED    (checker or any matrix approver rejects — maker can resubmit)
+```
+
+### Two-phase approval flow
+
+| Phase | Who acts | What happens |
+|-------|----------|--------------|
+| **Phase 1 — Checker** | Checker (from Payment Type config) | Maker submits → step 1 created for the configured checker. Checker reviews and approves or rejects. |
+| **Matrix lookup** | System (automatic) | When checker approves, the system looks up the latest **PUBLISHED** approval matrix for the (Payment Type, Currency) pair. If no matrix exists, approval is blocked until one is published. |
+| **Phase 2 — Matrix chain** | Matrix approvers (by role or user) | The band matching the payment amount is found. Approvers for that band are appended as steps 2, 3 … Each must approve in sequence. |
+| **Final approval** | Last matrix approver | Request status → **APPROVED**. |
+
+### Rejection & resubmit flow
+
+1. Checker **or** any matrix approver clicks **Reject** — must provide a mandatory reason (min 5 chars).
+2. Request → `REJECTED`; rejection reason is shown prominently to the maker.
+3. Maker can **edit / replace documents** directly on the rejected-request page (no need to resubmit first).
+4. Maker clicks **Resubmit** — old approval chain is deleted, status resets to `DRAFT`.
+5. Maker reviews / edits the request, then clicks **Submit** to start a fresh approval chain.
+
+---
+
+## Quick Start
 
 ### Prerequisites
 
 - Node.js 20+
-- PostgreSQL 18+ (adjust version as needed)
+- PostgreSQL 14+ (project uses 18)
 
-### 1. Create the database and schema
+### 1. Create the database
 
-Connect with psql and run the three table definitions manually:
-
-```sql
--- users
-CREATE EXTENSION IF NOT EXISTS citext;
-
-CREATE TABLE users (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email           CITEXT NOT NULL UNIQUE,
-  password_hash   VARCHAR(255) NOT NULL,
-  full_name       VARCHAR(150) NOT NULL,
-  employee_code   VARCHAR(50) UNIQUE,
-  is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-  is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE,
-  last_login_at   TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at      TIMESTAMPTZ,
-  created_by      UUID,
-  updated_by      UUID
-);
-
--- roles
-CREATE TABLE roles (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  code        VARCHAR(50) NOT NULL UNIQUE,
-  name        VARCHAR(100) NOT NULL,
-  description TEXT,
-  is_system   BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at  TIMESTAMPTZ
-);
-
--- user_roles
-CREATE TABLE user_roles (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  role_id    UUID NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_user_role UNIQUE (user_id, role_id)
-);
+```bash
+createdb pcs
 ```
 
-> **No migrations are used.** The schema is managed directly via SQL.
+Then apply the schema migrations located in `backend/src/database/` (SQL files). Run them in order.
 
-### 2. Seed roles
-
-```sql
-INSERT INTO roles (code, name, description, is_system) VALUES
-  ('SUPER_ADMIN', 'Super Administrator', 'Full platform access', TRUE),
-  ('INITIATOR',   'Initiator',           'Submits payment requests', FALSE),
-  ('CHECKER',     'Checker',             'Verifies payment requests', FALSE),
-  ('APPROVER_1',  'Approver Level 1',    'First-level approver', FALSE),
-  ('APPROVER_2',  'Approver Level 2',    'Second-level approver', FALSE);
-```
-
-### 3. Seed the admin user
-
-Generate a bcrypt hash for your chosen password (cost 12), then insert:
-
-```sql
-INSERT INTO users (email, password_hash, full_name, is_active, is_platform_admin)
-VALUES (
-  'admin@radiant.com',
-  '<bcrypt-hash-of-your-password>',
-  'System Administrator',
-  TRUE,
-  TRUE
-);
-```
-
-Default password used during initial seeding: **`Radiant@1234`**
-
-> Assign the `SUPER_ADMIN` role to this user via the Role Assignment page after first login,
-> or insert directly into `user_roles`.
-
-### 4. Backend — install & start
+### 2. Backend — install & start
 
 ```bash
 cd backend
@@ -116,7 +85,7 @@ npm run start:dev             # http://localhost:4000/api/v1
 
 Swagger UI: `http://localhost:4000/api/v1/docs`
 
-### 5. Frontend — install & start
+### 3. Frontend — install & start
 
 ```bash
 cd frontend
@@ -125,11 +94,11 @@ npm install
 npm run dev                   # http://localhost:3000
 ```
 
-Sign in with the admin credentials, then use the **Roles** page to assign roles to users.
+Sign in with the admin credentials (default: **`admin@radiant.com`** / **`Radiant@1234`**).
 
 ---
 
-## Environment variables
+## Environment Variables
 
 ### Backend (`backend/.env`)
 
@@ -141,14 +110,22 @@ Sign in with the admin credentials, then use the **Roles** page to assign roles 
 | `DB_HOST` | `localhost` | PostgreSQL host |
 | `DB_PORT` | `5432` | PostgreSQL port |
 | `DB_USERNAME` | `postgres` | Database user |
-| `DB_PASSWORD` | `postgres` | Database password |
+| `DB_PASSWORD` | — | Database password |
 | `DB_NAME` | `pcs` | Database name |
 | `DB_SCHEMA` | `public` | Schema name |
-| `DB_SYNCHRONIZE` | `false` | TypeORM auto-sync (keep false) |
+| `DB_SYNCHRONIZE` | `false` | TypeORM auto-sync — keep `false` |
 | `DB_LOGGING` | `false` | Log SQL queries |
 | `JWT_SECRET` | *(required)* | HS256 signing secret — change in production |
 | `JWT_EXPIRES_IN` | `8h` | Token lifetime |
-| `CORS_ORIGIN` | `http://localhost:3000` | Allowed CORS origin(s), comma-separated |
+| `CORS_ORIGIN` | `http://localhost:3000` | Allowed CORS origins, comma-separated |
+| `SMTP_HOST` | *(blank = disabled)* | SMTP server host |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_SECURE` | `false` | Use TLS |
+| `SMTP_USER` | — | SMTP username |
+| `SMTP_PASS` | — | SMTP password |
+| `SMTP_FROM` | — | From address |
+| `PAYROLL_VARIANCE_THRESHOLD_PCT` | `10` | % variance before payroll anomaly flag triggers |
+| `EBAC_COOLING_OFF_HOURS` | `24` | Hours before a new beneficiary account can receive a payment |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -158,19 +135,9 @@ Sign in with the admin credentials, then use the **Roles** page to assign roles 
 
 ---
 
-## npm scripts (backend)
+## API Reference
 
-| Script | What it does |
-|--------|--------------|
-| `npm run start:dev` | NestJS hot-reload dev server |
-| `npm run build` | Compile TypeScript to `dist/` |
-| `npm run lint` | ESLint with auto-fix |
-
----
-
-## API reference
-
-All endpoints require `Authorization: Bearer <jwt>` except `POST /auth/login`.
+All endpoints require `Authorization: Bearer <jwt>` unless stated otherwise.
 Base URL: `http://localhost:4000/api/v1`
 
 ### Auth
@@ -178,223 +145,195 @@ Base URL: `http://localhost:4000/api/v1`
 | Method | Path | Auth | Body | Returns |
 |--------|------|------|------|---------|
 | POST | `/auth/login` | Public | `{ email, password }` | `{ accessToken, expiresIn, user }` |
-| GET | `/auth/me` | Any role | — | Current authenticated user |
+| GET | `/auth/me` | Any | — | Current user |
 
 ### Users
 
-All endpoints below require `SUPER_ADMIN` except `GET /users/me`.
-
 | Method | Path | Notes |
 |--------|------|-------|
-| POST | `/users` | Create user; hashes password with bcrypt cost 12 |
-| GET | `/users` | Paginated list; `?page=&limit=&search=` (max limit: 500) |
-| GET | `/users/me` | Returns the currently logged-in user (no role check) |
-| GET | `/users/:id` | Single user with role assignments |
-| PUT | `/users/:id` | Update user fields |
+| POST | `/users` | SUPER_ADMIN only |
+| GET | `/users` | `?page=&limit=&search=` |
+| GET | `/users/me` | Any authenticated user |
+| GET | `/users/:id` | — |
+| PUT | `/users/:id` | SUPER_ADMIN only |
 | DELETE | `/users/:id` | Soft delete |
 
-**Pagination response shape:**
-```json
-{
-  "data": [...],
-  "total": 17,
-  "page": 1,
-  "limit": 20,
-  "totalPages": 1
-}
-```
-
-### Roles
-
-Read endpoints are open to any authenticated user. Write endpoints require `SUPER_ADMIN`.
+### Roles / User-Role Assignment
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/roles` | List all roles ordered by name |
-| GET | `/roles/:id` | Single role |
-| POST | `/roles` | Create a custom role |
-| PUT | `/roles/:id` | Update role; system roles cannot have their code changed |
-| DELETE | `/roles/:id` | Soft delete; system roles cannot be deleted |
+| GET | `/roles` | Any authenticated |
+| POST | `/roles` | SUPER_ADMIN only |
+| PUT | `/roles/:id` | System roles: code is immutable |
+| DELETE | `/roles/:id` | System roles cannot be deleted |
+| POST | `/user-roles` | `{ userId, roleId }` |
+| GET | `/user-roles/user/:id` | Roles for a user |
+| DELETE | `/user-roles/:id` | Revoke |
 
-### User-Role Assignment
+### Masters (Legal Entities, Counterparties, Currencies, Countries, Bank Accounts, Beneficiary Accounts, Payment Types, Approval Matrices)
 
-All endpoints require `SUPER_ADMIN`.
+Standard CRUD at their respective paths. All require authentication; write operations require appropriate role. See Swagger for full schema.
 
-| Method | Path | Body / Notes |
-|--------|------|--------------|
-| POST | `/user-roles` | `{ userId, roleId }` — assign a role to a user |
-| GET | `/user-roles/user/:id` | Get all role assignments for a user (includes role details) |
-| DELETE | `/user-roles/:id` | Revoke a role assignment |
+### Payment Requests
 
----
+| Method | Path | Who | Notes |
+|--------|------|-----|-------|
+| POST | `/payment-requests` | Maker | Create as DRAFT |
+| GET | `/payment-requests` | Maker (own) / Approver (pending step) | Role-filtered visibility |
+| GET | `/payment-requests/:id` | — | Full detail with approvals + documents |
+| PUT | `/payment-requests/:id` | Maker | DRAFT only |
+| DELETE | `/payment-requests/:id` | Maker | DRAFT only; soft delete |
+| POST | `/payment-requests/:id/submit` | Maker | DRAFT → PENDING_APPROVAL; creates checker step |
+| POST | `/payment-requests/:id/approve` | Assigned approver | Advances step; on checker approval triggers matrix lookup |
+| POST | `/payment-requests/:id/reject` | Assigned approver | Mandatory `comments` (min 5 chars) |
+| POST | `/payment-requests/:id/resubmit` | Maker (original) | REJECTED → DRAFT; clears approval chain |
+| POST | `/payment-requests/:id/withdraw` | Maker | DRAFT or PENDING_APPROVAL → WITHDRAWN |
+| POST | `/payment-requests/:id/release` | Maker | APPROVED → AWAITING_PAYMENT_CONFIRMATION; selects source account |
+| POST | `/payment-requests/:id/mark-paid` | Maker | AWAITING → PAID; debits source account balance |
+| POST | `/payment-requests/:id/upload-proof` | Maker | Attach proof-of-payment URL |
+| POST | `/payment-requests/:id/cancel` | SUPER_ADMIN | Any non-terminal status → CANCELLED |
+| POST | `/payment-requests/:id/documents` | Maker | Attach a document (DRAFT or REJECTED) |
+| DELETE | `/payment-requests/:id/documents/:docId` | Maker | Remove a document (DRAFT or REJECTED) |
 
-## Database schema
+### File Uploads
 
-Three tables — no joins to legal entities, groups, or other org-hierarchy tables.
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/uploads/file` | Multipart `file` field; PDF/JPEG/PNG; max 10 MB. Returns `{ url, fileName }` |
 
-```
-users
-├── id (uuid, PK)
-├── email (citext, unique)
-├── password_hash (varchar, hidden from SELECT by default)
-├── full_name (varchar)
-├── employee_code (varchar, unique, nullable)
-├── is_active (boolean)
-├── is_platform_admin (boolean)   ← grants implicit SUPER_ADMIN
-├── last_login_at (timestamptz)
-└── created_at / updated_at / deleted_at / created_by / updated_by
-
-roles
-├── id (uuid, PK)
-├── code (varchar, unique)        ← e.g. SUPER_ADMIN, INITIATOR
-├── name (varchar)
-├── description (text)
-├── is_system (boolean)           ← system roles cannot be deleted
-└── created_at / updated_at / deleted_at
-
-user_roles
-├── id (uuid, PK)
-├── user_id (FK → users, CASCADE)
-├── role_id (FK → roles, RESTRICT)
-└── created_at
-```
+Uploaded files are served as static assets at `http://localhost:4000/uploads/<filename>`.
 
 ---
 
-## Seeded users (Radiant authority matrix)
+## Seeded Users
 
 Default password for all seeded users: **`Radiant@1234`**
 
 | Full name | Email | Role(s) |
 |-----------|-------|---------|
-| System Administrator | admin@radiant.com | SUPER_ADMIN |
-| *(17 users total from authority matrix)* | — | INITIATOR / CHECKER / APPROVER_1 / APPROVER_2 |
-
-Exact users and assignments are seeded from the **Approval system - Radiant.xlsx** and
-**Payments Authority Matrix** documents.
+| System Administrator | admin@radiant.com | SUPER_ADMIN (platform admin) |
+| *(others from authority matrix)* | — | Maker / Checker / Approver roles per payment type |
 
 ---
 
-## Role reference
-
-| Code | Description |
-|------|-------------|
-| `SUPER_ADMIN` | Full platform access — user/role management |
-| `INITIATOR` | Submits payment requests |
-| `CHECKER` | Verifies payment requests (maker-checker step) |
-| `APPROVER_1` | First-level approver |
-| `APPROVER_2` | Second-level approver |
-
-> `is_platform_admin = true` on a user grants implicit `SUPER_ADMIN` regardless of
-> `user_roles` assignments. This is the bootstrap escape-hatch — assign the role properly
-> and consider setting this flag to `false` afterwards.
-
----
-
-## Folder structure
+## Folder Structure
 
 ```
 payments-control-system/
 ├── README.md
 ├── backend/
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── .env.example
-│   └── src/
-│       ├── main.ts                 App bootstrap (Helmet, CORS, ValidationPipe, Swagger)
-│       ├── app.module.ts           Registers Auth, Users, Roles, UserRoles
-│       ├── config/
-│       │   ├── app.config.ts
-│       │   ├── database.config.ts  TypeORM PostgreSQL (synchronize: false)
-│       │   └── jwt.config.ts
-│       ├── common/
-│       │   ├── decorators/
-│       │   │   ├── current-user.decorator.ts
-│       │   │   ├── public.decorator.ts
-│       │   │   └── roles.decorator.ts
-│       │   ├── dto/
-│       │   │   └── pagination.dto.ts   (max limit: 500)
-│       │   ├── entities/
-│       │   │   └── base.entity.ts      (id, createdAt, updatedAt, deletedAt, createdBy, updatedBy)
-│       │   ├── enums/
-│       │   │   └── role.enum.ts
-│       │   ├── filters/
-│       │   │   └── http-exception.filter.ts
-│       │   └── guards/
-│       │       ├── jwt-auth.guard.ts
-│       │       └── roles.guard.ts
-│       └── modules/
-│           ├── auth/               POST /auth/login, GET /auth/me
-│           ├── users/              CRUD /users, GET /users/me
-│           │   ├── user.entity.ts
-│           │   ├── user-role.entity.ts
-│           │   ├── users.service.ts
-│           │   ├── users.controller.ts
-│           │   └── dto/
-│           ├── roles/              CRUD /roles
-│           │   ├── role.entity.ts
-│           │   ├── roles.service.ts
-│           │   ├── roles.controller.ts
-│           │   └── dto/
-│           └── user-roles/         POST/GET/DELETE /user-roles
-│               ├── user-roles.service.ts
-│               ├── user-roles.controller.ts
-│               └── dto/
+│   ├── src/
+│   │   ├── main.ts                    Bootstrap (Helmet, CORS, ValidationPipe, Swagger, static uploads)
+│   │   ├── app.module.ts
+│   │   ├── config/
+│   │   ├── common/
+│   │   │   ├── decorators/            @CurrentUser, @Roles, @Public
+│   │   │   ├── dto/                   pagination.dto.ts
+│   │   │   ├── entities/              base.entity.ts (id, timestamps, soft-delete, audit)
+│   │   │   ├── enums/                 role.enum.ts
+│   │   │   ├── filters/               http-exception.filter.ts
+│   │   │   └── guards/                jwt-auth.guard.ts, roles.guard.ts
+│   │   ├── database/                  SQL seed & migration files
+│   │   └── modules/
+│   │       ├── auth/
+│   │       ├── users/
+│   │       ├── roles/
+│   │       ├── user-roles/
+│   │       ├── legal-entities/
+│   │       ├── counterparties/
+│   │       ├── countries/
+│   │       ├── currencies/
+│   │       ├── bank-accounts/         Company's own bank accounts
+│   │       ├── beneficiary-accounts/  Verified payee accounts + change-request workflow
+│   │       ├── payment-types/         Maker/checker config + document policy
+│   │       ├── approval-matrices/     Bands (amount ranges) + steps (approvers)
+│   │       ├── payment-requests/      Full payment lifecycle + two-phase approval
+│   │       │   ├── payment-request.entity.ts
+│   │       │   ├── payment-request-approval.entity.ts
+│   │       │   ├── payment-request-document.entity.ts
+│   │       │   ├── payment-requests.service.ts
+│   │       │   ├── payment-requests.controller.ts
+│   │       │   └── dto/
+│   │       └── uploads/               Multer disk storage controller
+│   └── uploads/                       Uploaded files (gitignored)
 └── frontend/
-    ├── package.json
-    ├── .env.example
     └── src/
         ├── app/
-        │   ├── login/              Public login page
+        │   ├── login/
         │   └── (protected)/
-        │       ├── layout.tsx      AppShell (sidebar + auth guard)
-        │       ├── users/          User list with search and CRUD dialogs
-        │       └── user-roles/     Role assignment — select user, assign/revoke roles
+        │       ├── layout.tsx          AppShell + auth guard
+        │       ├── beneficiary-accounts/
+        │       ├── counterparty/
+        │       │   ├── banks/
+        │       │   └── bank-accounts/
+        │       ├── payment-requests/   List, detail, create form
+        │       │   ├── page.tsx        List with role-filtered create button
+        │       │   ├── [id]/page.tsx   Detail with full action buttons
+        │       │   └── payment-request-form.tsx
+        │       └── [other masters]/
         ├── components/
-        │   ├── ui/                 Shadcn UI components (Button, Dialog, Table, Select …)
-        │   ├── layout/
-        │   │   ├── app-shell.tsx   Root shell with role-based access check
-        │   │   ├── sidebar.tsx     2-item nav: Users + Roles
-        │   │   └── breadcrumbs.tsx
-        │   └── shared/
-        │       ├── page-header.tsx
-        │       └── confirm-delete.tsx
+        │   ├── ui/                     Shadcn components
+        │   ├── layout/                 sidebar, breadcrumbs
+        │   └── shared/                 page-header, data-table-pagination
         ├── hooks/
-        │   ├── use-auth.tsx        Auth state: login, logout, current user
-        │   └── use-notify.ts       Centralised toast: notify.success / .error / .info
+        │   ├── use-auth.tsx
+        │   └── use-notify.ts
         ├── lib/
-        │   ├── api.ts              Fetch wrapper + friendlyError() translator
-        │   ├── roles.ts            hasAnyRole() utility
-        │   └── route-permissions.ts  requiredRolesFor(pathname)
+        │   ├── api.ts                  Fetch wrapper, friendlyError(), resolveFileUrl()
+        │   ├── roles.ts                hasAnyRole()
+        │   └── route-permissions.ts
         └── types/
-            └── domain.ts           TypeScript interfaces for all domain models
+            └── domain.ts               TypeScript interfaces for all domain models
 ```
 
 ---
 
-## Security notes
+## Security Notes
 
 - **JWT HS256** bearer tokens; switch to RS256 for production.
-- `SUPER_ADMIN` required for all write operations via `@Roles` + `RolesGuard`.
-- `is_platform_admin` is a bootstrap escape-hatch — revoke after initial setup.
-- Soft deletes via `deleted_at`; TypeORM adds `WHERE deleted_at IS NULL` automatically.
 - Passwords hashed with **bcrypt cost 12**; `password_hash` column uses `select: false`.
-- `class-validator` whitelist rejects unknown payload fields.
-- `helmet` security headers, configurable CORS allowlist.
-- Database constraint violations (unique, FK) are mapped to HTTP 409 — never expose raw DB errors.
-- Duplicate role assignments are rejected at service level before hitting the DB unique constraint.
+- `class-validator` whitelist mode rejects unknown payload fields (`forbidNonWhitelisted: true`).
+- `helmet` security headers applied globally.
+- Configurable CORS allowlist (comma-separated `CORS_ORIGIN`).
+- Soft deletes via `deleted_at`; TypeORM adds `WHERE deleted_at IS NULL` automatically on repository queries.
+- Database constraint violations (unique, FK) are mapped to user-friendly HTTP errors — raw DB errors are never exposed.
+- **Maker-checker separation**: the system enforces that checkers cannot create payment requests, and makers cannot approve their own requests.
+- **Sanctions check**: if a beneficiary's country is flagged as sanctioned, a `sanction_warning` is set at submit time and the final approver must provide an explicit override reason.
+- **Anomaly detection**: rule-based flags (amount spike, rapid repeat, recent modify, new account) are set at submit time and shown to approvers — they do not block payment but increase visibility.
+- **Cooling-off period**: newly activated beneficiary accounts cannot receive payments until the configured hours have elapsed (`EBAC_COOLING_OFF_HOURS`).
+- `is_platform_admin` is a bootstrap escape-hatch — revoke (set to `false`) after assigning the `SUPER_ADMIN` role properly.
 
 ---
 
-## Setup checklist
+## Setup Checklist
 
 - [ ] PostgreSQL running (version 14+)
 - [ ] `createdb pcs` (or update `DB_NAME`)
-- [ ] Run the three `CREATE TABLE` statements above
-- [ ] Seed roles and admin user
+- [ ] Apply SQL schema files from `backend/src/database/`
 - [ ] `cd backend && cp .env.example .env` — fill in `DB_*`, `JWT_SECRET`
 - [ ] `npm install && npm run start:dev` in `backend/`
 - [ ] `cd frontend && cp .env.example .env.local` — set `NEXT_PUBLIC_API_URL`
 - [ ] `npm install && npm run dev` in `frontend/`
-- [ ] Sign in at `http://localhost:3000`
-- [ ] Assign `SUPER_ADMIN` role to the admin user via Role Assignment page
+- [ ] Sign in at `http://localhost:3000` as `admin@radiant.com`
+- [ ] Go to **Masters → Approval Matrices** and publish at least one matrix before testing payment approvals
+- [ ] Verify a beneficiary account before creating a payment request
+
+---
+
+## npm Scripts
+
+### Backend
+
+| Script | What it does |
+|--------|--------------|
+| `npm run start:dev` | NestJS hot-reload dev server |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm run lint` | ESLint with auto-fix |
+
+### Frontend
+
+| Script | What it does |
+|--------|--------------|
+| `npm run dev` | Next.js dev server with hot reload |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint check |

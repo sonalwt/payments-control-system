@@ -7,19 +7,23 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
+  AlertTriangle,
   ArrowLeft,
   BadgeCheck,
   CheckCircle2,
   FileText,
   Loader2,
+  Plus,
+  RefreshCw,
   Send,
   ShieldAlert,
+  Trash2,
   Undo2,
   Upload,
   XCircle,
 } from 'lucide-react';
-import { useState } from 'react';
-import { api } from '@/lib/api';
+import { useRef, useState } from 'react';
+import { api, resolveFileUrl } from '@/lib/api';
 import type { BankAccount, Paginated, PaymentRequest } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -33,7 +37,6 @@ import {
 } from '@/components/ui/dialog';
 import { useNotify } from '@/hooks/use-notify';
 import { useAuth } from '@/hooks/use-auth';
-import { hasAnyRole, RoleCode } from '@/lib/roles';
 
 const STATUS_STYLES: Record<string, string> = {
   DRAFT: 'bg-muted text-muted-foreground ring-border',
@@ -87,6 +90,14 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const [paidOpen, setPaidOpen] = useState(false);
   const [proofOpen, setProofOpen] = useState(false);
 
+  // Document editing state (used when status = DRAFT)
+  const [newDocCode, setNewDocCode] = useState('');
+  const [newDocLabel, setNewDocLabel] = useState('');
+  const [newDocFileUrl, setNewDocFileUrl] = useState('');
+  const [newDocFileName, setNewDocFileName] = useState('');
+  const [docUploadState, setDocUploadState] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const { data: pr, isLoading } = useQuery({
     queryKey: ['payment-request', id],
     queryFn: () => api.get<PaymentRequest>(`/payment-requests/${id}`),
@@ -107,6 +118,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     mutationFn: () => mut('submit', {}),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); notify.success('Submitted for approval'); },
     onError: (e: Error) => notify.error('Submit failed', e),
+  });
+  const resubmitMut = useMutation({
+    mutationFn: () => mut('resubmit', {}),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); notify.success('Request returned to draft — you can now edit and resubmit'); },
+    onError: (e: Error) => notify.error('Resubmit failed', e),
   });
   const withdrawMut = useMutation({
     mutationFn: () => mut('withdraw', {}),
@@ -139,6 +155,43 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onError: (e: Error) => notify.error('Upload failed', e),
   });
 
+  const attachDocMut = useMutation({
+    mutationFn: () => api.post(`/payment-requests/${id}/documents`, {
+      documentCode: newDocCode.trim().toUpperCase(),
+      documentLabel: newDocLabel.trim() || null,
+      fileName: newDocFileName,
+      fileUrl: newDocFileUrl,
+    }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['payment-request', id] });
+      setNewDocCode(''); setNewDocLabel(''); setNewDocFileUrl(''); setNewDocFileName(''); setDocUploadState('idle');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      notify.success('Document attached');
+    },
+    onError: (e: Error) => notify.error('Attach failed', e),
+  });
+
+  const removeDocMut = useMutation({
+    mutationFn: (documentId: string) => api.del(`/payment-requests/${id}/documents/${documentId}`),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); notify.success('Document removed'); },
+    onError: (e: Error) => notify.error('Remove failed', e),
+  });
+
+  async function handleDocFileChange(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDocUploadState('uploading');
+    try {
+      const result = await api.upload(file);
+      setNewDocFileUrl(result.url);
+      setNewDocFileName(result.fileName);
+      setDocUploadState('done');
+    } catch (err) {
+      setDocUploadState('error');
+      notify.error('Upload failed', err instanceof Error ? err : new Error('Upload failed'));
+    }
+  }
+
   if (isLoading || !pr) {
     return (
       <div className="p-8 text-center text-muted-foreground">
@@ -149,9 +202,12 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   }
 
   const isMine = pr.createdBy === user?.id;
-  const isInitiator = hasAnyRole(userRoles, [RoleCode.INITIATOR, RoleCode.SUPER_ADMIN]);
-  const isApprover = hasAnyRole(userRoles, [RoleCode.APPROVER_1, RoleCode.APPROVER_2, RoleCode.SUPER_ADMIN]);
-  const isMaker = hasAnyRole(userRoles, [RoleCode.CHECKER, RoleCode.SUPER_ADMIN]);
+  // Role codes like INITIATOR / CHECKER / APPROVER_1 / APPROVER_2 do not exist
+  // in the database. Actual codes are OPS_TEAM, ACCOUNTS_TEAM, APPROVER, etc.
+  // The backend enforces all permissions; the frontend uses isMine + canActOnStep.
+  const isInitiator = true;  // isMine gates Submit/Withdraw
+  const isApprover = true;   // canActOnStep gates Approve/Reject
+  const isMaker = isMine;    // creator is the maker for Release/Mark-paid
 
   // Active step authorisation hint: for ROLE-steps any holder can act; for
   // USER-steps only the assigned user. The backend re-checks regardless.
@@ -161,6 +217,10 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       ? (activeStep.approverType === 'USER' && activeStep.approverUserId === user?.id) ||
         (activeStep.approverType === 'ROLE' && !!activeStep.approverRole?.code && userRoles.includes(activeStep.approverRole.code))
       : false;
+
+  // The final approver must not reject — all prior checks are complete.
+  const totalSteps = pr.approvals?.length ?? 0;
+  const isFinalStep = totalSteps > 0 && (pr.currentStepOrder ?? 0) === totalSteps;
 
   // Filter source accounts to the request currency.
   const sourceAccountOptions = (bankAccounts?.data ?? [])
@@ -185,6 +245,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
             <ShieldAlert className="h-3 w-3" /> Sanctioned country
           </span>
         )}
+        {pr.anomalyFlag && (
+          <span className="inline-flex items-center gap-1 rounded-md bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-800 ring-1 ring-orange-200">
+            <AlertTriangle className="h-3 w-3" /> Anomaly detected
+          </span>
+        )}
       </div>
       <PageHeader
         title={pr.paymentType?.name ?? 'Payment request'}
@@ -199,6 +264,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
             {(pr.status === 'DRAFT' || pr.status === 'PENDING_APPROVAL') && isMine && (
               <Button size="sm" variant="outline" onClick={() => withdrawMut.mutate()} disabled={withdrawMut.isPending}>
                 <Undo2 className="mr-1 h-4 w-4" /> Withdraw
+              </Button>
+            )}
+            {pr.status === 'REJECTED' && isMine && (
+              <Button size="sm" variant="outline" onClick={() => resubmitMut.mutate()} disabled={resubmitMut.isPending}>
+                <RefreshCw className="mr-1 h-4 w-4" /> Resubmit
               </Button>
             )}
             {pr.status === 'PENDING_APPROVAL' && isApprover && canActOnStep && (
@@ -262,6 +332,18 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
                 <strong>Rejection reason:</strong> {pr.rejectionReason}
               </div>
             )}
+            {pr.anomalyNotes && (
+              <div className="col-span-2 rounded-md bg-orange-50 p-3 text-xs text-orange-900 ring-1 ring-orange-200">
+                <p className="mb-1 flex items-center gap-1 font-semibold">
+                  <AlertTriangle className="h-3 w-3" /> §6.4 Anomaly flags
+                </p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  {pr.anomalyNotes.split('\n').map((note, i) => (
+                    <li key={i}>{note}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -315,7 +397,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         {/* Documents */}
         <Card className="col-span-3">
           <CardHeader><CardTitle>Documents</CardTitle></CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
             {!pr.documents?.length ? (
               <p className="text-sm text-muted-foreground">No documents attached.</p>
             ) : (
@@ -325,12 +407,73 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
                     <FileText className="h-4 w-4 text-muted-foreground" />
                     <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.documentCode}</code>
                     <span>{d.documentLabel ?? d.fileName}</span>
-                    <a className="ml-auto text-xs underline text-muted-foreground" href={d.fileUrl} target="_blank" rel="noreferrer">
+                    <a className="ml-auto text-xs underline text-muted-foreground" href={resolveFileUrl(d.fileUrl)} target="_blank" rel="noreferrer">
                       Open
                     </a>
+                    {(pr.status === 'DRAFT' || pr.status === 'REJECTED') && isMine && (
+                      <button
+                        type="button"
+                        className="ml-1 text-destructive hover:text-destructive/80 disabled:opacity-40"
+                        title="Remove document"
+                        disabled={removeDocMut.isPending}
+                        onClick={() => removeDocMut.mutate(d.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
+            )}
+
+            {/* Add document — in DRAFT or REJECTED (so maker can fix before resubmitting) */}
+            {(pr.status === 'DRAFT' || pr.status === 'REJECTED') && isMine && (
+              <div className="rounded-md border p-3 space-y-2">
+                <p className="text-xs font-medium">Add document</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Code (e.g. INVOICE)"
+                    value={newDocCode}
+                    onChange={(e) => setNewDocCode(e.target.value)}
+                  />
+                  <Input
+                    placeholder="Label (optional)"
+                    value={newDocLabel}
+                    onChange={(e) => setNewDocLabel(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    className="hidden"
+                    onChange={(e) => { void handleDocFileChange(e); }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={docUploadState === 'uploading'}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload className="mr-1 h-4 w-4" />
+                    {docUploadState === 'uploading' ? 'Uploading…' : docUploadState === 'done' ? newDocFileName : 'Choose file'}
+                  </Button>
+                  {docUploadState === 'error' && (
+                    <span className="text-xs text-destructive">Upload failed — try again</span>
+                  )}
+                  {docUploadState === 'done' && (
+                    <Button
+                      size="sm"
+                      disabled={!newDocCode.trim() || attachDocMut.isPending}
+                      onClick={() => attachDocMut.mutate()}
+                    >
+                      <Plus className="mr-1 h-4 w-4" />
+                      {attachDocMut.isPending ? 'Attaching…' : 'Attach'}
+                    </Button>
+                  )}
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>

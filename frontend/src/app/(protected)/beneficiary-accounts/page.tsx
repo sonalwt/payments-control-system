@@ -1,11 +1,11 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { AlertTriangle, CheckCircle2, Plus, Search, ShieldAlert, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, Plus, Search, ShieldAlert, Upload, XCircle } from 'lucide-react';
 import { api } from '@/lib/api';
 import type {
   Bank,
@@ -73,17 +73,50 @@ const addSchema = z.object({
 });
 type AddFormData = z.infer<typeof addSchema>;
 
+type UploadStatus = 'idle' | 'uploading' | 'done' | 'error';
+
 function AddChangeRequestForm({
   onSubmit, submitting,
 }: { onSubmit: (d: AddFormData) => void; submitting?: boolean }): React.ReactElement {
   const {
-    register, handleSubmit, watch, formState: { errors },
+    register, handleSubmit, watch, setValue, formState: { errors },
   } = useForm<AddFormData>({
     resolver: zodResolver(addSchema),
     defaultValues: { ownerType: 'COUNTERPARTY', accountDirection: 'PAY_TO' },
   });
 
   const ownerType = watch('ownerType');
+
+  const [chequeStatus, setChequeStatus] = useState<UploadStatus>('idle');
+  const [chequeError, setChequeError] = useState('');
+  const chequeFileRef = useRef<HTMLInputElement>(null);
+
+  const [letterStatus, setLetterStatus] = useState<UploadStatus>('idle');
+  const [letterError, setLetterError] = useState('');
+  const letterFileRef = useRef<HTMLInputElement>(null);
+
+  const chequeFileName = watch('docCancelledChequeFileName');
+  const letterFileName = watch('docCounterpartyLetterFileName');
+
+  async function handleUpload(
+    file: File,
+    setStatus: (s: UploadStatus) => void,
+    setError: (e: string) => void,
+    urlField: 'docCancelledChequeUrl' | 'docCounterpartyLetterUrl',
+    nameField: 'docCancelledChequeFileName' | 'docCounterpartyLetterFileName',
+  ): Promise<void> {
+    setStatus('uploading');
+    setError('');
+    try {
+      const result = await api.upload(file);
+      setValue(urlField, result.url, { shouldValidate: true });
+      setValue(nameField, result.fileName, { shouldValidate: true });
+      setStatus('done');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+      setStatus('error');
+    }
+  }
 
   const { data: counterparties } = useQuery({
     queryKey: ['counterparties-all'],
@@ -190,17 +223,96 @@ function AddChangeRequestForm({
       <div className="rounded-md border p-3 space-y-3">
         <p className="text-sm font-medium">Supporting documents (SoW §6.2 — both required)</p>
         <div className="grid grid-cols-2 gap-4">
+          {/* Cancelled cheque / bank letter */}
           <div className="space-y-2">
-            <Label htmlFor="docCancelledCheque">Cancelled cheque / bank letter</Label>
-            <Input placeholder="filename.pdf" {...register('docCancelledChequeFileName')} />
-            <Input placeholder="/uploads/url" {...register('docCancelledChequeUrl')} />
-            {errors.docCancelledChequeUrl && <p className="text-xs text-destructive">{errors.docCancelledChequeUrl.message}</p>}
+            <Label>Cancelled cheque / bank letter <span className="text-destructive">*</span></Label>
+            <input type="hidden" {...register('docCancelledChequeUrl')} />
+            <input type="hidden" {...register('docCancelledChequeFileName')} />
+            <input
+              ref={chequeFileRef}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleUpload(file, setChequeStatus, setChequeError, 'docCancelledChequeUrl', 'docCancelledChequeFileName');
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={chequeStatus === 'uploading'}
+                onClick={() => chequeFileRef.current?.click()}
+              >
+                <Upload className="h-3.5 w-3.5 mr-1.5" />
+                {chequeStatus === 'done' ? 'Replace' : 'Choose file'}
+              </Button>
+              {chequeStatus === 'uploading' && (
+                <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…
+                </span>
+              )}
+              {chequeStatus === 'done' && (
+                <span className="flex items-center gap-1 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {chequeFileName}
+                </span>
+              )}
+              {chequeStatus === 'idle' && (
+                <span className="text-sm text-muted-foreground">No file selected</span>
+              )}
+            </div>
+            {chequeStatus === 'error' && <p className="text-xs text-destructive">{chequeError}</p>}
+            {errors.docCancelledChequeUrl && chequeStatus !== 'done' && (
+              <p className="text-xs text-destructive">{errors.docCancelledChequeUrl.message}</p>
+            )}
           </div>
+
+          {/* Counterparty letter */}
           <div className="space-y-2">
-            <Label htmlFor="docCounterpartyLetter">Counterparty letter</Label>
-            <Input placeholder="filename.pdf" {...register('docCounterpartyLetterFileName')} />
-            <Input placeholder="/uploads/url" {...register('docCounterpartyLetterUrl')} />
-            {errors.docCounterpartyLetterUrl && <p className="text-xs text-destructive">{errors.docCounterpartyLetterUrl.message}</p>}
+            <Label>Counterparty letter <span className="text-destructive">*</span></Label>
+            <input type="hidden" {...register('docCounterpartyLetterUrl')} />
+            <input type="hidden" {...register('docCounterpartyLetterFileName')} />
+            <input
+              ref={letterFileRef}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleUpload(file, setLetterStatus, setLetterError, 'docCounterpartyLetterUrl', 'docCounterpartyLetterFileName');
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={letterStatus === 'uploading'}
+                onClick={() => letterFileRef.current?.click()}
+              >
+                <Upload className="h-3.5 w-3.5 mr-1.5" />
+                {letterStatus === 'done' ? 'Replace' : 'Choose file'}
+              </Button>
+              {letterStatus === 'uploading' && (
+                <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…
+                </span>
+              )}
+              {letterStatus === 'done' && (
+                <span className="flex items-center gap-1 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {letterFileName}
+                </span>
+              )}
+              {letterStatus === 'idle' && (
+                <span className="text-sm text-muted-foreground">No file selected</span>
+              )}
+            </div>
+            {letterStatus === 'error' && <p className="text-xs text-destructive">{letterError}</p>}
+            {errors.docCounterpartyLetterUrl && letterStatus !== 'done' && (
+              <p className="text-xs text-destructive">{errors.docCounterpartyLetterUrl.message}</p>
+            )}
           </div>
         </div>
       </div>

@@ -571,6 +571,9 @@ export interface PaymentRequest extends AuditFields {
   proofOfPaymentUrl?: string | null;
   sanctionWarning: boolean;
   sanctionOverrideReason?: string | null;
+  /** §6.4 — anomaly flag set at submit time (does not block the payment). */
+  anomalyFlag: boolean;
+  anomalyNotes?: string | null;
   /** §1.3/§4.2 — Snapshot of counterparty frozen at submission time. */
   counterpartySnapshot?: Record<string, unknown> | null;
   /** §4.2 — Snapshot of beneficiary account frozen at submission time. */

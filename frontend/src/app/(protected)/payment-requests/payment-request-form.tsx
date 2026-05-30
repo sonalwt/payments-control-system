@@ -4,7 +4,8 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
-import { Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/hooks/use-auth';
 import { hasAnyRole, RoleCode } from '@/lib/roles';
@@ -51,16 +52,46 @@ export const paymentRequestSchema = z.object({
 });
 export type PaymentRequestFormData = z.infer<typeof paymentRequestSchema>;
 
+type UploadStatus = 'idle' | 'uploading' | 'done' | 'error';
+interface DocUploadState { status: UploadStatus; error: string }
+
 export function PaymentRequestForm({
   onSubmit, submitting,
 }: {
   onSubmit: (d: PaymentRequestFormData) => void;
   submitting?: boolean;
 }): React.ReactElement {
-  const { register, control, handleSubmit, watch, formState: { errors } } = useForm<PaymentRequestFormData>({
+  const { register, control, handleSubmit, watch, setValue, formState: { errors } } = useForm<PaymentRequestFormData>({
     resolver: zodResolver(paymentRequestSchema),
     defaultValues: { documents: [] },
   });
+
+  const [docUploadStates, setDocUploadStates] = useState<DocUploadState[]>([]);
+  const fileInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  async function handleDocUpload(idx: number, file: File): Promise<void> {
+    setDocUploadStates((prev) => {
+      const next = [...prev];
+      next[idx] = { status: 'uploading', error: '' };
+      return next;
+    });
+    try {
+      const result = await api.upload(file);
+      setValue(`documents.${idx}.fileName`, result.fileName, { shouldValidate: true });
+      setValue(`documents.${idx}.fileUrl`, result.url, { shouldValidate: true });
+      setDocUploadStates((prev) => {
+        const next = [...prev];
+        next[idx] = { status: 'done', error: '' };
+        return next;
+      });
+    } catch (err) {
+      setDocUploadStates((prev) => {
+        const next = [...prev];
+        next[idx] = { status: 'error', error: err instanceof Error ? err.message : 'Upload failed' };
+        return next;
+      });
+    }
+  }
 
   const counterpartyId = watch('counterpartyId');
   const currencyId = watch('currencyId');
@@ -217,7 +248,13 @@ export function PaymentRequestForm({
       <div className="rounded-md border p-3 space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium">Documents</p>
-          <Button type="button" size="sm" variant="outline" onClick={() => append({ documentCode: '', documentLabel: '', fileName: '', fileUrl: '' })}>
+          <Button
+            type="button" size="sm" variant="outline"
+            onClick={() => {
+              append({ documentCode: '', documentLabel: '', fileName: '', fileUrl: '' });
+              setDocUploadStates((prev) => [...prev, { status: 'idle', error: '' }]);
+            }}
+          >
             <Plus className="mr-1 h-3 w-3" /> Add document
           </Button>
         </div>
@@ -225,30 +262,74 @@ export function PaymentRequestForm({
         {fields.length === 0 ? (
           <p className="text-xs text-muted-foreground">No documents attached yet.</p>
         ) : (
-          <div className="space-y-2">
-            {fields.map((f, idx) => (
-              <div key={f.id} className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 items-end">
-                <div>
-                  <Label className="text-xs">Code</Label>
-                  <Input placeholder="INVOICE" {...register(`documents.${idx}.documentCode`)} />
+          <div className="space-y-3">
+            {fields.map((f, idx) => {
+              const upState = docUploadStates[idx] ?? { status: 'idle', error: '' };
+              const docFileName = watch(`documents.${idx}.fileName`);
+              return (
+                <div key={f.id} className="rounded-md border p-2 space-y-2">
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                    <div>
+                      <Label className="text-xs">Code</Label>
+                      <Input placeholder="INVOICE" {...register(`documents.${idx}.documentCode`)} />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Label</Label>
+                      <Input placeholder="Invoice PDF" {...register(`documents.${idx}.documentLabel`)} />
+                    </div>
+                    <Button
+                      type="button" size="icon" variant="ghost"
+                      onClick={() => {
+                        remove(idx);
+                        setDocUploadStates((prev) => prev.filter((_, i) => i !== idx));
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+
+                  {/* File upload */}
+                  <input type="hidden" {...register(`documents.${idx}.fileName`)} />
+                  <input type="hidden" {...register(`documents.${idx}.fileUrl`)} />
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    className="hidden"
+                    ref={(el) => { fileInputRefs.current[idx] = el; }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleDocUpload(idx, file);
+                    }}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button" variant="outline" size="sm"
+                      disabled={upState.status === 'uploading'}
+                      onClick={() => fileInputRefs.current[idx]?.click()}
+                    >
+                      <Upload className="h-3.5 w-3.5 mr-1.5" />
+                      {upState.status === 'done' ? 'Replace file' : 'Choose file'}
+                    </Button>
+                    {upState.status === 'uploading' && (
+                      <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…
+                      </span>
+                    )}
+                    {upState.status === 'done' && (
+                      <span className="flex items-center gap-1 text-sm text-emerald-600">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> {docFileName}
+                      </span>
+                    )}
+                    {upState.status === 'idle' && (
+                      <span className="text-sm text-muted-foreground">No file selected</span>
+                    )}
+                  </div>
+                  {upState.status === 'error' && (
+                    <p className="text-xs text-destructive">{upState.error}</p>
+                  )}
                 </div>
-                <div>
-                  <Label className="text-xs">Label</Label>
-                  <Input placeholder="Invoice PDF" {...register(`documents.${idx}.documentLabel`)} />
-                </div>
-                <div>
-                  <Label className="text-xs">Filename</Label>
-                  <Input placeholder="invoice.pdf" {...register(`documents.${idx}.fileName`)} />
-                </div>
-                <div>
-                  <Label className="text-xs">URL</Label>
-                  <Input placeholder="/uploads/invoice.pdf" {...register(`documents.${idx}.fileUrl`)} />
-                </div>
-                <Button type="button" size="icon" variant="ghost" onClick={() => remove(idx)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
