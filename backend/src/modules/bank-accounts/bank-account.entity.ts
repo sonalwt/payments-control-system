@@ -3,6 +3,7 @@ import { BaseEntity } from '../../common/entities/base.entity';
 import { Currency } from '../currencies/currency.entity';
 import { AccountType } from '../account-types/account-type.entity';
 import { Bank } from '../banks/bank.entity';
+import { Counterparty } from '../counterparties/counterparty.entity';
 
 @Entity({ name: 'bank_accounts' })
 export class BankAccount extends BaseEntity {
@@ -70,6 +71,19 @@ export class BankAccount extends BaseEntity {
   })
   minimumBalance!: number;
 
+  @Column({
+    name: 'remaining_balance',
+    type: 'decimal',
+    precision: 20,
+    scale: 4,
+    default: 0,
+    transformer: {
+      to: (v?: number | string | null) => v,
+      from: (v: string | null) => (v === null ? null : Number(v)),
+    },
+  })
+  remainingBalance!: number;
+
   @Column({ name: 'is_chairman_designated', type: 'boolean', default: false })
   isChairmanDesignated!: boolean;
 
@@ -78,4 +92,13 @@ export class BankAccount extends BaseEntity {
 
   @Column({ name: 'is_counterparty', type: 'boolean', default: false })
   isCounterparty!: boolean;
+
+  // §1.3 - For counterparty bank accounts, this points to the owning
+  // counterparty. NULL for the group's own bank accounts.
+  @Column({ name: 'counterparty_id', type: 'uuid', nullable: true })
+  counterpartyId?: string | null;
+
+  @ManyToOne(() => Counterparty)
+  @JoinColumn({ name: 'counterparty_id' })
+  counterparty?: Counterparty | null;
 }

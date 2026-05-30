@@ -62,6 +62,13 @@ export class CreateBankAccountDto {
   @Min(0)
   minimumBalance?: number;
 
+  @ApiPropertyOptional({ example: 75000, default: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  remainingBalance?: number;
+
   @ApiPropertyOptional({ default: false })
   @IsOptional()
   @IsBoolean()
@@ -71,4 +78,9 @@ export class CreateBankAccountDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Counterparty master UUID - required when isCounterparty = true' })
+  @IsOptional()
+  @IsUUID()
+  counterpartyId?: string;
 }

@@ -7,7 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { AccountType, Bank, BankAccount, Currency, Paginated } from '@/types/domain';
+import type { AccountType, Bank, BankAccount, Counterparty, Currency, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,6 +29,7 @@ const ENDPOINT = '/counterparty/bank-accounts';
 const BANKS_ENDPOINT = '/counterparty/banks';
 
 const schema = z.object({
+  counterpartyId: z.string().uuid('Select a counterparty'),
   bankId: z.string().uuid('Select a bank'),
   bankNickname: z.string().max(100).optional().or(z.literal('')),
   currencyId: z.string().uuid('Select a currency'),
@@ -49,6 +50,10 @@ function BankAccountForm({
   onSubmit: (d: FormData) => void;
   submitting?: boolean;
 }): React.ReactElement {
+  const { data: counterparties } = useQuery({
+    queryKey: ['counterparties-all'],
+    queryFn: () => api.get<Paginated<Counterparty>>('/counterparties?page=1&limit=200'),
+  });
   const { data: banks } = useQuery({
     queryKey: ['counterparty-banks-all'],
     queryFn: () => api.get<Paginated<Bank>>(`${BANKS_ENDPOINT}?page=1&limit=200`),
@@ -62,6 +67,8 @@ function BankAccountForm({
     queryFn: () => api.get<Paginated<AccountType>>('/account-types?page=1&limit=200'),
   });
 
+  const counterpartyOptions = (counterparties?.data ?? [])
+    .map((c) => ({ label: c.legalName ?? c.id, value: c.id }));
   const bankOptions = (banks?.data ?? [])
     .filter((b) => b.isActive)
     .map((b) => ({ label: b.shortName ? `${b.name} (${b.shortName})` : b.name, value: b.id }));
@@ -76,6 +83,7 @@ function BankAccountForm({
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
+      counterpartyId: defaultValues?.counterpartyId ?? '',
       bankId: defaultValues?.bankId ?? '',
       bankNickname: defaultValues?.bankNickname ?? '',
       currencyId: defaultValues?.currencyId ?? '',
@@ -93,6 +101,16 @@ function BankAccountForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="counterpartyId">Counterparty <span className="text-destructive">*</span></Label>
+        <Select
+          id="counterpartyId"
+          placeholder="Select counterparty"
+          options={counterpartyOptions}
+          {...register('counterpartyId')}
+        />
+        {errors.counterpartyId && <p className="text-xs text-destructive">{errors.counterpartyId.message}</p>}
+      </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="bankId">Bank name <span className="text-destructive">*</span></Label>
@@ -177,6 +195,7 @@ function BankAccountForm({
 
 function normalize(d: FormData) {
   return {
+    counterpartyId: d.counterpartyId,
     bankId: d.bankId,
     bankNickname: d.bankNickname ? d.bankNickname : undefined,
     currencyId: d.currencyId,
@@ -252,6 +271,7 @@ export default function CounterpartyBankAccountsPage(): React.ReactElement {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Counterparty</TableHead>
               <TableHead>Bank / Nickname</TableHead>
               <TableHead>Account #</TableHead>
               <TableHead>Type</TableHead>
@@ -265,9 +285,10 @@ export default function CounterpartyBankAccountsPage(): React.ReactElement {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={9} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={10} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((a) => (
               <TableRow key={a.id}>
+                <TableCell className="font-medium">{a.counterparty?.legalName ?? '—'}</TableCell>
                 <TableCell>
                   <div className="font-medium">{a.bank?.name ?? a.bankName ?? '—'}</div>
                   <div className="text-xs text-muted-foreground">{a.bankNickname ?? '—'}</div>
@@ -302,7 +323,7 @@ export default function CounterpartyBankAccountsPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={9} className="py-12 text-center text-muted-foreground">No counterparty bank accounts yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={10} className="py-12 text-center text-muted-foreground">No counterparty bank accounts yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

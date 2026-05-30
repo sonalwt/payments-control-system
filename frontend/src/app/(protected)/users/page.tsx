@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
 import { api, friendlyError } from '@/lib/api';
-import type { Department, Paginated, User } from '@/types/domain';
+import type { Paginated, User } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Input } from '@/components/ui/input';
 import {
@@ -25,7 +25,6 @@ interface CreateUserForm {
   password: string;
   employeeCode: string;
   isActive: boolean;
-  departmentIds: string[];
 }
 
 const EMPTY_FORM: CreateUserForm = {
@@ -34,7 +33,6 @@ const EMPTY_FORM: CreateUserForm = {
   password: '',
   employeeCode: '',
   isActive: true,
-  departmentIds: [],
 };
 
 export default function UsersPage(): React.ReactElement {
@@ -56,12 +54,6 @@ export default function UsersPage(): React.ReactElement {
     queryFn: () => api.get<Paginated<User>>(`/users?${params}`),
   });
 
-  const { data: departments } = useQuery({
-    queryKey: ['departments-all'],
-    queryFn: () => api.get<Paginated<Department>>('/departments?page=1&limit=200'),
-  });
-  const departmentOptions = (departments?.data ?? []).filter((d) => d.isActive);
-
   const createMutation = useMutation({
     mutationFn: (body: CreateUserForm) =>
       api.post<User>('/users', {
@@ -70,7 +62,6 @@ export default function UsersPage(): React.ReactElement {
         password: body.password,
         employeeCode: body.employeeCode || undefined,
         isActive: body.isActive,
-        departmentIds: body.departmentIds.length > 0 ? body.departmentIds : undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
@@ -85,15 +76,6 @@ export default function UsersPage(): React.ReactElement {
     setForm(EMPTY_FORM);
     setFormError(null);
     setDialogOpen(true);
-  }
-
-  function toggleDepartment(id: string) {
-    setForm((f) => ({
-      ...f,
-      departmentIds: f.departmentIds.includes(id)
-        ? f.departmentIds.filter((x) => x !== id)
-        : [...f.departmentIds, id],
-    }));
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -131,7 +113,6 @@ export default function UsersPage(): React.ReactElement {
               <TableHead>Full name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Employee code</TableHead>
-              <TableHead>Departments</TableHead>
               <TableHead>Roles</TableHead>
               <TableHead>Last login</TableHead>
               <TableHead className="w-36 text-right">Actions</TableHead>
@@ -140,26 +121,13 @@ export default function UsersPage(): React.ReactElement {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell>
+                <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell>
               </TableRow>
             ) : data && data.data.length > 0 ? data.data.map((u) => (
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.fullName}</TableCell>
                 <TableCell>{u.email}</TableCell>
                 <TableCell className="text-muted-foreground">{u.employeeCode ?? '—'}</TableCell>
-                <TableCell>
-                  {u.departments && u.departments.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {u.departments.map((d) => (
-                        <span key={d.id} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-800">
-                          {d.name}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </TableCell>
                 <TableCell>
                   {u.roles && u.roles.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
@@ -184,7 +152,7 @@ export default function UsersPage(): React.ReactElement {
               </TableRow>
             )) : (
               <TableRow>
-                <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No users yet.</TableCell>
+                <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No users yet.</TableCell>
               </TableRow>
             )}
           </TableBody>
@@ -248,34 +216,6 @@ export default function UsersPage(): React.ReactElement {
                 value={form.employeeCode}
                 onChange={(e) => setForm((f) => ({ ...f, employeeCode: e.target.value }))}
               />
-            </div>
-            <div className="space-y-1">
-              <Label>Departments</Label>
-              <div className="max-h-44 overflow-y-auto rounded-md border bg-background p-2 space-y-1">
-                {departmentOptions.length === 0 ? (
-                  <p className="px-2 py-1 text-xs text-muted-foreground">No active departments available.</p>
-                ) : (
-                  departmentOptions.map((d) => (
-                    <label
-                      key={d.id}
-                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
-                    >
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-border"
-                        checked={form.departmentIds.includes(d.id)}
-                        onChange={() => toggleDepartment(d.id)}
-                      />
-                      <span>{d.code} — {d.name}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-              {form.departmentIds.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {form.departmentIds.length} selected
-                </p>
-              )}
             </div>
             <div className="flex items-center gap-2">
               <input

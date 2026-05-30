@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { Country, Department, Employee, Paginated } from '@/types/domain';
+import type { Country, Employee, Paginated } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,7 +18,6 @@ export const employeeSchema = z.object({
   fullName: z.string().min(2).max(150),
   workEmail: z.string().email(),
   countryOfEmploymentId: z.string().uuid('Select a country'),
-  departmentId: z.string().uuid('Select a department'),
   startDate: z.string().optional().or(z.literal('')),
   endDate: z.string().optional().or(z.literal('')),
   nationalId: z.string().max(50).optional().or(z.literal('')),
@@ -46,17 +45,10 @@ export function EmployeeForm({
     queryKey: ['countries-all'],
     queryFn: () => api.get<Paginated<Country>>('/countries?page=1&limit=200'),
   });
-  const { data: departments } = useQuery({
-    queryKey: ['departments-all'],
-    queryFn: () => api.get<Paginated<Department>>('/departments?page=1&limit=200'),
-  });
 
   const countryOptions = (countries?.data ?? [])
     .filter((c) => c.isActive)
     .map((c) => ({ label: `${c.code} — ${c.countryName}`, value: c.id }));
-  const departmentOptions = (departments?.data ?? [])
-    .filter((d) => d.isActive)
-    .map((d) => ({ label: `${d.code} — ${d.name}`, value: d.id }));
 
   const {
     register,
@@ -69,7 +61,6 @@ export function EmployeeForm({
       fullName: defaultValues?.fullName ?? '',
       workEmail: defaultValues?.workEmail ?? '',
       countryOfEmploymentId: defaultValues?.countryOfEmploymentId ?? '',
-      departmentId: defaultValues?.departmentId ?? '',
       startDate: defaultValues?.startDate ?? '',
       endDate: defaultValues?.endDate ?? '',
       nationalId: defaultValues?.nationalId ?? '',
@@ -101,27 +92,15 @@ export function EmployeeForm({
         <Input id="workEmail" type="email" placeholder="jane.doe@acme.com" {...register('workEmail')} />
         {errors.workEmail && <p className="text-xs text-destructive">{errors.workEmail.message}</p>}
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="countryOfEmploymentId">Country of employment <span className="text-destructive">*</span></Label>
-          <Select
-            id="countryOfEmploymentId"
-            placeholder="Select country"
-            options={countryOptions}
-            {...register('countryOfEmploymentId')}
-          />
-          {errors.countryOfEmploymentId && <p className="text-xs text-destructive">{errors.countryOfEmploymentId.message}</p>}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="departmentId">Department <span className="text-destructive">*</span></Label>
-          <Select
-            id="departmentId"
-            placeholder="Select department"
-            options={departmentOptions}
-            {...register('departmentId')}
-          />
-          {errors.departmentId && <p className="text-xs text-destructive">{errors.departmentId.message}</p>}
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="countryOfEmploymentId">Country of employment <span className="text-destructive">*</span></Label>
+        <Select
+          id="countryOfEmploymentId"
+          placeholder="Select country"
+          options={countryOptions}
+          {...register('countryOfEmploymentId')}
+        />
+        {errors.countryOfEmploymentId && <p className="text-xs text-destructive">{errors.countryOfEmploymentId.message}</p>}
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">

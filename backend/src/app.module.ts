@@ -16,13 +16,14 @@ import { CurrenciesModule } from './modules/currencies/currencies.module';
 import { CountriesModule } from './modules/countries/countries.module';
 import { AccountTypesModule } from './modules/account-types/account-types.module';
 import { BankAccountsModule } from './modules/bank-accounts/bank-accounts.module';
-import { DepartmentsModule } from './modules/departments/departments.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { BanksModule } from './modules/banks/banks.module';
-import { BusinessUnitsModule } from './modules/business-units/business-units.module';
 import { PaymentTypesModule } from './modules/payment-types/payment-types.module';
+import { PaymentCategoriesModule } from './modules/payment-categories/payment-categories.module';
 import { CounterpartiesModule } from './modules/counterparties/counterparties.module';
 import { ApprovalMatricesModule } from './modules/approval-matrices/approval-matrices.module';
+import { BeneficiaryAccountsModule } from './modules/beneficiary-accounts/beneficiary-accounts.module';
+import { PaymentRequestsModule } from './modules/payment-requests/payment-requests.module';
 
 @Module({
   imports: [
@@ -54,13 +55,14 @@ import { ApprovalMatricesModule } from './modules/approval-matrices/approval-mat
     CountriesModule,
     AccountTypesModule,
     BankAccountsModule,
-    DepartmentsModule,
     EmployeesModule,
     BanksModule,
-    BusinessUnitsModule,
     PaymentTypesModule,
+    PaymentCategoriesModule,
     CounterpartiesModule,
     ApprovalMatricesModule,
+    BeneficiaryAccountsModule,
+    PaymentRequestsModule,
   ],
 })
 export class AppModule {}

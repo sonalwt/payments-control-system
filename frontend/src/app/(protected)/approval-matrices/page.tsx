@@ -16,6 +16,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { useNotify } from '@/hooks/use-notify';
+import { useAuth } from '@/hooks/use-auth';
+import { hasAnyRole, RoleCode } from '@/lib/roles';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 import { ApprovalMatrixForm, type ApprovalMatrixFormData } from './approval-matrix-form';
@@ -81,12 +83,23 @@ export default function ApprovalMatricesPage(): React.ReactElement {
   const [deleting, setDeleting] = useState<ApprovalMatrix | null>(null);
   const notify = useNotify();
   const qc = useQueryClient();
+  const { user } = useAuth();
+
+  // Non-admin / non-counterparty users see only matrices they participate
+  // in (as a USER step, via a role they hold, or as the maker / checker
+  // role on the payment type). Admin sees everything.
+  const isAdmin = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN]);
+  const isAdminOrCounterparty = hasAnyRole(user?.roles, [
+    RoleCode.SUPER_ADMIN,
+    RoleCode.COUNTERPARTY,
+  ]);
 
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
     if (search) u.set('search', search);
+    if (!isAdminOrCounterparty) u.set('mine', 'true');
     return u.toString();
-  }, [page, search]);
+  }, [page, search, isAdminOrCounterparty]);
 
   const { data, isLoading } = useQuery({
     queryKey: [KEY, params],
@@ -120,15 +133,17 @@ export default function ApprovalMatricesPage(): React.ReactElement {
         title="Approval Matrices"
         description="Per-payment-type approval bands in native currency (SoW §1.5). Matrices version with effective dates; in-flight requests retain the matrix snapshot active at submission."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> New matrix</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-3xl">
-              <DialogHeader><DialogTitle>Create approval matrix</DialogTitle></DialogHeader>
-              <ApprovalMatrixForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
-            </DialogContent>
-          </Dialog>
+          isAdmin ? (
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button><Plus className="mr-2 h-4 w-4" /> New matrix</Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-3xl">
+                <DialogHeader><DialogTitle>Create approval matrix</DialogTitle></DialogHeader>
+                <ApprovalMatrixForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </DialogContent>
+            </Dialog>
+          ) : undefined
         }
       />
       <Card>
@@ -170,7 +185,7 @@ export default function ApprovalMatricesPage(): React.ReactElement {
                 <TableCell className="text-right">
                   <div className="inline-flex items-center gap-1 whitespace-nowrap">
                     <Button size="icon" variant="ghost" onClick={() => setViewing(m)} title="View"><Eye className="h-4 w-4" /></Button>
-                    {m.status === 'DRAFT' && (
+                    {isAdmin && m.status === 'DRAFT' && (
                       <>
                         <Button size="icon" variant="ghost" onClick={() => setEditing(m)} title="Edit"><Pencil className="h-4 w-4" /></Button>
                         <Button

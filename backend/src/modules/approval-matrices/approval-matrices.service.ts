@@ -13,8 +13,8 @@ import { CreateApprovalMatrixDto } from './dto/create-approval-matrix.dto';
 import { UpdateApprovalMatrixDto } from './dto/update-approval-matrix.dto';
 import {
   PaginatedResult,
-  PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { MatricesQueryDto } from './dto/matrices-query.dto';
 
 @Injectable()
 export class ApprovalMatricesService {
@@ -118,18 +118,56 @@ export class ApprovalMatricesService {
     });
   }
 
-  async findAll(query: PaginationQueryDto): Promise<PaginatedResult<ApprovalMatrix>> {
-    const { page = 1, limit = 20, search } = query;
+  async findAll(
+    query: MatricesQueryDto,
+    currentUserId?: string,
+  ): Promise<PaginatedResult<ApprovalMatrix>> {
+    const { page = 1, limit = 20, search, mine } = query;
     const qb = this.repo
       .createQueryBuilder('m')
       .leftJoinAndSelect('m.paymentType', 'paymentType')
+      .leftJoinAndSelect('paymentType.makerRole', 'paymentTypeMakerRole')
+      .leftJoinAndSelect('paymentType.checkerRole', 'paymentTypeCheckerRole')
       .leftJoinAndSelect('m.currency', 'currency')
+      .leftJoinAndSelect('m.bands', 'band')
+      .leftJoinAndSelect('band.steps', 'step')
+      .leftJoinAndSelect('step.approverUser', 'approverUser')
+      .leftJoinAndSelect('step.approverRole', 'approverRole')
       .orderBy('m.name', 'ASC')
       .addOrderBy('m.version', 'DESC')
+      .addOrderBy('band.sortOrder', 'ASC')
+      .addOrderBy('step.stepOrder', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
     if (search) {
       qb.andWhere('m.name ILIKE :s', { s: `%${search}%` });
+    }
+    if (mine === 'true' && currentUserId) {
+      // Show only matrices where the user appears in any step
+      // (as a USER, or via a role they hold) OR they hold the payment
+      // type's maker / checker role.
+      qb.andWhere(
+        `m.id IN (
+          SELECT b.matrix_id
+            FROM approval_matrix_bands b
+            INNER JOIN approval_matrix_steps s ON s.band_id = b.id
+            WHERE s.approver_user_id = :uid
+               OR s.approver_role_id IN (
+                    SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
+                  )
+          UNION
+          SELECT m2.id
+            FROM approval_matrices m2
+            INNER JOIN payment_types pt ON pt.id = m2.payment_type_id
+            WHERE pt.maker_role_id IN (
+                    SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
+                  )
+               OR pt.checker_role_id IN (
+                    SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
+                  )
+        )`,
+        { uid: currentUserId },
+      );
     }
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
@@ -139,6 +177,8 @@ export class ApprovalMatricesService {
     const m = await repo
       .createQueryBuilder('m')
       .leftJoinAndSelect('m.paymentType', 'paymentType')
+      .leftJoinAndSelect('paymentType.makerRole', 'paymentTypeMakerRole')
+      .leftJoinAndSelect('paymentType.checkerRole', 'paymentTypeCheckerRole')
       .leftJoinAndSelect('m.currency', 'currency')
       .leftJoinAndSelect('m.bands', 'band')
       .leftJoinAndSelect('band.steps', 'step')

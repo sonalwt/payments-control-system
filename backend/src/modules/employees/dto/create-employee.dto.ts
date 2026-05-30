@@ -31,10 +31,6 @@ export class CreateEmployeeDto {
   @IsUUID()
   countryOfEmploymentId!: string;
 
-  @ApiProperty({ description: 'Department master UUID' })
-  @IsUUID()
-  departmentId!: string;
-
   @ApiPropertyOptional({ example: '2024-01-15' })
   @IsOptional()
   @IsDateString()

@@ -11,8 +11,8 @@ import { CreatePaymentTypeDto } from './dto/create-payment-type.dto';
 import { UpdatePaymentTypeDto } from './dto/update-payment-type.dto';
 import {
   PaginatedResult,
-  PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { PaymentTypesQueryDto } from './dto/payment-types-query.dto';
 
 @Injectable()
 export class PaymentTypesService {
@@ -37,6 +37,11 @@ export class PaymentTypesService {
       allowsCrossCurrency: dto.allowsCrossCurrency ?? true,
       documentPolicy: dto.documentPolicy ?? [],
       fieldConfig: dto.fieldConfig ?? [],
+      paymentCategoryId: dto.paymentCategoryId ?? null,
+      makerRoleId: dto.makerRoleId ?? null,
+      checkerRoleId: dto.checkerRoleId ?? null,
+      makerUserId: dto.makerUserId ?? null,
+      checkerUserId: dto.checkerUserId ?? null,
       isSystem: false,
       isActive: dto.isActive ?? true,
       version: 1,
@@ -47,22 +52,53 @@ export class PaymentTypesService {
     return this.repo.save(pt);
   }
 
-  async findAll(query: PaginationQueryDto): Promise<PaginatedResult<PaymentType>> {
-    const { page = 1, limit = 50, search } = query;
+  async findAll(
+    query: PaymentTypesQueryDto,
+    currentUserId?: string,
+  ): Promise<PaginatedResult<PaymentType>> {
+    const { page = 1, limit = 50, search, mine, paymentCategoryId } = query;
     const qb = this.repo
       .createQueryBuilder('pt')
+      .leftJoinAndSelect('pt.paymentCategory', 'paymentCategory')
+      .leftJoinAndSelect('pt.makerRole', 'makerRole')
+      .leftJoinAndSelect('pt.checkerRole', 'checkerRole')
+      .leftJoinAndSelect('pt.makerUser', 'makerUser')
+      .leftJoinAndSelect('pt.checkerUser', 'checkerUser')
       .orderBy('pt.name', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
     if (search) {
       qb.andWhere('(pt.name ILIKE :s OR pt.code ILIKE :s)', { s: `%${search}%` });
     }
+    if (paymentCategoryId) {
+      qb.andWhere('pt.payment_category_id = :cat', { cat: paymentCategoryId });
+    }
+    if (mine === 'true' && currentUserId) {
+      // §1.2 / §3 - restrict to payment types where the current user is
+      // the configured Maker - either by named user (maker_user_id) or
+      // by holding the configured maker role.
+      qb.andWhere(
+        `(
+           pt.maker_user_id = :uid
+           OR (
+             pt.maker_role_id IS NOT NULL
+             AND pt.maker_role_id IN (
+               SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
+             )
+           )
+         )`,
+        { uid: currentUserId },
+      );
+    }
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findOne(id: string): Promise<PaymentType> {
-    const pt = await this.repo.findOne({ where: { id } });
+    const pt = await this.repo.findOne({
+      where: { id },
+      relations: ['paymentCategory', 'makerRole', 'checkerRole', 'makerUser', 'checkerUser'],
+    });
     if (!pt) throw new NotFoundException(`Payment type ${id} not found`);
     return pt;
   }

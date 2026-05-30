@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BankAccount } from './bank-account.entity';
@@ -21,6 +21,11 @@ export class BankAccountsService {
     actorId: string,
     isCounterparty = false,
   ): Promise<BankAccount> {
+    if (isCounterparty && !dto.counterpartyId) {
+      throw new BadRequestException(
+        'counterpartyId is required for counterparty bank accounts.',
+      );
+    }
     const existing = await this.repo.findOne({
       where: {
         accountNumber: dto.accountNumber,
@@ -43,9 +48,11 @@ export class BankAccountsService {
       branchCode: dto.branchCode ?? null,
       openingBalance: dto.openingBalance ?? 0,
       minimumBalance: dto.minimumBalance ?? 0,
+      remainingBalance: dto.remainingBalance ?? 0,
       isChairmanDesignated: dto.isChairmanDesignated ?? false,
       isActive: dto.isActive ?? true,
       isCounterparty,
+      counterpartyId: isCounterparty ? dto.counterpartyId : null,
       createdBy: actorId,
       updatedBy: actorId,
     });
@@ -62,6 +69,7 @@ export class BankAccountsService {
       .leftJoinAndSelect('a.bank', 'bank')
       .leftJoinAndSelect('a.currency', 'currency')
       .leftJoinAndSelect('a.accountTypeMaster', 'accountTypeMaster')
+      .leftJoinAndSelect('a.counterparty', 'counterparty')
       .where('a.isCounterparty = :isCounterparty', { isCounterparty })
       .orderBy('a.bankNickname', 'ASC')
       .skip((page - 1) * limit)
@@ -79,7 +87,7 @@ export class BankAccountsService {
   async findOne(id: string, isCounterparty = false): Promise<BankAccount> {
     const acc = await this.repo.findOne({
       where: { id, isCounterparty },
-      relations: ['bank', 'currency', 'accountTypeMaster'],
+      relations: ['bank', 'currency', 'accountTypeMaster', 'counterparty'],
     });
     if (!acc) throw new NotFoundException(`Bank account ${id} not found`);
     return acc;

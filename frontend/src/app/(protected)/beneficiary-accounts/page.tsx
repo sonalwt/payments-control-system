@@ -1,1226 +1,644 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  Clock,
-  Copy,
-  Paperclip,
-  Pencil,
-  Plus,
-  Shield,
-  Trash2,
-  Unlock,
-  X,
-  Zap,
-} from 'lucide-react';
-import { api, friendlyError } from '@/lib/api';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { AlertTriangle, CheckCircle2, Plus, Search, ShieldAlert, XCircle } from 'lucide-react';
+import { api } from '@/lib/api';
 import type {
   Bank,
   BeneficiaryAccount,
-  BeneficiaryAccountStatus,
+  BeneficiaryAccountChangeRequest,
   Counterparty,
+  Country,
   Currency,
-  Employee,
   Paginated,
-  SanctionedCountry,
 } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
-import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Card } from '@/components/ui/card';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { useNotify } from '@/hooks/use-notify';
+import { DataTablePagination } from '@/components/shared/data-table-pagination';
 
-// ─── constants ────────────────────────────────────────────────────────────────
+const BENE_KEY = 'beneficiary-accounts';
+const CR_KEY = 'beneficiary-change-requests';
 
-const KEY = 'beneficiary-accounts';
-
-const STATUS_LABEL: Record<BeneficiaryAccountStatus, string> = {
-  ACTIVE: 'Active',
-  PENDING_ACTIVATION: 'Pending Activation',
-  INACTIVE: 'Inactive',
+const BENE_STATUS_STYLES: Record<string, string> = {
+  ACTIVE: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  PENDING_ACTIVATION: 'bg-amber-50 text-amber-700 ring-amber-200',
+  INACTIVE: 'bg-muted text-muted-foreground ring-border',
+};
+const CR_STATUS_STYLES: Record<string, string> = {
+  PENDING_VERIFICATION: 'bg-amber-50 text-amber-700 ring-amber-200',
+  VERIFIED: 'bg-blue-50 text-blue-700 ring-blue-200',
+  APPROVED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  REJECTED: 'bg-rose-50 text-rose-700 ring-rose-200',
+  CANCELLED: 'bg-muted text-muted-foreground ring-border',
 };
 
-const STATUS_STYLE: Record<BeneficiaryAccountStatus, string> = {
-  ACTIVE: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-  PENDING_ACTIVATION: 'bg-blue-500/10 text-blue-700 dark:text-blue-400',
-  INACTIVE: 'bg-muted text-muted-foreground',
-};
+// ---------------------------------------------------------------------
+// Create Change Request — ADD (the only flow built in MVP)
+// ---------------------------------------------------------------------
 
-// ─── types ────────────────────────────────────────────────────────────────────
+const addSchema = z.object({
+  ownerType: z.enum(['COUNTERPARTY', 'EMPLOYEE']),
+  counterpartyId: z.string().uuid().optional().or(z.literal('')),
+  employeeId: z.string().uuid().optional().or(z.literal('')),
+  accountHolderName: z.string().min(2).max(200),
+  accountNumber: z.string().min(2).max(60),
+  bankId: z.string().uuid('Select a bank'),
+  currencyId: z.string().uuid('Select a currency'),
+  countryId: z.string().uuid('Select a country'),
+  branchName: z.string().max(120).optional().or(z.literal('')),
+  swiftBic: z.string().max(11).optional().or(z.literal('')),
+  iban: z.string().max(34).optional().or(z.literal('')),
+  accountDirection: z.enum(['PAY_TO', 'RECEIVE_FROM', 'BOTH']),
+  // §6.2 supporting documents — minimum one
+  docCancelledChequeUrl: z.string().min(1, 'Cancelled cheque / bank letter URL required'),
+  docCancelledChequeFileName: z.string().min(1),
+  docCounterpartyLetterUrl: z.string().min(1, 'Counterparty letter URL required'),
+  docCounterpartyLetterFileName: z.string().min(1),
+});
+type AddFormData = z.infer<typeof addSchema>;
 
-interface DocumentDraft {
-  documentCode: string;
-  fileName: string;
-  fileUrl: string;
-  mimeType: string;
-}
+function AddChangeRequestForm({
+  onSubmit, submitting,
+}: { onSubmit: (d: AddFormData) => void; submitting?: boolean }): React.ReactElement {
+  const {
+    register, handleSubmit, watch, formState: { errors },
+  } = useForm<AddFormData>({
+    resolver: zodResolver(addSchema),
+    defaultValues: { ownerType: 'COUNTERPARTY', accountDirection: 'PAY_TO' },
+  });
 
-type AccountDirection = 'PAY_TO' | 'RECEIVE_FROM' | 'BOTH';
+  const ownerType = watch('ownerType');
 
-interface ProposedData {
-  counterpartyId?: string;
-  employeeId?: string;
-  accountHolderName: string;
-  accountNumber: string;
-  bankId: string;
-  bankName?: string;
-  branchName?: string;
-  swiftBic?: string;
-  iban?: string;
-  currencyId: string;
-  countryCode: string;
-  accountDirection: AccountDirection;
-}
-
-// ─── sub-components ───────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: BeneficiaryAccountStatus }): React.ReactElement {
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_STYLE[status]}`}
-    >
-      {STATUS_LABEL[status]}
-    </span>
-  );
-}
-
-function SanctionIcon({ countryCode, sanctionedCodes }: { countryCode: string; sanctionedCodes: Set<string> }): React.ReactElement | null {
-  if (!sanctionedCodes.has(countryCode.toUpperCase())) return null;
-  return (
-    <span title={`${countryCode} is a sanctioned country`}>
-      <Shield className="ml-1 inline-block h-3.5 w-3.5 text-red-600" />
-    </span>
-  );
-}
-
-// ─── file upload field ────────────────────────────────────────────────────────
-
-interface FileUploadFieldProps {
-  label: string;
-  documentCode: string;
-  doc: DocumentDraft;
-  onChange: (updated: DocumentDraft) => void;
-}
-
-function FileUploadField({ label, documentCode, doc, onChange }: FileUploadFieldProps): React.ReactElement {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const notify = useNotify();
-
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    try {
-      const result = await api.upload(file);
-      onChange({
-        documentCode,
-        fileName: result.fileName,
-        fileUrl: result.url,
-        mimeType: file.type,
-      });
-    } catch {
-      notify.error('Upload failed');
-    } finally {
-      setUploading(false);
-      e.target.value = '';
-    }
-  }
-
-  function clearFile() {
-    onChange({ documentCode, fileName: '', fileUrl: '', mimeType: '' });
-    if (inputRef.current) inputRef.current.value = '';
-  }
+  const { data: counterparties } = useQuery({
+    queryKey: ['counterparties-all'],
+    queryFn: () => api.get<Paginated<Counterparty>>('/counterparties?page=1&limit=200'),
+  });
+  const { data: banks } = useQuery({
+    queryKey: ['banks-all'],
+    queryFn: () => api.get<Paginated<Bank>>('/banks?page=1&limit=200'),
+  });
+  const { data: currencies } = useQuery({
+    queryKey: ['currencies-all'],
+    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
+  });
+  const { data: countries } = useQuery({
+    queryKey: ['countries-all'],
+    queryFn: () => api.get<Paginated<Country>>('/countries?page=1&limit=300'),
+  });
 
   return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      {doc.fileName ? (
-        <div className="flex h-8 items-center gap-1.5 rounded-md border bg-muted/50 px-2 text-xs">
-          <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
-          <span className="flex-1 truncate text-foreground">{doc.fileName}</span>
-          <button
-            type="button"
-            className="shrink-0 text-muted-foreground hover:text-destructive"
-            onClick={clearFile}
-          >
-            <X className="h-3 w-3" />
-          </button>
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="ownerType">Owner type <span className="text-destructive">*</span></Label>
+          <Select id="ownerType" options={[
+            { label: 'Counterparty (vendor/customer)', value: 'COUNTERPARTY' },
+            { label: 'Employee', value: 'EMPLOYEE' },
+          ]} {...register('ownerType')} />
         </div>
-      ) : (
-        <label className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-dashed px-2 text-xs text-muted-foreground hover:border-primary hover:text-primary">
-          <Paperclip className="h-3 w-3 shrink-0" />
-          <span>{uploading ? 'Uploading…' : 'Choose PDF or Word file…'}</span>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            className="sr-only"
-            onChange={(e) => { void handleFileChange(e); }}
-          />
-        </label>
-      )}
-    </div>
-  );
-}
-
-// ─── account form (shared by Add and Modify dialogs) ─────────────────────────
-
-interface AccountFormProps {
-  initialData?: Partial<ProposedData>;
-  counterparties: Counterparty[];
-  employees: Employee[];
-  banks: Bank[];
-  currencies: Currency[];
-  submitting: boolean;
-  submitLabel: string;
-  onSubmit: (proposedData: ProposedData, documents: DocumentDraft[]) => void;
-  onCancel: () => void;
-}
-
-function AccountForm({
-  initialData,
-  counterparties,
-  employees,
-  banks,
-  currencies,
-  submitting,
-  submitLabel,
-  onSubmit,
-  onCancel,
-}: AccountFormProps): React.ReactElement {
-  const [ownerType, setOwnerType] = useState<'counterparty' | 'employee'>(
-    initialData?.employeeId ? 'employee' : 'counterparty',
-  );
-  const [counterpartyId, setCounterpartyId] = useState(initialData?.counterpartyId ?? '');
-  const [employeeId, setEmployeeId] = useState(initialData?.employeeId ?? '');
-  const [accountHolderName, setAccountHolderName] = useState(initialData?.accountHolderName ?? '');
-  const [accountNumber, setAccountNumber] = useState(initialData?.accountNumber ?? '');
-  const [bankId, setBankId] = useState(initialData?.bankId ?? '');
-  const [bankName, setBankName] = useState(initialData?.bankName ?? '');
-  const [branchName, setBranchName] = useState(initialData?.branchName ?? '');
-  const [swiftBic, setSwiftBic] = useState(initialData?.swiftBic ?? '');
-  const [iban, setIban] = useState(initialData?.iban ?? '');
-  const [currencyId, setCurrencyId] = useState(initialData?.currencyId ?? '');
-  const [countryCode, setCountryCode] = useState(initialData?.countryCode ?? '');
-  const [accountDirection, setAccountDirection] = useState<AccountDirection>(
-    (initialData?.accountDirection as AccountDirection) ?? 'PAY_TO',
-  );
-
-  const [cancelledCheque, setCancelledCheque] = useState<DocumentDraft>({
-    documentCode: 'CANCELLED_CHEQUE',
-    fileName: '',
-    fileUrl: '',
-    mimeType: '',
-  });
-  const [bankLetter, setBankLetter] = useState<DocumentDraft>({
-    documentCode: 'BANK_LETTER',
-    fileName: '',
-    fileUrl: '',
-    mimeType: '',
-  });
-  const [sourceCorrespondence, setSourceCorrespondence] = useState<DocumentDraft>({
-    documentCode: 'SOURCE_CORRESPONDENCE',
-    fileName: '',
-    fileUrl: '',
-    mimeType: '',
-  });
-
-  const [docErrors, setDocErrors] = useState<Record<string, boolean>>({});
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-
-    // All 3 supporting documents are mandatory for ADD / MODIFY (§6.2)
-    const missing: Record<string, boolean> = {
-      CANCELLED_CHEQUE: !cancelledCheque.fileName,
-      BANK_LETTER: !bankLetter.fileName,
-      SOURCE_CORRESPONDENCE: !sourceCorrespondence.fileName,
-    };
-    if (Object.values(missing).some(Boolean)) {
-      setDocErrors(missing);
-      return;
-    }
-    setDocErrors({});
-
-    const proposedData: ProposedData = {
-      accountHolderName: accountHolderName.trim(),
-      accountNumber: accountNumber.trim(),
-      bankId,
-      bankName: bankName.trim() || undefined,
-      branchName: branchName.trim() || undefined,
-      swiftBic: swiftBic.trim() || undefined,
-      iban: iban.trim() || undefined,
-      currencyId,
-      countryCode: countryCode.trim().toUpperCase(),
-      accountDirection,
-    };
-    if (ownerType === 'counterparty') {
-      proposedData.counterpartyId = counterpartyId || undefined;
-    } else {
-      proposedData.employeeId = employeeId || undefined;
-    }
-
-    const docs = [cancelledCheque, bankLetter, sourceCorrespondence].filter(
-      (d) => d.fileName,
-    );
-    onSubmit(proposedData, docs);
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Owner type radio */}
-      <div className="space-y-1.5">
-        <Label>Owner Type *</Label>
-        <div className="flex gap-4">
-          <label className="flex cursor-pointer items-center gap-1.5 text-sm">
-            <input
-              type="radio"
-              name="ownerType"
-              value="counterparty"
-              checked={ownerType === 'counterparty'}
-              onChange={() => setOwnerType('counterparty')}
-            />
-            Counterparty
-          </label>
-          <label className="flex cursor-pointer items-center gap-1.5 text-sm">
-            <input
-              type="radio"
-              name="ownerType"
-              value="employee"
-              checked={ownerType === 'employee'}
-              onChange={() => setOwnerType('employee')}
-            />
-            Employee
-          </label>
+        <div className="space-y-2">
+          <Label htmlFor="accountDirection">Direction <span className="text-destructive">*</span></Label>
+          <Select id="accountDirection" options={[
+            { label: 'Pay-to (outgoing)', value: 'PAY_TO' },
+            { label: 'Receive-from (incoming)', value: 'RECEIVE_FROM' },
+            { label: 'Both', value: 'BOTH' },
+          ]} {...register('accountDirection')} />
         </div>
       </div>
 
-      {/* Owner selector */}
-      {ownerType === 'counterparty' ? (
-        <div className="space-y-1.5">
-          <Label htmlFor="baCpId">Counterparty *</Label>
-          <select
-            id="baCpId"
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-            value={counterpartyId}
-            onChange={(e) => setCounterpartyId(e.target.value)}
-            required
-          >
-            <option value="">— select counterparty —</option>
-            {counterparties
-              .filter((c) => c.isActive)
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.code})
-                </option>
-              ))}
-          </select>
+      {ownerType === 'COUNTERPARTY' && (
+        <div className="space-y-2">
+          <Label htmlFor="counterpartyId">Counterparty <span className="text-destructive">*</span></Label>
+          <Select id="counterpartyId" placeholder="Select counterparty"
+            options={(counterparties?.data ?? []).map((c) => ({ label: c.legalName ?? c.id, value: c.id }))}
+            {...register('counterpartyId')} />
         </div>
-      ) : (
-        <div className="space-y-1.5">
-          <Label htmlFor="baEmpId">Employee *</Label>
-          <select
-            id="baEmpId"
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-            value={employeeId}
-            onChange={(e) => setEmployeeId(e.target.value)}
-            required
-          >
-            <option value="">— select employee —</option>
-            {employees
-              .filter((e) => e.isActive)
-              .map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.fullName} ({e.employeeCode})
-                </option>
-              ))}
-          </select>
+      )}
+      {ownerType === 'EMPLOYEE' && (
+        <div className="space-y-2">
+          <Label htmlFor="employeeId">Employee UUID <span className="text-destructive">*</span></Label>
+          <Input id="employeeId" placeholder="employee id" {...register('employeeId')} />
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        {/* Account Holder Name */}
-        <div className="col-span-2 space-y-1.5">
-          <Label htmlFor="baHolderName">Account Holder Name *</Label>
-          <Input
-            id="baHolderName"
-            value={accountHolderName}
-            onChange={(e) => setAccountHolderName(e.target.value)}
-            required
-            placeholder="As it appears on the bank account"
-          />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="accountHolderName">Account holder <span className="text-destructive">*</span></Label>
+          <Input id="accountHolderName" {...register('accountHolderName')} />
+          {errors.accountHolderName && <p className="text-xs text-destructive">{errors.accountHolderName.message}</p>}
         </div>
-
-        {/* Account Number */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baAcctNum">Account Number *</Label>
-          <Input
-            id="baAcctNum"
-            value={accountNumber}
-            onChange={(e) => setAccountNumber(e.target.value)}
-            required
-            placeholder="e.g. 0123456789"
-          />
+        <div className="space-y-2">
+          <Label htmlFor="accountNumber">Account number <span className="text-destructive">*</span></Label>
+          <Input id="accountNumber" {...register('accountNumber')} />
+          {errors.accountNumber && <p className="text-xs text-destructive">{errors.accountNumber.message}</p>}
         </div>
-
-        {/* Bank */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baBankId">Bank *</Label>
-          <select
-            id="baBankId"
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-            value={bankId}
-            onChange={(e) => setBankId(e.target.value)}
-            required
-          >
-            <option value="">— select bank —</option>
-            {banks
-              .filter((b) => b.isActive)
-              .map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} ({b.countryCode})
-                </option>
-              ))}
-          </select>
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="bankId">Bank <span className="text-destructive">*</span></Label>
+          <Select id="bankId" placeholder="Select bank"
+            options={(banks?.data ?? []).map((b) => ({ label: b.name, value: b.id }))}
+            {...register('bankId')} />
         </div>
-
-        {/* Bank Name (optional override) */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baBankName">Bank Name Override</Label>
-          <Input
-            id="baBankName"
-            value={bankName}
-            onChange={(e) => setBankName(e.target.value)}
-            placeholder="Optional — overrides bank master name"
-          />
+        <div className="space-y-2">
+          <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
+          <Select id="currencyId" placeholder="Select currency"
+            options={(currencies?.data ?? []).map((c) => ({ label: c.code ? `${c.code} — ${c.name ?? ''}` : (c.name ?? c.id), value: c.id }))}
+            {...register('currencyId')} />
         </div>
-
-        {/* Branch Name */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baBranchName">Branch Name</Label>
-          <Input
-            id="baBranchName"
-            value={branchName}
-            onChange={(e) => setBranchName(e.target.value)}
-            placeholder="Optional"
-          />
+        <div className="space-y-2">
+          <Label htmlFor="countryId">Country <span className="text-destructive">*</span></Label>
+          <Select id="countryId" placeholder="Select country"
+            options={(countries?.data ?? []).map((c) => ({
+              label: c.isSanctioned ? `${c.countryName} (sanctioned)` : c.countryName,
+              value: c.id,
+            }))}
+            {...register('countryId')} />
         </div>
-
-        {/* SWIFT/BIC */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baSwift">SWIFT / BIC</Label>
-          <Input
-            id="baSwift"
-            value={swiftBic}
-            onChange={(e) => setSwiftBic(e.target.value.toUpperCase())}
-            maxLength={11}
-            placeholder="e.g. DBSSSGSG"
-          />
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="branchName">Branch name</Label>
+          <Input id="branchName" {...register('branchName')} />
         </div>
-
-        {/* IBAN */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baIban">IBAN</Label>
-          <Input
-            id="baIban"
-            value={iban}
-            onChange={(e) => setIban(e.target.value.toUpperCase())}
-            maxLength={34}
-            placeholder="e.g. GB29NWBK60161331926819"
-          />
+        <div className="space-y-2">
+          <Label htmlFor="swiftBic">SWIFT / BIC</Label>
+          <Input id="swiftBic" {...register('swiftBic')} />
         </div>
-
-        {/* Currency */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baCurrencyId">Currency *</Label>
-          <select
-            id="baCurrencyId"
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-            value={currencyId}
-            onChange={(e) => setCurrencyId(e.target.value)}
-            required
-          >
-            <option value="">— select currency —</option>
-            {currencies
-              .filter((c) => c.isActive)
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code} — {c.name}
-                </option>
-              ))}
-          </select>
-        </div>
-
-        {/* Country Code */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baCountry">Country Code * (ISO 2-char)</Label>
-          <Input
-            id="baCountry"
-            value={countryCode}
-            onChange={(e) => setCountryCode(e.target.value.toUpperCase())}
-            maxLength={2}
-            required
-            placeholder="e.g. SG"
-            className="uppercase"
-          />
-        </div>
-
-        {/* Account Direction */}
-        <div className="space-y-1.5">
-          <Label htmlFor="baDirection">Account Direction *</Label>
-          <select
-            id="baDirection"
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-            value={accountDirection}
-            onChange={(e) => setAccountDirection(e.target.value as AccountDirection)}
-            required
-          >
-            <option value="PAY_TO">Pay-To (Outgoing payments to this account)</option>
-            <option value="RECEIVE_FROM">Receive-From (Incoming receipts from this account)</option>
-            <option value="BOTH">Both (Outgoing and incoming)</option>
-          </select>
+        <div className="space-y-2">
+          <Label htmlFor="iban">IBAN</Label>
+          <Input id="iban" {...register('iban')} />
         </div>
       </div>
 
-      {/* Documents */}
-      <div className="space-y-2">
-        <Label className="text-sm font-medium">
-          Supporting Documents <span className="text-destructive">*</span>
-        </Label>
-        <p className="text-xs text-muted-foreground">
-          All three documents are required before this request can be verified.
-        </p>
-        <div className="space-y-2 rounded-md border p-3">
-          <div>
-            <FileUploadField
-              label="Cancelled Cheque"
-              documentCode="CANCELLED_CHEQUE"
-              doc={cancelledCheque}
-              onChange={(d) => { setCancelledCheque(d); setDocErrors((prev) => ({ ...prev, CANCELLED_CHEQUE: false })); }}
-            />
-            {docErrors.CANCELLED_CHEQUE && (
-              <p className="mt-0.5 text-xs text-destructive">Cancelled Cheque is required.</p>
-            )}
+      <div className="rounded-md border p-3 space-y-3">
+        <p className="text-sm font-medium">Supporting documents (SoW §6.2 — both required)</p>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="docCancelledCheque">Cancelled cheque / bank letter</Label>
+            <Input placeholder="filename.pdf" {...register('docCancelledChequeFileName')} />
+            <Input placeholder="/uploads/url" {...register('docCancelledChequeUrl')} />
+            {errors.docCancelledChequeUrl && <p className="text-xs text-destructive">{errors.docCancelledChequeUrl.message}</p>}
           </div>
-          <div>
-            <FileUploadField
-              label="Bank Letter"
-              documentCode="BANK_LETTER"
-              doc={bankLetter}
-              onChange={(d) => { setBankLetter(d); setDocErrors((prev) => ({ ...prev, BANK_LETTER: false })); }}
-            />
-            {docErrors.BANK_LETTER && (
-              <p className="mt-0.5 text-xs text-destructive">Bank Letter is required.</p>
-            )}
-          </div>
-          <div>
-            <FileUploadField
-              label="Source Correspondence"
-              documentCode="SOURCE_CORRESPONDENCE"
-              doc={sourceCorrespondence}
-              onChange={(d) => { setSourceCorrespondence(d); setDocErrors((prev) => ({ ...prev, SOURCE_CORRESPONDENCE: false })); }}
-            />
-            {docErrors.SOURCE_CORRESPONDENCE && (
-              <p className="mt-0.5 text-xs text-destructive">Source Correspondence is required.</p>
-            )}
+          <div className="space-y-2">
+            <Label htmlFor="docCounterpartyLetter">Counterparty letter</Label>
+            <Input placeholder="filename.pdf" {...register('docCounterpartyLetterFileName')} />
+            <Input placeholder="/uploads/url" {...register('docCounterpartyLetterUrl')} />
+            {errors.docCounterpartyLetterUrl && <p className="text-xs text-destructive">{errors.docCounterpartyLetterUrl.message}</p>}
           </div>
         </div>
       </div>
 
-      <DialogFooter className="gap-2 pt-2">
-        <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : submitLabel}
-        </Button>
+      <DialogFooter>
+        <Button type="submit" disabled={submitting}>{submitting ? 'Submitting…' : 'Submit for verification'}</Button>
       </DialogFooter>
     </form>
   );
 }
 
-// ─── copy from verified dialog ────────────────────────────────────────────────
+// ---------------------------------------------------------------------
+// Verify / Approve / Reject dialogs
+// ---------------------------------------------------------------------
 
-interface CopyFromVerifiedDialogProps {
-  source: BeneficiaryAccount;
-  counterparties: Counterparty[];
-  employees: Employee[];
-  submitting: boolean;
-  onSubmit: (counterpartyId?: string, employeeId?: string) => void;
-  onClose: () => void;
+const verifySchema = z.object({
+  callbackEvidence: z.string().min(10, 'Capture the verification call details (when, with whom, what was confirmed).'),
+  verificationNotes: z.string().optional(),
+});
+type VerifyFormData = z.infer<typeof verifySchema>;
+
+function VerifyDialog({
+  open, onOpenChange, cr, onSubmit, submitting,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  cr: BeneficiaryAccountChangeRequest | null;
+  onSubmit: (d: VerifyFormData) => void;
+  submitting?: boolean;
+}): React.ReactElement {
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<VerifyFormData>({
+    resolver: zodResolver(verifySchema),
+  });
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Verify change request</DialogTitle>
+          <p className="text-xs text-muted-foreground">{cr?.changeType} · raised by {cr?.requestedByUser?.fullName ?? cr?.requestedBy}</p>
+        </DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="callbackEvidence">Callback evidence <span className="text-destructive">*</span></Label>
+            <Textarea
+              id="callbackEvidence"
+              rows={4}
+              placeholder="Called Acme CFO on +91-... at 14:35, confirmed account details against the bank letter."
+              {...register('callbackEvidence')}
+            />
+            {errors.callbackEvidence && <p className="text-xs text-destructive">{errors.callbackEvidence.message}</p>}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="verificationNotes">Verification notes</Label>
+            <Textarea id="verificationNotes" rows={2} {...register('verificationNotes')} />
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={submitting}>{submitting ? 'Verifying…' : 'Mark verified'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
-function CopyFromVerifiedDialog({
-  source,
-  counterparties,
-  employees,
-  submitting,
-  onSubmit,
-  onClose,
-}: CopyFromVerifiedDialogProps): React.ReactElement {
-  const [ownerType, setOwnerType] = useState<'counterparty' | 'employee'>('counterparty');
-  const [counterpartyId, setCounterpartyId] = useState('');
-  const [employeeId, setEmployeeId] = useState('');
+const approveSchema = z.object({
+  coolingOffOverride: z.boolean().optional(),
+  coolingOffOverrideReason: z.string().optional(),
+});
+type ApproveFormData = z.infer<typeof approveSchema>;
 
-  const canSubmit = ownerType === 'counterparty' ? !!counterpartyId : !!employeeId;
-
+function ApproveDialog({
+  open, onOpenChange, cr, onSubmit, submitting,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  cr: BeneficiaryAccountChangeRequest | null;
+  onSubmit: (d: ApproveFormData) => void;
+  submitting?: boolean;
+}): React.ReactElement {
+  const { register, handleSubmit, watch, reset } = useForm<ApproveFormData>({
+    resolver: zodResolver(approveSchema),
+    defaultValues: { coolingOffOverride: false },
+  });
+  const overrideFlag = watch('coolingOffOverride');
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
+      <DialogContent>
         <DialogHeader>
-          <DialogTitle>Copy Account to Another Owner</DialogTitle>
+          <DialogTitle>Approve change request</DialogTitle>
+          <p className="text-xs text-muted-foreground">{cr?.changeType} · verified by {cr?.verifiedByUser?.fullName ?? cr?.verifiedBy}</p>
         </DialogHeader>
-        <div className="space-y-4 py-2">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Copies <span className="font-medium">{source.accountHolderName}</span> ({source.accountNumber})
-            to a new owner. The copy will be immediately ACTIVE with no cooling-off period (§6.3 same-group rule).
+            Default cooling-off is 24 hours (§6.3). The beneficiary becomes payable once it elapses.
           </p>
-          <div className="space-y-1.5">
-            <Label>Target Owner Type</Label>
-            <div className="flex gap-4">
-              <label className="flex cursor-pointer items-center gap-1.5 text-sm">
-                <input
-                  type="radio"
-                  name="copyOwnerType"
-                  value="counterparty"
-                  checked={ownerType === 'counterparty'}
-                  onChange={() => { setOwnerType('counterparty'); setEmployeeId(''); }}
-                />
-                Counterparty
-              </label>
-              <label className="flex cursor-pointer items-center gap-1.5 text-sm">
-                <input
-                  type="radio"
-                  name="copyOwnerType"
-                  value="employee"
-                  checked={ownerType === 'employee'}
-                  onChange={() => { setOwnerType('employee'); setCounterpartyId(''); }}
-                />
-                Employee
-              </label>
-            </div>
-          </div>
-          {ownerType === 'counterparty' ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="copyCpId">Target Counterparty *</Label>
-              <select
-                id="copyCpId"
-                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                value={counterpartyId}
-                onChange={(e) => setCounterpartyId(e.target.value)}
-              >
-                <option value="">— select counterparty —</option>
-                {counterparties.filter((c) => c.isActive).map((c) => (
-                  <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label htmlFor="copyEmpId">Target Employee *</Label>
-              <select
-                id="copyEmpId"
-                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                value={employeeId}
-                onChange={(e) => setEmployeeId(e.target.value)}
-              >
-                <option value="">— select employee —</option>
-                {employees.filter((e) => e.isActive).map((e) => (
-                  <option key={e.id} value={e.id}>{e.fullName} ({e.employeeCode})</option>
-                ))}
-              </select>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('coolingOffOverride')} />
+            Override cooling-off (account becomes payable immediately)
+          </label>
+          {overrideFlag && (
+            <div className="space-y-2">
+              <Label htmlFor="coolingOffOverrideReason">Override reason <span className="text-destructive">*</span></Label>
+              <Textarea id="coolingOffOverrideReason" rows={2} placeholder="Urgent payment to existing trusted counterparty …" {...register('coolingOffOverrideReason')} />
             </div>
           )}
-        </div>
-        <DialogFooter className="gap-2">
-          <DialogClose asChild>
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
-          </DialogClose>
-          <Button
-            disabled={submitting || !canSubmit}
-            onClick={() =>
-              onSubmit(
-                ownerType === 'counterparty' ? counterpartyId : undefined,
-                ownerType === 'employee' ? employeeId : undefined,
-              )
-            }
-          >
-            <Copy className="mr-1.5 h-4 w-4" />
-            {submitting ? 'Copying…' : 'Copy Account'}
-          </Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button type="submit" disabled={submitting}>{submitting ? 'Approving…' : 'Approve'}</Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ─── override cooling-off dialog ──────────────────────────────────────────────
+const rejectSchema = z.object({
+  reason: z.string().min(5, 'Reason required'),
+});
+type RejectFormData = z.infer<typeof rejectSchema>;
 
-interface OverrideCoolingOffDialogProps {
-  account: BeneficiaryAccount;
-  submitting: boolean;
-  onSubmit: (reason: string) => void;
-  onClose: () => void;
-}
-
-function OverrideCoolingOffDialog({
-  account,
-  submitting,
-  onSubmit,
-  onClose,
-}: OverrideCoolingOffDialogProps): React.ReactElement {
-  const [reason, setReason] = useState('');
-
+function RejectDialog({
+  open, onOpenChange, onSubmit, submitting,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSubmit: (d: RejectFormData) => void;
+  submitting?: boolean;
+}): React.ReactElement {
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<RejectFormData>({
+    resolver: zodResolver(rejectSchema),
+  });
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Override Cooling-off Period</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 py-2">
-          <p className="text-sm text-muted-foreground">
-            Force-activates <span className="font-medium">{account.accountHolderName}</span> ({account.accountNumber})
-            immediately, bypassing the cooling-off window
-            {account.coolingOffUntil && (
-              <> (expires {new Date(account.coolingOffUntil).toLocaleString()})</>
-            )}.
-            This action is logged to the audit trail (§6.3).
-          </p>
-          <div className="space-y-1.5">
-            <Label htmlFor="overrideReason">Justification *</Label>
-            <Textarea
-              id="overrideReason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="State the business reason for bypassing the cooling-off period…"
-              rows={3}
-            />
+    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Reject change request</DialogTitle></DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="reason">Reason <span className="text-destructive">*</span></Label>
+            <Textarea id="reason" rows={3} {...register('reason')} />
+            {errors.reason && <p className="text-xs text-destructive">{errors.reason.message}</p>}
           </div>
-        </div>
-        <DialogFooter className="gap-2">
-          <DialogClose asChild>
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
-          </DialogClose>
-          <Button
-            variant="destructive"
-            disabled={submitting || !reason.trim()}
-            onClick={() => onSubmit(reason.trim())}
-          >
-            <Unlock className="mr-1.5 h-4 w-4" />
-            {submitting ? 'Overriding…' : 'Force Activate'}
-          </Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button type="submit" variant="destructive" disabled={submitting}>
+              {submitting ? 'Rejecting…' : 'Reject'}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ─── page ─────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------
 
 export default function BeneficiaryAccountsPage(): React.ReactElement {
-  const [page, setPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState<BeneficiaryAccountStatus | ''>('');
-  const [ownerTypeFilter, setOwnerTypeFilter] = useState<'counterparty' | 'employee' | ''>('');
-  const [createOpen, setCreateOpen] = useState(false);
-  const [modifying, setModifying] = useState<BeneficiaryAccount | null>(null);
-  const [copying, setCopying] = useState<BeneficiaryAccount | null>(null);
-  const [overriding, setOverriding] = useState<BeneficiaryAccount | null>(null);
-
+  const [bPage, setBPage] = useState(1);
+  const [bSearch, setBSearch] = useState('');
+  const [crPage, setCrPage] = useState(1);
+  const [crStatus, setCrStatus] = useState<string>('');
+  const [addOpen, setAddOpen] = useState(false);
+  const [verifying, setVerifying] = useState<BeneficiaryAccountChangeRequest | null>(null);
+  const [approving, setApproving] = useState<BeneficiaryAccountChangeRequest | null>(null);
+  const [rejecting, setRejecting] = useState<BeneficiaryAccountChangeRequest | null>(null);
   const notify = useNotify();
   const qc = useQueryClient();
 
-  const params = useMemo(() => {
-    const u = new URLSearchParams({ page: String(page), limit: '20' });
-    if (statusFilter) u.set('status', statusFilter);
-    if (ownerTypeFilter === 'counterparty') u.set('hasCounterparty', 'true');
-    if (ownerTypeFilter === 'employee') u.set('hasEmployee', 'true');
+  const beneParams = useMemo(() => {
+    const u = new URLSearchParams({ page: String(bPage), limit: '20' });
+    if (bSearch) u.set('search', bSearch);
     return u.toString();
-  }, [page, statusFilter, ownerTypeFilter]);
+  }, [bPage, bSearch]);
+  const crParams = useMemo(() => {
+    const u = new URLSearchParams({ page: String(crPage), limit: '20' });
+    if (crStatus) u.set('status', crStatus);
+    return u.toString();
+  }, [crPage, crStatus]);
 
-  // Main data
-  const { data, isLoading } = useQuery({
-    queryKey: [KEY, params],
-    queryFn: () => api.get<Paginated<BeneficiaryAccount>>(`/beneficiary-accounts?${params}`),
-  });
-
-  // Reference data
-  const { data: counterpartiesData } = useQuery({
-    queryKey: ['counterparties', 'all'],
-    queryFn: () => api.get<Paginated<Counterparty>>('/counterparties?page=1&limit=100'),
-  });
-  const { data: employeesData } = useQuery({
-    queryKey: ['employees', 'all'],
-    queryFn: () => api.get<Paginated<Employee>>('/employees?page=1&limit=100'),
-  });
-  const { data: banksData } = useQuery({
-    queryKey: ['banks', 'all'],
-    queryFn: () => api.get<Paginated<Bank>>('/banks?page=1&limit=100'),
-  });
-  const { data: currenciesData } = useQuery({
-    queryKey: ['currencies', 'all'],
-    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=100'),
-  });
-  const { data: sanctionedData } = useQuery({
-    queryKey: ['sanctioned-countries', 'all'],
-    queryFn: () =>
-      api.get<Paginated<SanctionedCountry>>('/sanctioned-countries?page=1&limit=100'),
+  const { data: benes, isLoading: bLoading } = useQuery({
+    queryKey: [BENE_KEY, beneParams],
+    queryFn: () => api.get<Paginated<BeneficiaryAccount>>(`/beneficiary-accounts?${beneParams}`),
   });
 
-  const sanctionedCodes = useMemo<Set<string>>(
-    () =>
-      new Set(
-        (sanctionedData?.data ?? [])
-          .filter((s) => s.isActive)
-          .map((s) => s.countryCode.toUpperCase()),
-      ),
-    [sanctionedData],
-  );
+  const { data: crs, isLoading: crLoading } = useQuery({
+    queryKey: [CR_KEY, crParams],
+    queryFn: () => api.get<Paginated<BeneficiaryAccountChangeRequest>>(`/beneficiary-accounts/change-requests/list?${crParams}`),
+  });
 
-  const counterparties = counterpartiesData?.data ?? [];
-  const employees = employeesData?.data ?? [];
-  const banks = banksData?.data ?? [];
-  const currencies = currenciesData?.data ?? [];
-
-  // Mutations
-  const createMutation = useMutation({
-    mutationFn: ({
-      proposedData,
-      documents,
-    }: {
-      proposedData: ProposedData;
-      documents: DocumentDraft[];
-    }) =>
-      api.post('/beneficiary-accounts/change-requests', {
-        changeType: 'ADD',
-        proposedData,
-        documents,
-      }),
+  const createMut = useMutation({
+    mutationFn: (d: AddFormData) => api.post('/beneficiary-accounts/change-requests', {
+      changeType: 'ADD' as const,
+      proposedData: {
+        counterpartyId: d.ownerType === 'COUNTERPARTY' ? d.counterpartyId || undefined : undefined,
+        employeeId: d.ownerType === 'EMPLOYEE' ? d.employeeId || undefined : undefined,
+        accountHolderName: d.accountHolderName,
+        accountNumber: d.accountNumber,
+        bankId: d.bankId,
+        branchName: d.branchName || undefined,
+        swiftBic: d.swiftBic || undefined,
+        iban: d.iban || undefined,
+        currencyId: d.currencyId,
+        countryId: d.countryId,
+        accountDirection: d.accountDirection,
+      },
+      documents: [
+        { code: 'CANCELLED_CHEQUE', label: 'Cancelled cheque / bank letter', fileName: d.docCancelledChequeFileName, fileUrl: d.docCancelledChequeUrl },
+        { code: 'COUNTERPARTY_LETTER', label: 'Counterparty letter', fileName: d.docCounterpartyLetterFileName, fileUrl: d.docCounterpartyLetterUrl },
+      ],
+    }),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setCreateOpen(false);
-      notify.success('Change request submitted');
+      void qc.invalidateQueries({ queryKey: [CR_KEY] });
+      setAddOpen(false);
+      notify.success('Change request submitted for verification');
     },
-    onError: (err: Error) =>
-      notify.error('Submit failed'),
+    onError: (e: Error) => notify.error('Submit failed', e),
   });
 
-  const modifyMutation = useMutation({
-    mutationFn: ({
-      proposedData,
-      documents,
-    }: {
-      proposedData: ProposedData;
-      documents: DocumentDraft[];
-    }) =>
-      api.post('/beneficiary-accounts/change-requests', {
-        changeType: 'MODIFY',
-        beneficiaryAccountId: modifying?.id,
-        proposedData,
-        documents,
-      }),
+  const verifyMut = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: VerifyFormData }) =>
+      api.post(`/beneficiary-accounts/change-requests/${id}/verify`, body),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setModifying(null);
-      notify.success('Modify change request submitted');
+      void qc.invalidateQueries({ queryKey: [CR_KEY] });
+      setVerifying(null);
+      notify.success('Verified');
     },
-    onError: (err: Error) =>
-      notify.error('Submit failed'),
+    onError: (e: Error) => notify.error('Verify failed', e),
   });
 
-  const deactivateMutation = useMutation({
-    mutationFn: (id: string) =>
-      api.post('/beneficiary-accounts/change-requests', {
-        changeType: 'DEACTIVATE',
-        beneficiaryAccountId: id,
-        proposedData: {},
-        documents: [],
-      }),
+  const approveMut = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: ApproveFormData }) =>
+      api.post(`/beneficiary-accounts/change-requests/${id}/approve`, body),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      notify.success('Deactivate change request submitted');
+      void qc.invalidateQueries({ queryKey: [CR_KEY] });
+      void qc.invalidateQueries({ queryKey: [BENE_KEY] });
+      setApproving(null);
+      notify.success('Approved — beneficiary in cooling-off window');
     },
-    onError: (err: Error) =>
-      notify.error('Submit failed'),
+    onError: (e: Error) => notify.error('Approve failed', e),
   });
 
-  const activateMutation = useMutation({
-    mutationFn: (id: string) =>
-      api.post(`/beneficiary-accounts/${id}/activate`),
+  const rejectMut = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: RejectFormData }) =>
+      api.post(`/beneficiary-accounts/change-requests/${id}/reject`, body),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      notify.success('Account activated');
+      void qc.invalidateQueries({ queryKey: [CR_KEY] });
+      setRejecting(null);
+      notify.success('Rejected');
     },
-    onError: (err: Error) =>
-      notify.error('Activate failed'),
+    onError: (e: Error) => notify.error('Reject failed', e),
   });
-
-  const copyMutation = useMutation({
-    mutationFn: ({
-      id,
-      counterpartyId,
-      employeeId,
-    }: {
-      id: string;
-      counterpartyId?: string;
-      employeeId?: string;
-    }) => api.post(`/beneficiary-accounts/${id}/copy`, { counterpartyId, employeeId }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setCopying(null);
-      notify.success('Account copied — now active');
-    },
-    onError: (err: Error) =>
-      notify.error('Copy failed'),
-  });
-
-  const overrideMutation = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-      api.post(`/beneficiary-accounts/${id}/override-cooling-off`, { reason }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [KEY] });
-      setOverriding(null);
-      notify.success('Cooling-off overridden — account now active');
-    },
-    onError: (err: Error) =>
-      notify.error('Override failed'),
-  });
-
-  function canActivate(account: BeneficiaryAccount): boolean {
-    if (account.status !== 'PENDING_ACTIVATION') return false;
-    if (!account.coolingOffUntil) return true;
-    return new Date(account.coolingOffUntil) < new Date();
-  }
-
-  function getOwnerName(account: BeneficiaryAccount): string {
-    if (account.counterparty) return account.counterparty.name;
-    if (account.employee) return account.employee.fullName;
-    return '—';
-  }
-
-  function buildModifyInitial(account: BeneficiaryAccount): Partial<ProposedData> {
-    return {
-      counterpartyId: account.counterpartyId ?? undefined,
-      employeeId: account.employeeId ?? undefined,
-      accountHolderName: account.accountHolderName,
-      accountNumber: account.accountNumber,
-      bankId: account.bankId,
-      bankName: account.bankName ?? undefined,
-      branchName: account.branchName ?? undefined,
-      swiftBic: account.swiftBic ?? undefined,
-      iban: account.iban ?? undefined,
-      currencyId: account.currencyId,
-      countryCode: account.countryCode,
-    };
-  }
 
   return (
     <div>
       <PageHeader
         title="Beneficiary Accounts"
-        description="Manage beneficiary bank accounts for counterparties and employees. All changes are processed via change requests and subject to verification."
+        description="Master of payable bank accounts (SoW §6). New accounts and modifications flow through the maker-checker change-request workflow with a cooling-off window."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" /> New Account
-              </Button>
+              <Button><Plus className="mr-2 h-4 w-4" /> New beneficiary (change request)</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-3xl">
               <DialogHeader>
-                <DialogTitle>New Beneficiary Account — ADD Change Request</DialogTitle>
+                <DialogTitle>Propose new beneficiary</DialogTitle>
+                <p className="text-xs text-muted-foreground">§6.2 — submits a change request for independent verification.</p>
               </DialogHeader>
-              <AccountForm
-                counterparties={counterparties}
-                employees={employees}
-                banks={banks}
-                currencies={currencies}
-                submitting={createMutation.isPending}
-                submitLabel="Submit ADD Request"
-                onSubmit={(proposedData, documents) =>
-                  createMutation.mutate({ proposedData, documents })
-                }
-                onCancel={() => setCreateOpen(false)}
-              />
+              <AddChangeRequestForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
             </DialogContent>
           </Dialog>
         }
       />
 
-      <Card>
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-3 border-b p-4">
-          <select
-            className="h-9 rounded-md border bg-background px-2 text-sm"
-            value={statusFilter}
-            onChange={(e) => {
-              setPage(1);
-              setStatusFilter(e.target.value as BeneficiaryAccountStatus | '');
-            }}
-          >
-            <option value="">All statuses</option>
-            <option value="ACTIVE">Active</option>
-            <option value="PENDING_ACTIVATION">Pending Activation</option>
-            <option value="INACTIVE">Inactive</option>
-          </select>
-
-          <select
-            className="h-9 rounded-md border bg-background px-2 text-sm"
-            value={ownerTypeFilter}
-            onChange={(e) => {
-              setPage(1);
-              setOwnerTypeFilter(e.target.value as 'counterparty' | 'employee' | '');
-            }}
-          >
-            <option value="">All owners</option>
-            <option value="counterparty">Counterparty</option>
-            <option value="employee">Employee</option>
-          </select>
+      {/* Master list */}
+      <Card className="mb-6">
+        <div className="flex items-center gap-2 border-b p-4">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by holder, account number, IBAN"
+            value={bSearch}
+            onChange={(e) => { setBPage(1); setBSearch(e.target.value); }}
+            className="max-w-md"
+          />
         </div>
-
-        {/* Table */}
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Owner</TableHead>
-              <TableHead>Account Holder</TableHead>
+              <TableHead>Holder</TableHead>
+              <TableHead>Account #</TableHead>
               <TableHead>Bank</TableHead>
-              <TableHead>Account Number</TableHead>
-              <TableHead className="w-20">Currency</TableHead>
-              <TableHead className="w-20">Country</TableHead>
-              <TableHead className="w-28">Direction</TableHead>
-              <TableHead className="w-36">Status</TableHead>
-              <TableHead className="w-36">Cooling-off Until</TableHead>
-              <TableHead className="w-48 text-right">Actions</TableHead>
+              <TableHead>Country</TableHead>
+              <TableHead>Currency</TableHead>
+              <TableHead>Direction</TableHead>
+              <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={10} className="py-12 text-center text-muted-foreground">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : data && data.data.length > 0 ? (
-              data.data.map((account) => (
-                <TableRow key={account.id}>
-                  <TableCell className="text-sm">
-                    <div className="font-medium">{getOwnerName(account)}</div>
+            {bLoading ? (
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : benes && benes.data.length > 0 ? benes.data.map((b) => {
+              const sanctioned = b.country?.isSanctioned;
+              const inCoolingOff = b.coolingOffUntil && new Date(b.coolingOffUntil).getTime() > Date.now();
+              return (
+                <TableRow key={b.id}>
+                  <TableCell>
+                    <div className="font-medium inline-flex items-center gap-1">
+                      {b.accountHolderName}
+                      {sanctioned && <ShieldAlert className="h-3 w-3 text-amber-600" />}
+                    </div>
                     <div className="text-xs text-muted-foreground">
-                      {account.counterpartyId ? 'Counterparty' : 'Employee'}
+                      {b.counterparty?.legalName ?? b.employee?.fullName ?? '—'}
                     </div>
                   </TableCell>
-                  <TableCell className="text-sm">{account.accountHolderName}</TableCell>
-                  <TableCell className="text-sm">
-                    <div>{account.bank?.name ?? account.bankName ?? '—'}</div>
-                    {account.branchName && (
-                      <div className="text-xs text-muted-foreground">{account.branchName}</div>
-                    )}
-                  </TableCell>
+                  <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{b.accountNumber}</code></TableCell>
+                  <TableCell>{b.bank?.name ?? '—'}</TableCell>
+                  <TableCell>{b.country?.code ?? '—'}</TableCell>
+                  <TableCell>{b.currency?.code ?? '—'}</TableCell>
+                  <TableCell><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{b.accountDirection}</span></TableCell>
                   <TableCell>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
-                      {account.accountNumber}
-                    </code>
-                    {account.iban && (
-                      <div className="mt-0.5 text-[10px] text-muted-foreground font-mono">
-                        {account.iban}
+                    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${BENE_STATUS_STYLES[b.status]}`}>
+                      {b.status}
+                    </span>
+                    {inCoolingOff && (
+                      <div className="text-xs text-amber-700 mt-1 inline-flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" />
+                        cooling-off until {new Date(b.coolingOffUntil!).toLocaleString()}
                       </div>
                     )}
                   </TableCell>
+                </TableRow>
+              );
+            }) : (
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No beneficiary accounts yet.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+        {benes && <DataTablePagination page={benes.page} totalPages={benes.totalPages} total={benes.total} limit={benes.limit} onPageChange={setBPage} />}
+      </Card>
+
+      {/* Change-request queue */}
+      <Card>
+        <div className="flex items-center gap-2 border-b p-4">
+          <p className="text-sm font-medium">Change requests</p>
+          <div className="ml-auto w-40">
+            <Select
+              options={[
+                { label: 'All', value: '' },
+                { label: 'Pending verification', value: 'PENDING_VERIFICATION' },
+                { label: 'Verified', value: 'VERIFIED' },
+                { label: 'Approved', value: 'APPROVED' },
+                { label: 'Rejected', value: 'REJECTED' },
+                { label: 'Cancelled', value: 'CANCELLED' },
+              ]}
+              value={crStatus}
+              onChange={(e) => { setCrPage(1); setCrStatus(e.target.value); }}
+            />
+          </div>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Type</TableHead>
+              <TableHead>Holder</TableHead>
+              <TableHead>Account #</TableHead>
+              <TableHead>Requested by</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right w-72">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {crLoading ? (
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : crs && crs.data.length > 0 ? crs.data.map((cr) => {
+              const data = (cr.proposedData ?? {}) as Record<string, string>;
+              return (
+                <TableRow key={cr.id}>
+                  <TableCell><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{cr.changeType}</span></TableCell>
+                  <TableCell className="text-sm">{data.accountHolderName ?? cr.beneficiaryAccount?.accountHolderName ?? '—'}</TableCell>
+                  <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{data.accountNumber ?? cr.beneficiaryAccount?.accountNumber ?? '—'}</code></TableCell>
+                  <TableCell className="text-sm">{cr.requestedByUser?.fullName ?? '—'}</TableCell>
                   <TableCell>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-semibold">
-                      {account.currency?.code ?? '—'}
-                    </code>
-                  </TableCell>
-                  <TableCell>
-                    <span className="font-mono text-sm">{account.countryCode}</span>
-                    <SanctionIcon
-                      countryCode={account.countryCode}
-                      sanctionedCodes={sanctionedCodes}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${
-                      account.accountDirection === 'PAY_TO'
-                        ? 'bg-blue-50 text-blue-700'
-                        : account.accountDirection === 'RECEIVE_FROM'
-                          ? 'bg-green-50 text-green-700'
-                          : 'bg-purple-50 text-purple-700'
-                    }`}>
-                      {account.accountDirection === 'PAY_TO' ? 'Pay-To' : account.accountDirection === 'RECEIVE_FROM' ? 'Receive-From' : 'Both'}
+                    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${CR_STATUS_STYLES[cr.status]}`}>
+                      {cr.status}
                     </span>
                   </TableCell>
-                  <TableCell>
-                    <StatusBadge status={account.status} />
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {account.coolingOffUntil ? (
-                      <span
-                        className={
-                          new Date(account.coolingOffUntil) > new Date()
-                            ? 'text-amber-600 dark:text-amber-400'
-                            : 'text-muted-foreground'
-                        }
-                      >
-                        <Clock className="mr-1 inline-block h-3 w-3" />
-                        {new Date(account.coolingOffUntil).toLocaleDateString()}
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {canActivate(account) && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-xs text-emerald-700 dark:text-emerald-400 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-                          title="Activate account"
-                          disabled={activateMutation.isPending}
-                          onClick={() => activateMutation.mutate(account.id)}
-                        >
-                          <Zap className="mr-1 h-3 w-3" />
-                          Activate
-                        </Button>
+                    <div className="inline-flex items-center gap-1 whitespace-nowrap">
+                      {cr.status === 'PENDING_VERIFICATION' && (
+                        <>
+                          <Button size="sm" variant="outline" onClick={() => setVerifying(cr)}>
+                            <CheckCircle2 className="mr-1 h-4 w-4" /> Verify
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setRejecting(cr)}>
+                            <XCircle className="mr-1 h-4 w-4 text-destructive" /> Reject
+                          </Button>
+                        </>
                       )}
-                      {account.status === 'PENDING_ACTIVATION' && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-xs text-orange-700 border-orange-300 hover:bg-orange-50"
-                          title="Force activate (override cooling-off)"
-                          onClick={() => setOverriding(account)}
-                        >
-                          <Unlock className="mr-1 h-3 w-3" />
-                          Force
-                        </Button>
-                      )}
-                      {account.status === 'ACTIVE' && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7"
-                          title="Copy to another owner"
-                          onClick={() => setCopying(account)}
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        title="Modify"
-                        onClick={() => setModifying(account)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      {account.status === 'ACTIVE' && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7"
-                          title="Deactivate"
-                          disabled={deactivateMutation.isPending}
-                          onClick={() => deactivateMutation.mutate(account.id)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
+                      {cr.status === 'VERIFIED' && (
+                        <>
+                          <Button size="sm" onClick={() => setApproving(cr)}>
+                            <CheckCircle2 className="mr-1 h-4 w-4" /> Approve
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setRejecting(cr)}>
+                            <XCircle className="mr-1 h-4 w-4 text-destructive" /> Reject
+                          </Button>
+                        </>
                       )}
                     </div>
                   </TableCell>
                 </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={10} className="py-12 text-center text-muted-foreground">
-                  No beneficiary accounts found.
-                </TableCell>
-              </TableRow>
+              );
+            }) : (
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No change requests.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-
-        {data && (
-          <DataTablePagination
-            page={data.page}
-            totalPages={data.totalPages}
-            total={data.total}
-            limit={data.limit}
-            onPageChange={setPage}
-          />
-        )}
+        {crs && <DataTablePagination page={crs.page} totalPages={crs.totalPages} total={crs.total} limit={crs.limit} onPageChange={setCrPage} />}
       </Card>
 
-      {/* Modify dialog */}
-      <Dialog open={!!modifying} onOpenChange={(o) => !o && setModifying(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Modify Beneficiary Account — MODIFY Change Request</DialogTitle>
-          </DialogHeader>
-          {modifying && (
-            <AccountForm
-              initialData={buildModifyInitial(modifying)}
-              counterparties={counterparties}
-              employees={employees}
-              banks={banks}
-              currencies={currencies}
-              submitting={modifyMutation.isPending}
-              submitLabel="Submit MODIFY Request"
-              onSubmit={(proposedData, documents) =>
-                modifyMutation.mutate({ proposedData, documents })
-              }
-              onCancel={() => setModifying(null)}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* §6.3 — Copy from Verified dialog */}
-      {copying && (
-        <CopyFromVerifiedDialog
-          source={copying}
-          counterparties={counterparties}
-          employees={employees}
-          submitting={copyMutation.isPending}
-          onSubmit={(counterpartyId, employeeId) =>
-            copyMutation.mutate({ id: copying.id, counterpartyId, employeeId })
-          }
-          onClose={() => setCopying(null)}
-        />
-      )}
-
-      {/* §6.3 — Override cooling-off dialog */}
-      {overriding && (
-        <OverrideCoolingOffDialog
-          account={overriding}
-          submitting={overrideMutation.isPending}
-          onSubmit={(reason) => overrideMutation.mutate({ id: overriding.id, reason })}
-          onClose={() => setOverriding(null)}
-        />
-      )}
+      <VerifyDialog
+        open={!!verifying}
+        onOpenChange={(o) => !o && setVerifying(null)}
+        cr={verifying}
+        submitting={verifyMut.isPending}
+        onSubmit={(d) => verifying && verifyMut.mutate({ id: verifying.id, body: d })}
+      />
+      <ApproveDialog
+        open={!!approving}
+        onOpenChange={(o) => !o && setApproving(null)}
+        cr={approving}
+        submitting={approveMut.isPending}
+        onSubmit={(d) => approving && approveMut.mutate({ id: approving.id, body: d })}
+      />
+      <RejectDialog
+        open={!!rejecting}
+        onOpenChange={(o) => !o && setRejecting(null)}
+        submitting={rejectMut.isPending}
+        onSubmit={(d) => rejecting && rejectMut.mutate({ id: rejecting.id, body: d })}
+      />
     </div>
   );
 }

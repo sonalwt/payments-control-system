@@ -35,7 +35,6 @@ export class EmployeesService {
       fullName: dto.fullName,
       workEmail: dto.workEmail,
       countryOfEmploymentId: dto.countryOfEmploymentId,
-      departmentId: dto.departmentId,
       startDate: dto.startDate ?? null,
       endDate: dto.endDate ?? null,
       nationalId: dto.nationalId ?? null,
@@ -56,7 +55,6 @@ export class EmployeesService {
     const qb = this.repo
       .createQueryBuilder('e')
       .leftJoinAndSelect('e.countryOfEmployment', 'countryOfEmployment')
-      .leftJoinAndSelect('e.department', 'department')
       .orderBy('e.fullName', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -73,7 +71,7 @@ export class EmployeesService {
   async findOne(id: string): Promise<Employee> {
     const e = await this.repo.findOne({
       where: { id },
-      relations: ['countryOfEmployment', 'department'],
+      relations: ['countryOfEmployment'],
     });
     if (!e) throw new NotFoundException(`Employee ${id} not found`);
     return e;
