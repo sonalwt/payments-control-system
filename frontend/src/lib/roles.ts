@@ -12,6 +12,7 @@ export const RoleCode = {
   CHECKER: 'CHECKER',
   APPROVER_1: 'APPROVER_1',
   APPROVER_2: 'APPROVER_2',
+  APPROVER: 'APPROVER',
   COUNTERPARTY: 'COUNTERPARTY',
 } as const;
 

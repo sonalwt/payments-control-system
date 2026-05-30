@@ -1,7 +1,6 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Country } from '../countries/country.entity';
-import { Department } from '../departments/department.entity';
 
 @Entity({ name: 'employees' })
 export class Employee extends BaseEntity {
@@ -20,13 +19,6 @@ export class Employee extends BaseEntity {
   @ManyToOne(() => Country)
   @JoinColumn({ name: 'country_of_employment_id' })
   countryOfEmployment?: Country;
-
-  @Column({ name: 'department_id', type: 'uuid' })
-  departmentId!: string;
-
-  @ManyToOne(() => Department)
-  @JoinColumn({ name: 'department_id' })
-  department?: Department;
 
   @Column({ name: 'start_date', type: 'date', nullable: true })
   startDate?: string | null;

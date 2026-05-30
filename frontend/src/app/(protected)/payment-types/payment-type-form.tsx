@@ -2,9 +2,11 @@
 
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
 import { Plus, Trash2 } from 'lucide-react';
-import type { PaymentType } from '@/types/domain';
+import { api } from '@/lib/api';
+import type { Paginated, PaymentCategory, PaymentType, Role } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +28,9 @@ export const paymentTypeSchema = z.object({
     .regex(/^[A-Z][A-Z0-9_]*$/, 'UPPER_SNAKE_CASE'),
   name: z.string().min(2).max(100),
   description: z.string().optional().or(z.literal('')),
+  paymentCategoryId: z.string().uuid().optional().or(z.literal('')),
+  makerRoleId: z.string().uuid().optional().or(z.literal('')),
+  checkerRoleId: z.string().uuid().optional().or(z.literal('')),
   direction: z.enum(['OUTGOING', 'INCOMING']),
   requiresApprovalChain: z.boolean().optional(),
   isBatchBased: z.boolean().optional(),
@@ -59,6 +64,9 @@ export function PaymentTypeForm({
       code: defaultValues?.code ?? '',
       name: defaultValues?.name ?? '',
       description: defaultValues?.description ?? '',
+      paymentCategoryId: defaultValues?.paymentCategoryId ?? '',
+      makerRoleId: defaultValues?.makerRoleId ?? '',
+      checkerRoleId: defaultValues?.checkerRoleId ?? '',
       direction: (defaultValues?.direction ?? 'OUTGOING') as 'OUTGOING' | 'INCOMING',
       requiresApprovalChain: defaultValues?.requiresApprovalChain ?? true,
       isBatchBased: defaultValues?.isBatchBased ?? false,
@@ -80,10 +88,33 @@ export function PaymentTypeForm({
     name: 'documentPolicy',
   });
 
+  const { data: categories } = useQuery({
+    queryKey: ['payment-categories-all'],
+    queryFn: () => api.get<Paginated<PaymentCategory>>('/payment-categories?page=1&limit=200'),
+  });
+  const categoryOptions = (categories?.data ?? [])
+    .filter((c) => c.isActive)
+    .map((c) => ({ label: c.name, value: c.id }));
+
+  const { data: roles } = useQuery({
+    queryKey: ['roles-all'],
+    queryFn: () => api.get<Role[]>('/roles'),
+  });
+  const roleOptions = (roles ?? []).map((r) => ({ label: r.name, value: r.id }));
+
   const isSystem = defaultValues?.isSystem ?? false;
 
+  const submit = handleSubmit((d) =>
+    onSubmit({
+      ...d,
+      paymentCategoryId: d.paymentCategoryId ? d.paymentCategoryId : undefined,
+      makerRoleId: d.makerRoleId ? d.makerRoleId : undefined,
+      checkerRoleId: d.checkerRoleId ? d.checkerRoleId : undefined,
+    }),
+  );
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
+    <form onSubmit={submit} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="code">Code <span className="text-destructive">*</span></Label>
@@ -101,17 +132,51 @@ export function PaymentTypeForm({
         <Label htmlFor="description">Description</Label>
         <Textarea id="description" rows={2} {...register('description')} />
       </div>
-      <div className="space-y-2">
-        <Label htmlFor="direction">Direction <span className="text-destructive">*</span></Label>
-        <Select
-          id="direction"
-          options={[
-            { label: 'Outgoing (payment)', value: 'OUTGOING' },
-            { label: 'Incoming (receipt)', value: 'INCOMING' },
-          ]}
-          {...register('direction')}
-        />
-        {errors.direction && <p className="text-xs text-destructive">{errors.direction.message}</p>}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="paymentCategoryId">Payment category</Label>
+          <Select
+            id="paymentCategoryId"
+            placeholder="Select category"
+            options={[{ label: '— None —', value: '' }, ...categoryOptions]}
+            {...register('paymentCategoryId')}
+          />
+          {errors.paymentCategoryId && <p className="text-xs text-destructive">{errors.paymentCategoryId.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="direction">Direction <span className="text-destructive">*</span></Label>
+          <Select
+            id="direction"
+            options={[
+              { label: 'Outgoing (payment)', value: 'OUTGOING' },
+              { label: 'Incoming (receipt)', value: 'INCOMING' },
+            ]}
+            {...register('direction')}
+          />
+          {errors.direction && <p className="text-xs text-destructive">{errors.direction.message}</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="makerRoleId">Payment request creator role (Maker)</Label>
+          <Select
+            id="makerRoleId"
+            placeholder="Select Maker role"
+            options={[{ label: '— None —', value: '' }, ...roleOptions]}
+            {...register('makerRoleId')}
+          />
+          {errors.makerRoleId && <p className="text-xs text-destructive">{errors.makerRoleId.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="checkerRoleId">Payment request checker role (Maker)</Label>
+          <Select
+            id="checkerRoleId"
+            placeholder="Select Checker role"
+            options={[{ label: '— None —', value: '' }, ...roleOptions]}
+            {...register('checkerRoleId')}
+          />
+          {errors.checkerRoleId && <p className="text-xs text-destructive">{errors.checkerRoleId.message}</p>}
+        </div>
       </div>
 
       <div className="rounded-md border p-3 space-y-2">

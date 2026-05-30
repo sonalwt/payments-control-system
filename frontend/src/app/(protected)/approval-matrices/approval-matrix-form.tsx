@@ -1,6 +1,6 @@
 'use client';
 
-import { useForm, useFieldArray, useWatch, Control } from 'react-hook-form';
+import { useForm, useFieldArray, Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery } from '@tanstack/react-query';
@@ -11,7 +11,6 @@ import type {
   Currency,
   Paginated,
   PaymentType,
-  Role,
   User,
 } from '@/types/domain';
 import { Button } from '@/components/ui/button';
@@ -21,10 +20,11 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { DialogFooter } from '@/components/ui/dialog';
 
+// Steps are now always USER-type, picking from users who hold the APPROVER
+// role. The DB still accepts ROLE-type steps; legacy rows are preserved
+// in storage but the editable UI requires a user pick on save.
 const stepSchema = z.object({
-  approverType: z.enum(['USER', 'ROLE']),
-  approverUserId: z.string().uuid().optional().or(z.literal('')),
-  approverRoleId: z.string().uuid().optional().or(z.literal('')),
+  approverUserId: z.string().uuid('Select an approver user'),
   isOptional: z.boolean().optional(),
 });
 
@@ -54,54 +54,28 @@ interface Props {
 }
 
 function StepRow({
-  control,
   bandIdx,
   stepIdx,
   userOptions,
-  roleOptions,
   register,
   onRemove,
 }: {
-  control: Control<ApprovalMatrixFormData>;
   bandIdx: number;
   stepIdx: number;
   userOptions: { label: string; value: string }[];
-  roleOptions: { label: string; value: string }[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   register: any;
   onRemove: () => void;
 }): React.ReactElement {
-  const approverType = useWatch({
-    control,
-    name: `bands.${bandIdx}.steps.${stepIdx}.approverType`,
-  });
   return (
-    <div className="grid grid-cols-[110px_1fr_auto_auto] items-end gap-2 rounded border p-2">
+    <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2 rounded border p-2">
       <div>
-        <Label className="text-xs">Type</Label>
+        <Label className="text-xs">Approver</Label>
         <Select
-          options={[
-            { label: 'User', value: 'USER' },
-            { label: 'Role', value: 'ROLE' },
-          ]}
-          {...register(`bands.${bandIdx}.steps.${stepIdx}.approverType`)}
+          placeholder="Select approver user"
+          options={userOptions}
+          {...register(`bands.${bandIdx}.steps.${stepIdx}.approverUserId`)}
         />
-      </div>
-      <div>
-        <Label className="text-xs">{approverType === 'ROLE' ? 'Role' : 'User'}</Label>
-        {approverType === 'ROLE' ? (
-          <Select
-            placeholder="Select role"
-            options={roleOptions}
-            {...register(`bands.${bandIdx}.steps.${stepIdx}.approverRoleId`)}
-          />
-        ) : (
-          <Select
-            placeholder="Select user"
-            options={userOptions}
-            {...register(`bands.${bandIdx}.steps.${stepIdx}.approverUserId`)}
-          />
-        )}
       </div>
       <label className="mb-2 flex items-center gap-1 text-xs">
         <input
@@ -122,14 +96,12 @@ function BandSection({
   control,
   bandIdx,
   userOptions,
-  roleOptions,
   register,
   onRemoveBand,
 }: {
   control: Control<ApprovalMatrixFormData>;
   bandIdx: number;
   userOptions: { label: string; value: string }[];
-  roleOptions: { label: string; value: string }[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   register: any;
   onRemoveBand: () => void;
@@ -158,7 +130,7 @@ function BandSection({
             type="button"
             size="sm"
             variant="outline"
-            onClick={() => stepArr.append({ approverType: 'ROLE', approverUserId: '', approverRoleId: '', isOptional: false })}
+            onClick={() => stepArr.append({ approverUserId: '', isOptional: false })}
           >
             <Plus className="mr-1 h-3 w-3" /> Add step
           </Button>
@@ -170,11 +142,9 @@ function BandSection({
             {stepArr.fields.map((f, i) => (
               <StepRow
                 key={f.id}
-                control={control}
                 bandIdx={bandIdx}
                 stepIdx={i}
                 userOptions={userOptions}
-                roleOptions={roleOptions}
                 register={register}
                 onRemove={() => stepArr.remove(i)}
               />
@@ -199,15 +169,12 @@ export function ApprovalMatrixForm({
     queryKey: ['currencies-all'],
     queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
   });
+  // §1.5 / §3 — matrix steps are USER-only, restricted to users who
+  // hold the APPROVER role.
   const { data: users } = useQuery({
-    queryKey: ['users-all'],
-    queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=200'),
+    queryKey: ['users-with-approver-role'],
+    queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=200&roleCode=APPROVER'),
   });
-  const { data: roles } = useQuery({
-    queryKey: ['roles-all'],
-    queryFn: () => api.get<Role[]>('/roles'),
-  });
-
   const paymentTypeOptions = (paymentTypes?.data ?? [])
     .filter((p) => p.isActive)
     .map((p) => ({ label: p.name, value: p.id }));
@@ -217,7 +184,6 @@ export function ApprovalMatrixForm({
   const userOptions = (users?.data ?? [])
     .filter((u) => u.isActive)
     .map((u) => ({ label: `${u.fullName} (${u.email})`, value: u.id }));
-  const roleOptions = (roles ?? []).map((r) => ({ label: r.name, value: r.id }));
 
   const {
     register,
@@ -238,14 +204,14 @@ export function ApprovalMatrixForm({
       bands: defaultValues?.bands?.map((b) => ({
         minAmount: Number(b.minAmount),
         maxAmount: b.maxAmount == null ? '' : Number(b.maxAmount),
+        // Legacy ROLE-type steps load with an empty user pick so the
+        // editor must explicitly choose an APPROVER on save.
         steps: b.steps.map((s) => ({
-          approverType: s.approverType,
-          approverUserId: s.approverUserId ?? '',
-          approverRoleId: s.approverRoleId ?? '',
+          approverUserId: s.approverType === 'USER' ? (s.approverUserId ?? '') : '',
           isOptional: s.isOptional ?? false,
         })),
       })) ?? [
-        { minAmount: 0, maxAmount: '', steps: [{ approverType: 'ROLE', approverUserId: '', approverRoleId: '', isOptional: false }] },
+        { minAmount: 0, maxAmount: '', steps: [{ approverUserId: '', isOptional: false }] },
       ],
     },
   });
@@ -260,10 +226,10 @@ export function ApprovalMatrixForm({
       bands: d.bands.map((b) => ({
         minAmount: Number(b.minAmount),
         maxAmount: b.maxAmount === '' || b.maxAmount == null ? null : Number(b.maxAmount),
+        // Every step is now USER-type; the user is required by the schema.
         steps: b.steps.map((s) => ({
-          approverType: s.approverType,
-          approverUserId: s.approverType === 'USER' ? (s.approverUserId || undefined) : undefined,
-          approverRoleId: s.approverType === 'ROLE' ? (s.approverRoleId || undefined) : undefined,
+          approverType: 'USER' as const,
+          approverUserId: s.approverUserId,
           isOptional: s.isOptional ?? false,
         })),
       })),
@@ -329,7 +295,7 @@ export function ApprovalMatrixForm({
             type="button"
             size="sm"
             variant="outline"
-            onClick={() => bandArr.append({ minAmount: 0, maxAmount: '', steps: [{ approverType: 'ROLE', approverUserId: '', approverRoleId: '', isOptional: false }] })}
+            onClick={() => bandArr.append({ minAmount: 0, maxAmount: '', steps: [{ approverUserId: '', isOptional: false }] })}
           >
             <Plus className="mr-1 h-3 w-3" /> Add band
           </Button>
@@ -344,7 +310,6 @@ export function ApprovalMatrixForm({
                 control={control}
                 bandIdx={i}
                 userOptions={userOptions}
-                roleOptions={roleOptions}
                 register={register}
                 onRemoveBand={() => bandArr.remove(i)}
               />

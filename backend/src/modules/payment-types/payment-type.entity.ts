@@ -1,5 +1,8 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
+import { PaymentCategory } from '../payment-categories/payment-category.entity';
+import { Role } from '../roles/role.entity';
+import { User } from '../users/user.entity';
 
 export type PaymentDirection = 'OUTGOING' | 'INCOMING';
 
@@ -70,4 +73,42 @@ export class PaymentType extends BaseEntity {
 
   @Column({ name: 'effective_to', type: 'date', nullable: true })
   effectiveTo?: string | null;
+
+  @Column({ name: 'payment_category_id', type: 'uuid', nullable: true })
+  paymentCategoryId?: string | null;
+
+  @ManyToOne(() => PaymentCategory)
+  @JoinColumn({ name: 'payment_category_id' })
+  paymentCategory?: PaymentCategory | null;
+
+  @Column({ name: 'maker_role_id', type: 'uuid', nullable: true })
+  makerRoleId?: string | null;
+
+  @ManyToOne(() => Role)
+  @JoinColumn({ name: 'maker_role_id' })
+  makerRole?: Role | null;
+
+  @Column({ name: 'checker_role_id', type: 'uuid', nullable: true })
+  checkerRoleId?: string | null;
+
+  @ManyToOne(() => Role)
+  @JoinColumn({ name: 'checker_role_id' })
+  checkerRole?: Role | null;
+
+  // Named-user maker / checker — used when the authority matrix assigns
+  // a specific individual rather than a team role (e.g. Travel Desk
+  // Maker = Venessa). Either the role FK or the user FK may be set.
+  @Column({ name: 'maker_user_id', type: 'uuid', nullable: true })
+  makerUserId?: string | null;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'maker_user_id' })
+  makerUser?: User | null;
+
+  @Column({ name: 'checker_user_id', type: 'uuid', nullable: true })
+  checkerUserId?: string | null;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'checker_user_id' })
+  checkerUser?: User | null;
 }

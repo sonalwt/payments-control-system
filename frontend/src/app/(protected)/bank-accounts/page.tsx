@@ -36,6 +36,7 @@ const schema = z.object({
   branchCode: z.string().max(30).optional().or(z.literal('')),
   openingBalance: z.coerce.number().min(0).optional(),
   minimumBalance: z.coerce.number().min(0).optional(),
+  remainingBalance: z.coerce.number().min(0).optional(),
   isChairmanDesignated: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
@@ -89,6 +90,10 @@ function BankAccountForm({
       minimumBalance:
         defaultValues?.minimumBalance != null
           ? Number(defaultValues.minimumBalance)
+          : undefined,
+      remainingBalance:
+        defaultValues?.remainingBalance != null
+          ? Number(defaultValues.remainingBalance)
           : undefined,
       isChairmanDesignated: defaultValues?.isChairmanDesignated ?? false,
       isActive: defaultValues?.isActive ?? true,
@@ -153,7 +158,7 @@ function BankAccountForm({
           <Input id="branchCode" {...register('branchCode')} />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div className="space-y-2">
           <Label htmlFor="openingBalance">Opening balance</Label>
           <Input id="openingBalance" type="number" step="0.0001" min={0} {...register('openingBalance')} />
@@ -163,6 +168,11 @@ function BankAccountForm({
           <Label htmlFor="minimumBalance">Minimum balance</Label>
           <Input id="minimumBalance" type="number" step="0.0001" min={0} {...register('minimumBalance')} />
           {errors.minimumBalance && <p className="text-xs text-destructive">{errors.minimumBalance.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="remainingBalance">Remaining balance</Label>
+          <Input id="remainingBalance" type="number" step="0.0001" min={0} {...register('remainingBalance')} />
+          {errors.remainingBalance && <p className="text-xs text-destructive">{errors.remainingBalance.message}</p>}
         </div>
       </div>
       <div className="flex items-center gap-2">
@@ -201,6 +211,7 @@ function normalize(d: FormData) {
     branchCode: d.branchCode ? d.branchCode : undefined,
     openingBalance: d.openingBalance,
     minimumBalance: d.minimumBalance,
+    remainingBalance: d.remainingBalance,
     isChairmanDesignated: d.isChairmanDesignated ?? false,
     isActive: d.isActive ?? true,
   };
@@ -274,6 +285,7 @@ export default function BankAccountsPage(): React.ReactElement {
               <TableHead>Branch</TableHead>
               <TableHead className="text-right">Opening</TableHead>
               <TableHead className="text-right">Min</TableHead>
+              <TableHead className="text-right">Remaining</TableHead>
               <TableHead>Chairman</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-24 text-right">Actions</TableHead>
@@ -281,7 +293,7 @@ export default function BankAccountsPage(): React.ReactElement {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={10} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={11} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((a) => (
               <TableRow key={a.id}>
                 <TableCell>
@@ -300,6 +312,9 @@ export default function BankAccountsPage(): React.ReactElement {
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {a.minimumBalance != null ? Number(a.minimumBalance).toLocaleString() : '—'}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {a.remainingBalance != null ? Number(a.remainingBalance).toLocaleString() : '—'}
                 </TableCell>
                 <TableCell>
                   {a.isChairmanDesignated ? (
@@ -327,7 +342,7 @@ export default function BankAccountsPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={10} className="py-12 text-center text-muted-foreground">No bank accounts yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={11} className="py-12 text-center text-muted-foreground">No bank accounts yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

@@ -4,8 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  BadgeCheck, Briefcase, Building, Building2, ChevronDown, Coins, Database, FileType2, Globe2, GitBranch, Handshake,
-  Landmark, ListChecks, LogOut, Network, ShieldCheck, Users2,
+  BadgeCheck, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard, Database, FileType2, FolderTree, Globe2, GitBranch, Handshake,
+  Landmark, ListChecks, LogOut, ShieldCheck, Users2, Wallet2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -37,16 +37,15 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/currencies',     label: 'Currencies',     icon: Coins },
       { href: '/countries',      label: 'Countries',      icon: Globe2 },
       { href: '/legal-entities', label: 'Legal Entities', icon: Building2 },
-      { href: '/business-units', label: 'Business Units', icon: Building2 },
-      { href: '/departments',    label: 'Departments',    icon: Network },
       { href: '/user-roles',     label: 'Roles',          icon: ShieldCheck },
       { href: '/users',          label: 'Users',          icon: Users2 },
       { href: '/employees',      label: 'Employees',      icon: BadgeCheck },
       { href: '/banks',          label: 'Banks',          icon: Building },
       { href: '/account-types',  label: 'Account Types',  icon: ListChecks },
       { href: '/bank-accounts',  label: 'Bank Accounts',  icon: Landmark },
-      { href: '/payment-types',     label: 'Payment Types',     icon: FileType2 },
-      { href: '/approval-matrices', label: 'Approval Matrices', icon: GitBranch },
+      { href: '/payment-categories', label: 'Payment Categories', icon: FolderTree },
+      { href: '/payment-types',      label: 'Payment Types',      icon: FileType2 },
+      { href: '/approval-matrices',  label: 'Approval Matrices',  icon: GitBranch },
     ],
   },
   {
@@ -57,6 +56,17 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/counterparties',             label: 'Counterparties', icon: Briefcase },
       { href: '/counterparty/banks',         label: 'Banks',          icon: Building },
       { href: '/counterparty/bank-accounts', label: 'Bank Accounts',  icon: Landmark },
+    ],
+  },
+  {
+    label: 'Payments',
+    icon: CreditCard,
+    // Open to every authenticated user — non-admin / non-counterparty users
+    // (the team-role holders: OPS_TEAM, HR, etc.) need to see this group
+    // to access matrices and create payment requests they're eligible for.
+    items: [
+      { href: '/payment-requests',     label: 'Payment Requests',     icon: CreditCard },
+      { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: Wallet2 },
     ],
   },
 ];

@@ -16,12 +16,12 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UsersQueryDto } from './dto/users-query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RoleCode } from '../../common/enums/role.enum';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -38,7 +38,7 @@ export class UsersController {
 
   @Get()
   @Roles(RoleCode.SUPER_ADMIN)
-  findAll(@Query() query: PaginationQueryDto) {
+  findAll(@Query() query: UsersQueryDto) {
     return this.service.findAll(query);
   }
 

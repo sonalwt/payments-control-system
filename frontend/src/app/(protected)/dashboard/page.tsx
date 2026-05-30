@@ -6,8 +6,6 @@ import {
   Layers,
   Building2,
   Globe,
-  Briefcase,
-  Network,
   Clock,
   CheckCircle2,
   Send,
@@ -25,8 +23,6 @@ import type {
   Group,
   LegalEntity,
   Country,
-  BusinessUnit,
-  Department,
   PaymentRequest,
   BankAccount,
 } from '@/types/domain';
@@ -130,7 +126,7 @@ function PrRow({ pr }: { pr: PaymentRequest }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{pr.requestNumber}</p>
         <p className="text-xs text-muted-foreground">
-          {pr.paymentTypeCode} · {pr.currencyCode}{' '}
+          {pr.paymentType?.code ?? '—'} · {pr.currency?.code ?? '—'}{' '}
           {Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           {pr.legalEntity && ` · ${pr.legalEntity.name}`}
         </p>
@@ -152,8 +148,6 @@ function AdminDashboard() {
   const groups = useCount<Group>('/groups');
   const legalEntities = useCount<LegalEntity>('/legal-entities');
   const countries = useCount<Country>('/countries');
-  const businessUnits = useCount<BusinessUnit>('/business-units');
-  const departments = useCount<Department>('/departments');
 
   const draft = usePrCount('DRAFT');
   const pendingApproval = usePrCount('PENDING_APPROVAL');
@@ -188,12 +182,10 @@ function AdminDashboard() {
       {/* Org Overview */}
       <div className="space-y-3">
         <SectionHeading>Organisation Overview</SectionHeading>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           <StatTile label="Groups" value={groups} icon={Layers} href="/groups" />
           <StatTile label="Legal Entities" value={legalEntities} icon={Building2} href="/legal-entities" />
           <StatTile label="Countries" value={countries} icon={Globe} href="/countries" />
-          <StatTile label="Business Units" value={businessUnits} icon={Briefcase} href="/business-units" />
-          <StatTile label="Departments" value={departments} icon={Network} href="/departments" />
         </div>
       </div>
 

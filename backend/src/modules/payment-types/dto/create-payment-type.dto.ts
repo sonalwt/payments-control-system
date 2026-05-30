@@ -8,6 +8,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Length,
   Matches,
   Min,
@@ -142,4 +143,29 @@ export class CreatePaymentTypeDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Payment category master UUID' })
+  @IsOptional()
+  @IsUUID()
+  paymentCategoryId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Default Maker (creator) role UUID' })
+  @IsOptional()
+  @IsUUID()
+  makerRoleId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Default Checker role UUID' })
+  @IsOptional()
+  @IsUUID()
+  checkerRoleId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Default Maker user UUID (when maker is a specific user, not a role)' })
+  @IsOptional()
+  @IsUUID()
+  makerUserId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Default Checker user UUID (when checker is a specific user, not a role)' })
+  @IsOptional()
+  @IsUUID()
+  checkerUserId?: string | null;
 }

@@ -37,9 +37,7 @@ const RULES: RouteRule[] = [
   { prefix: '/groups', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/legal-entities', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/countries', roles: [RoleCode.SUPER_ADMIN] },
-  { prefix: '/business-units', roles: [RoleCode.SUPER_ADMIN] }, // duplicate prefix safe — same role
 
-  { prefix: '/departments', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/users', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/user-roles', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/employees', roles: [RoleCode.SUPER_ADMIN] },
@@ -61,8 +59,9 @@ const RULES: RouteRule[] = [
   { prefix: '/counterparty/banks', roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY] },
   { prefix: '/counterparty/bank-accounts', roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY] },
 
-  // Payment & receipt workflows
-  { prefix: '/payment-requests', roles: OPERATIONAL_READ },
+  // Payment & receipt workflows — payment-requests is open to every
+  // authenticated user; the backend enforces maker eligibility on submit
+  // based on the payment type's maker_role_id.
   { prefix: '/incoming-receipts', roles: OPERATIONAL_READ },
 
   // HR-led workflows — SUPER_ADMIN only (no HR roles in the current taxonomy)

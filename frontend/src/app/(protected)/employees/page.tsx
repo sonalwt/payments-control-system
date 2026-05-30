@@ -50,7 +50,6 @@ function EmployeeDetails({ employee: e }: { employee: Employee }): React.ReactEl
         <Field label="Full name" value={e.fullName} />
         <Field label="Work email" value={e.workEmail} />
         <Field label="Country of employment" value={e.countryOfEmployment ? `${e.countryOfEmployment.code} — ${e.countryOfEmployment.countryName}` : null} />
-        <Field label="Department" value={e.department ? `${e.department.code} — ${e.department.name}` : null} />
         <Field label="Start date" value={e.startDate} />
         <Field label="End date" value={e.endDate} />
         <Field label="National ID" value={e.nationalId} />
@@ -71,7 +70,6 @@ function normalize(d: EmployeeFormData) {
     fullName: d.fullName,
     workEmail: d.workEmail,
     countryOfEmploymentId: d.countryOfEmploymentId,
-    departmentId: d.departmentId,
     startDate: blank(d.startDate),
     endDate: blank(d.endDate),
     nationalId: blank(d.nationalId),
@@ -150,21 +148,19 @@ export default function EmployeesPage(): React.ReactElement {
               <TableHead>Full name</TableHead>
               <TableHead>Work email</TableHead>
               <TableHead>Country</TableHead>
-              <TableHead>Department</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-36 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((e) => (
               <TableRow key={e.id}>
                 <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{e.employeeCode}</code></TableCell>
                 <TableCell className="font-medium">{e.fullName}</TableCell>
                 <TableCell className="text-muted-foreground">{e.workEmail ?? '—'}</TableCell>
                 <TableCell>{e.countryOfEmployment ? `${e.countryOfEmployment.code} — ${e.countryOfEmployment.countryName}` : '—'}</TableCell>
-                <TableCell>{e.department ? `${e.department.code} — ${e.department.name}` : '—'}</TableCell>
                 <TableCell>
                   <span
                     className={
@@ -185,7 +181,7 @@ export default function EmployeesPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No employees yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No employees yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
