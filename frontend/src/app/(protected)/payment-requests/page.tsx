@@ -3,12 +3,13 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, Plus, Search, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Eye, Plus, Search, ShieldAlert } from 'lucide-react';
 import { api } from '@/lib/api';
 import type {
   Paginated,
   PaymentRequest,
   PaymentRequestStatus,
+  PaymentType,
 } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,8 @@ import {
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { PaymentRequestForm, type PaymentRequestFormData } from './payment-request-form';
+import { useAuth } from '@/hooks/use-auth';
+import { hasAnyRole, RoleCode } from '@/lib/roles';
 
 const KEY = 'payment-requests';
 
@@ -45,6 +48,17 @@ export default function PaymentRequestsPage(): React.ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const notify = useNotify();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin = hasAnyRole(user?.roles ?? [], [RoleCode.SUPER_ADMIN]);
+
+  // Only show the create button if the user is a maker for at least one
+  // payment type. Checkers (and other non-maker roles) must not see it.
+  const { data: makerCheck } = useQuery({
+    queryKey: ['payment-types-mine-check'],
+    queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?mine=true&limit=1'),
+    enabled: !!user && !isAdmin,
+  });
+  const canCreate = !!user && !isAdmin && (makerCheck?.total ?? 0) > 0;
 
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
@@ -92,18 +106,20 @@ export default function PaymentRequestsPage(): React.ReactElement {
         title="Payment Requests"
         description="SoW §3 / §4 — outgoing payment lifecycle. Create a draft, submit through the approval matrix, release on approval, then capture bank reference + proof of payment."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> New payment request</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-3xl">
-              <DialogHeader>
-                <DialogTitle>Create payment request</DialogTitle>
-                <p className="text-xs text-muted-foreground">Saved as DRAFT. Use Submit to start the approval flow.</p>
-              </DialogHeader>
-              <PaymentRequestForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
-            </DialogContent>
-          </Dialog>
+          canCreate ? (
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button><Plus className="mr-2 h-4 w-4" /> New payment request</Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-3xl">
+                <DialogHeader>
+                  <DialogTitle>Create payment request</DialogTitle>
+                  <p className="text-xs text-muted-foreground">Saved as DRAFT. Use Submit to start the approval flow.</p>
+                </DialogHeader>
+                <PaymentRequestForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </DialogContent>
+            </Dialog>
+          ) : undefined
         }
       />
 
@@ -155,7 +171,8 @@ export default function PaymentRequestsPage(): React.ReactElement {
                 <TableCell className="font-medium">
                   <span className="inline-flex items-center gap-1">
                     {pr.requestNumber}
-                    {pr.sanctionWarning && <ShieldAlert className="h-3 w-3 text-amber-600" />}
+                    {pr.sanctionWarning && <ShieldAlert className="h-3 w-3 text-amber-600" title="Sanctioned country" />}
+                    {pr.anomalyFlag && <AlertTriangle className="h-3 w-3 text-orange-500" title="Anomaly detected" />}
                   </span>
                   {pr.invoiceNumber && (
                     <div className="text-xs text-muted-foreground">{pr.invoiceNumber}</div>

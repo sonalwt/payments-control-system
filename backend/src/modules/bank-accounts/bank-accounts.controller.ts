@@ -27,11 +27,13 @@ export class BankAccountsController {
   }
 
   @Get()
+  @Roles()
   findAll(@Query() query: PaginationQueryDto) {
     return this.service.findAll(query);
   }
 
   @Get(':id')
+  @Roles()
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.findOne(id);
   }

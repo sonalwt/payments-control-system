@@ -27,11 +27,13 @@ export class CounterpartiesController {
   }
 
   @Get()
+  @Roles()
   findAll(@Query() query: CounterpartyQueryDto) {
     return this.service.findAll(query);
   }
 
   @Get(':id')
+  @Roles()
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.findOne(id);
   }

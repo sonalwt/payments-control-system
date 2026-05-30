@@ -17,6 +17,7 @@ import { PaymentRequestsService } from './payment-requests.service';
 import { CreatePaymentRequestDto } from './dto/create-payment-request.dto';
 import { UpdatePaymentRequestDto } from './dto/update-payment-request.dto';
 import {
+  AttachDocumentDto,
   ApproveDto,
   CancelDto,
   MarkPaidDto,
@@ -36,15 +37,14 @@ import {
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
 /**
- * Authorization model after the role reset:
- *   - CRUD on drafts, list/get, submit, withdraw — open to any
- *     authenticated user (the service enforces ownership / business
- *     rules; maker eligibility is checked at submit).
- *   - approve / reject — SUPER_ADMIN or any user holding APPROVER.
- *   - release / mark-paid / upload-proof — SUPER_ADMIN or APPROVER
- *     (payments-team Maker functions; relaxed to APPROVER until a
- *     dedicated treasury role is reintroduced).
- *   - cancel — SUPER_ADMIN only.
+ * Authorization model:
+ *   - All endpoints require JWT authentication (JwtAuthGuard).
+ *   - No hardcoded role codes are used except for cancel (SUPER_ADMIN).
+ *   - approve / reject — service checks step assignment (USER or ROLE type).
+ *   - release / mark-paid / upload-proof — service calls assertCanMake().
+ *   - cancel — SUPER_ADMIN only (platform-admin escalation).
+ *   - findAll() visibility is role-agnostic; the service filters by
+ *     created_by and current pending step assignment.
  */
 @ApiTags('Payment Requests')
 @ApiBearerAuth()
@@ -68,8 +68,9 @@ export class PaymentRequestsController {
       legalEntityId?: string;
       paymentTypeId?: string;
     },
+    @CurrentUser() viewer: AuthenticatedUser,
   ) {
-    return this.service.findAll(query);
+    return this.service.findAll(query, viewer);
   }
 
   @Get(':id')
@@ -100,7 +101,6 @@ export class PaymentRequestsController {
   }
 
   @Post(':id/approve')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.APPROVER)
   approve(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ApproveDto,
@@ -110,13 +110,17 @@ export class PaymentRequestsController {
   }
 
   @Post(':id/reject')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.APPROVER)
   reject(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: RejectDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.reject(id, dto, user.id);
+  }
+
+  @Post(':id/resubmit')
+  resubmit(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.resubmit(id, user.id);
   }
 
   @Post(':id/withdraw')
@@ -129,7 +133,6 @@ export class PaymentRequestsController {
   }
 
   @Post(':id/release')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.APPROVER)
   release(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ReleaseDto,
@@ -139,7 +142,6 @@ export class PaymentRequestsController {
   }
 
   @Post(':id/mark-paid')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.APPROVER)
   markPaid(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: MarkPaidDto,
@@ -149,13 +151,33 @@ export class PaymentRequestsController {
   }
 
   @Post(':id/upload-proof')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.APPROVER)
   uploadProof(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UploadProofDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.uploadProof(id, dto, user.id);
+  }
+
+  // -------- Document management (DRAFT only) -----------------------
+
+  @Post(':id/documents')
+  attachDocument(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: AttachDocumentDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.attachDocument(id, dto, user.id);
+  }
+
+  @Delete(':id/documents/:documentId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  removeDocument(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('documentId', new ParseUUIDPipe()) documentId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.removeDocument(id, documentId, user.id);
   }
 
   @Post(':id/cancel')

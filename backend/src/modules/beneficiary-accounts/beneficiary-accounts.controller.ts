@@ -39,13 +39,7 @@ export class BeneficiaryAccountsController {
   // -------------------------------------------------------------------
 
   @Get()
-  @Roles(
-    RoleCode.SUPER_ADMIN,
-    RoleCode.INITIATOR,
-    RoleCode.CHECKER,
-    RoleCode.APPROVER_1,
-    RoleCode.APPROVER_2,
-  )
+  @Roles()
   findAll(
     @Query()
     query: PaginationQueryDto & {
@@ -59,13 +53,7 @@ export class BeneficiaryAccountsController {
   }
 
   @Get(':id')
-  @Roles(
-    RoleCode.SUPER_ADMIN,
-    RoleCode.INITIATOR,
-    RoleCode.CHECKER,
-    RoleCode.APPROVER_1,
-    RoleCode.APPROVER_2,
-  )
+  @Roles()
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.findOne(id);
   }

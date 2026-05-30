@@ -21,11 +21,6 @@ export class BankAccountsService {
     actorId: string,
     isCounterparty = false,
   ): Promise<BankAccount> {
-    if (isCounterparty && !dto.counterpartyId) {
-      throw new BadRequestException(
-        'counterpartyId is required for counterparty bank accounts.',
-      );
-    }
     const existing = await this.repo.findOne({
       where: {
         accountNumber: dto.accountNumber,

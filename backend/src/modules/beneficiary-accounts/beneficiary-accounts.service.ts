@@ -52,7 +52,7 @@ export class BeneficiaryAccountsService {
       .leftJoinAndSelect('b.bank', 'bank')
       .leftJoinAndSelect('b.currency', 'currency')
       .leftJoinAndSelect('b.country', 'country')
-      .orderBy('b.account_holder_name', 'ASC')
+      .orderBy('b.accountHolderName', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
 

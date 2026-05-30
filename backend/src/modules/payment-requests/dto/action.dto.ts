@@ -1,11 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsDateString,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
   Length,
+  Min,
 } from 'class-validator';
 
 export class ApproveDto {
@@ -70,4 +72,39 @@ export class UploadProofDto {
   @IsNotEmpty()
   @Length(1, 500)
   proofOfPaymentUrl!: string;
+}
+
+export class AttachDocumentDto {
+  @ApiProperty({ example: 'INVOICE' })
+  @IsString()
+  @IsNotEmpty()
+  @Length(1, 50)
+  documentCode!: string;
+
+  @ApiPropertyOptional({ example: 'Invoice PDF' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 200)
+  documentLabel?: string;
+
+  @ApiProperty({ example: 'invoice.pdf' })
+  @IsString()
+  @IsNotEmpty()
+  fileName!: string;
+
+  @ApiProperty({ example: '/uploads/1780139560293-420008.pdf' })
+  @IsString()
+  @IsNotEmpty()
+  fileUrl!: string;
+
+  @ApiPropertyOptional({ example: 'application/pdf' })
+  @IsOptional()
+  @IsString()
+  mimeType?: string;
+
+  @ApiPropertyOptional({ example: 204800 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  fileSizeBytes?: number;
 }

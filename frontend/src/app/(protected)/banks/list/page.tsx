@@ -24,7 +24,7 @@ import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
-const KEY = 'counterparty-banks';
+const KEY = 'banks-list';
 const ENDPOINT = '/counterparty/banks';
 
 const schema = z.object({
@@ -129,7 +129,7 @@ function normalize(d: FormData) {
   };
 }
 
-export default function CounterpartyBanksPage(): React.ReactElement {
+export default function BanksListPage(): React.ReactElement {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -169,7 +169,7 @@ export default function CounterpartyBanksPage(): React.ReactElement {
     <div>
       <PageHeader
         title="Banks"
-        description="Banks master (Super Admin & Counterparty roles)."
+        description="Banks master."
         actions={
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
@@ -210,13 +210,10 @@ export default function CounterpartyBanksPage(): React.ReactElement {
                   {b.swiftBic ? <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{b.swiftBic}</code> : <span className="text-muted-foreground">—</span>}
                 </TableCell>
                 <TableCell>
-                  <span
-                    className={
-                      b.isActive
-                        ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
-                        : 'inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border'
-                    }
-                  >
+                  <span className={b.isActive
+                    ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
+                    : 'inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border'
+                  }>
                     {b.isActive ? 'Active' : 'Inactive'}
                   </span>
                 </TableCell>

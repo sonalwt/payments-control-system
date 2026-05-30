@@ -5,7 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
+import { RoleCode } from '../../common/enums/role.enum';
+import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { PaymentRequest, PaymentRequestStatus } from './payment-request.entity';
 import { PaymentRequestApproval } from './payment-request-approval.entity';
 import { PaymentRequestDocument } from './payment-request-document.entity';
@@ -99,6 +101,7 @@ export class PaymentRequestsService {
 
   async findAll(
     query: PaginationQueryDto & { status?: string; legalEntityId?: string; paymentTypeId?: string },
+    viewer?: AuthenticatedUser,
   ): Promise<PaginatedResult<PaymentRequest>> {
     const { page = 1, limit = 20, search } = query;
     const qb = this.repo
@@ -111,7 +114,7 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('pr.beneficiaryAccount', 'beneficiaryAccount')
       .leftJoinAndSelect('beneficiaryAccount.bank', 'beneficiaryBank')
       .leftJoinAndSelect('pr.sourceAccount', 'sourceAccount')
-      .orderBy('pr.created_at', 'DESC')
+      .orderBy('pr.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
 
@@ -123,6 +126,43 @@ export class PaymentRequestsService {
         '(pr.request_number ILIKE :s OR pr.invoice_number ILIKE :s OR counterparty.legal_name ILIKE :s)',
         { s: `%${search}%` },
       );
+    }
+
+    // Role-based visibility — works with any custom role codes in the DB.
+    // No hardcoded role enum values are used here.
+    if (viewer) {
+      const orClauses: string[] = [];
+      const params: Record<string, unknown> = { viewerId: viewer.id };
+
+      // (1) Creator always sees their own requests at any status (incl.
+      //     APPROVED / AWAITING so the maker can release + mark-paid).
+      orClauses.push('pr.created_by = :viewerId');
+
+      // (2) Approver sequential visibility: see requests whose CURRENT
+      //     pending step is assigned to one of the viewer's roles or their
+      //     exact user ID.  Handles both ROLE-type and USER-type steps.
+      if (viewer.roles.length > 0) {
+        orClauses.push(`EXISTS (
+          SELECT 1 FROM payment_request_approvals pra2
+          LEFT JOIN roles rl ON rl.id = pra2.approver_role_id
+          WHERE pra2.payment_request_id = pr.id
+            AND pra2.step_order = pr.current_step_order
+            AND pra2.decision = 'PENDING'
+            AND (pra2.approver_user_id = :viewerId OR rl.code IN (:...viewerRoles))
+        )`);
+        params.viewerRoles = viewer.roles;
+      } else {
+        // USER-type approver with no assigned roles: match by user ID only.
+        orClauses.push(`EXISTS (
+          SELECT 1 FROM payment_request_approvals pra2
+          WHERE pra2.payment_request_id = pr.id
+            AND pra2.step_order = pr.current_step_order
+            AND pra2.decision = 'PENDING'
+            AND pra2.approver_user_id = :viewerId
+        )`);
+      }
+
+      qb.andWhere(`(${orClauses.join(' OR ')})`, params);
     }
 
     const [data, total] = await qb.getManyAndCount();
@@ -225,6 +265,13 @@ export class PaymentRequestsService {
           }
         }
 
+        // §6.4 — anomaly detection (flags suspicious patterns; does not block).
+        const anomaly = await this.detectAnomalies(pr, em);
+        if (anomaly.flagged) {
+          pr.anomalyFlag = true;
+          pr.anomalyNotes = anomaly.notes.join('\n');
+        }
+
         pr.beneficiarySnapshot = this.snapshotBeneficiary(ben);
       }
 
@@ -233,77 +280,63 @@ export class PaymentRequestsService {
         pr.counterpartySnapshot = this.snapshotCounterparty(pr.counterparty);
       }
 
-      // §1.5 — pick the published matrix that matches this payment type
-      // and the request currency.
-      const matrix = await em
-        .createQueryBuilder(ApprovalMatrix, 'm')
-        .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
-        .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
-        .andWhere("m.status = 'PUBLISHED'")
-        .andWhere('m.deleted_at IS NULL')
-        .orderBy('m.version', 'DESC')
-        .getOne();
-      if (!matrix) {
+      // Step 1 — checker only. The approval matrix is consulted dynamically
+      // when the checker approves (see approve()), so matrix steps are added
+      // at that point, not here. This ensures the checker always sees the
+      // request immediately and the matrix is checked with the latest version.
+      const paymentType = await em.findOne(PaymentType, {
+        where: { id: pr.paymentTypeId },
+        select: ['id', 'checkerUserId', 'checkerRoleId'],
+      });
+
+      let checkerType: 'USER' | 'ROLE';
+      let checkerUserId: string | null = null;
+      let checkerRoleId: string | null = null;
+
+      if (paymentType?.checkerUserId) {
+        checkerType = 'USER';
+        checkerUserId = paymentType.checkerUserId;
+      } else if (paymentType?.checkerRoleId) {
+        checkerType = 'ROLE';
+        checkerRoleId = paymentType.checkerRoleId;
+      } else {
         throw new BadRequestException(
-          'No published approval matrix exists for this payment type and currency.',
+          'No checker configured for this payment type.',
         );
       }
 
-      // Find the band matching the request amount.
-      const bands = await em.find(ApprovalMatrixBand, {
-        where: { matrixId: matrix.id },
-        order: { sortOrder: 'ASC' },
-      });
-      const amountNum = Number(pr.amount);
-      const band = bands.find((b) => {
-        const min = Number(b.minAmount);
-        const max = b.maxAmount == null ? Infinity : Number(b.maxAmount);
-        return amountNum >= min && amountNum <= max;
-      });
-      if (!band) {
-        throw new BadRequestException(
-          `Matrix has no band covering amount ${pr.amount}`,
-        );
-      }
-
-      // Snapshot the chain.
-      const steps = await em.find(ApprovalMatrixStep, {
-        where: { bandId: band.id },
-        order: { stepOrder: 'ASC' },
-      });
-      if (!steps.length) {
-        throw new BadRequestException('Matched approval band has no steps.');
-      }
-
-      pr.matrixId = matrix.id;
-      pr.matrixVersion = matrix.version;
       pr.currentStepOrder = 1;
       pr.status = 'PENDING_APPROVAL';
       pr.submittedAt = new Date();
       pr.updatedBy = actorId;
       await em.save(pr);
 
-      // Renumber to dense 1..N regardless of source step_order gaps.
-      let order = 1;
-      for (const s of steps) {
-        const ap = em.create(PaymentRequestApproval, {
+      await em.save(
+        em.create(PaymentRequestApproval, {
           paymentRequestId: pr.id,
-          stepOrder: order++,
-          approverType: s.approverType,
-          approverUserId: s.approverUserId ?? null,
-          approverRoleId: s.approverRoleId ?? null,
+          stepOrder: 1,
+          approverType: checkerType,
+          approverUserId: checkerUserId,
+          approverRoleId: checkerRoleId,
           decision: 'PENDING',
-        });
-        await em.save(ap);
-      }
+        }),
+      );
 
       return this.loadOne(pr.id, em.getRepository(PaymentRequest));
     });
   }
 
   /**
-   * §3 — Record an approval at the current step. If this was the last
-   * step, the request moves to APPROVED; otherwise to the next step.
+   * §3 — Record an approval at the current step.
+   *
+   * Two-phase flow:
+   *   Phase 1 — Checker (pr.matrixId is null, step 1):
+   *     After the checker approves, look up the published approval matrix.
+   *     If one exists, append its steps (starting at step 2) and advance
+   *     currentStepOrder to 2. If none exists, go straight to APPROVED.
+   *
+   *   Phase 2 — Matrix chain (pr.matrixId is set):
+   *     Advance through the pre-created steps. APPROVED on the final step.
    */
   async approve(id: string, dto: ApproveDto, actorId: string): Promise<PaymentRequest> {
     return this.dataSource.transaction(async (em) => {
@@ -312,6 +345,7 @@ export class PaymentRequestsService {
       if (pr.status !== 'PENDING_APPROVAL') {
         throw new BadRequestException(`Cannot approve in status ${pr.status}`);
       }
+
       const step = await em.findOne(PaymentRequestApproval, {
         where: { paymentRequestId: pr.id, stepOrder: pr.currentStepOrder ?? -1 },
       });
@@ -320,20 +354,7 @@ export class PaymentRequestsService {
         throw new BadRequestException('Active step has already been decided.');
       }
 
-      // SoW §6.5: when sanction_warning is set, the final approver must
-      // record an override reason before approval registers.
-      const totalSteps = await em.count(PaymentRequestApproval, {
-        where: { paymentRequestId: pr.id },
-      });
-      const isFinalStep = (pr.currentStepOrder ?? 0) === totalSteps;
-      if (pr.sanctionWarning && isFinalStep && !dto.sanctionOverrideReason) {
-        throw new BadRequestException(
-          'sanctionOverrideReason is required to approve a request flagged against a sanctioned country.',
-        );
-      }
-
-      // Authorisation: USER step requires exact match; ROLE step
-      // requires the actor to hold the role.
+      // Authorisation: USER step requires exact match; ROLE step requires actor to hold the role.
       if (step.approverType === 'USER') {
         if (step.approverUserId !== actorId) {
           throw new ForbiddenException('This step is assigned to a different user.');
@@ -353,14 +374,92 @@ export class PaymentRequestsService {
       step.comments = dto.comments ?? null;
       await em.save(step);
 
-      if (isFinalStep) {
-        pr.status = 'APPROVED';
-        pr.currentStepOrder = null;
-        pr.approvedAt = new Date();
-        if (dto.sanctionOverrideReason) pr.sanctionOverrideReason = dto.sanctionOverrideReason;
+      if (!pr.matrixId) {
+        // ── Phase 1: checker just approved — now check the approval matrix ──
+        const matrix = await em
+          .createQueryBuilder(ApprovalMatrix, 'm')
+          .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
+          .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
+          .andWhere("m.status = 'PUBLISHED'")
+          .andWhere('m.deleted_at IS NULL')
+          .orderBy('m.version', 'DESC')
+          .getOne();
+
+        if (!matrix) {
+          // No published matrix — block the approval.
+          throw new BadRequestException(
+            'No published approval matrix found for this payment type and currency. ' +
+            'Please create and publish an approval matrix under Masters → Approval Matrices before approving.',
+          );
+        }
+
+        // Matrix found — find the matching band for the payment amount.
+        const bands = await em.find(ApprovalMatrixBand, {
+          where: { matrixId: matrix.id },
+          order: { sortOrder: 'ASC' },
+        });
+        const amountNum = Number(pr.amount);
+        const band = bands.find((b) => {
+          const min = Number(b.minAmount);
+          const max = b.maxAmount == null ? Infinity : Number(b.maxAmount);
+          return amountNum >= min && amountNum <= max;
+        });
+        if (!band) {
+          throw new BadRequestException(
+            `The payment amount (${pr.amount}) does not fall within any band defined in the approval matrix. ` +
+            'Please update the matrix bands under Masters → Approval Matrices.',
+          );
+        }
+        const matrixSteps = await em.find(ApprovalMatrixStep, {
+          where: { bandId: band.id },
+          order: { stepOrder: 'ASC' },
+        });
+        if (!matrixSteps.length) {
+          throw new BadRequestException(
+            'The matched approval band has no steps configured. Please update the matrix.',
+          );
+        }
+
+        pr.matrixId = matrix.id;
+        pr.matrixVersion = matrix.version;
+
+        // Checker was step 1 (APPROVED). Matrix steps start at step 2.
+        let nextOrder = 2;
+        for (const s of matrixSteps) {
+          await em.save(
+            em.create(PaymentRequestApproval, {
+              paymentRequestId: pr.id,
+              stepOrder: nextOrder++,
+              approverType: s.approverType,
+              approverUserId: s.approverUserId ?? null,
+              approverRoleId: s.approverRoleId ?? null,
+              decision: 'PENDING',
+            }),
+          );
+        }
+        pr.currentStepOrder = 2;
+        // status stays PENDING_APPROVAL — matrix approvers review next
       } else {
-        pr.currentStepOrder = (pr.currentStepOrder ?? 0) + 1;
+        // ── Phase 2: progressing through matrix steps ─────────────────────
+        const totalSteps = await em.count(PaymentRequestApproval, {
+          where: { paymentRequestId: pr.id },
+        });
+        const isFinalStep = (pr.currentStepOrder ?? 0) === totalSteps;
+        if (pr.sanctionWarning && isFinalStep && !dto.sanctionOverrideReason) {
+          throw new BadRequestException(
+            'sanctionOverrideReason is required to approve a request flagged against a sanctioned country.',
+          );
+        }
+        if (isFinalStep) {
+          pr.status = 'APPROVED';
+          pr.currentStepOrder = null;
+          pr.approvedAt = new Date();
+          if (dto.sanctionOverrideReason) pr.sanctionOverrideReason = dto.sanctionOverrideReason;
+        } else {
+          pr.currentStepOrder = (pr.currentStepOrder ?? 0) + 1;
+        }
       }
+
       pr.updatedBy = actorId;
       await em.save(pr);
 
@@ -409,6 +508,39 @@ export class PaymentRequestsService {
     });
   }
 
+  /**
+   * §3 — Maker resubmits a REJECTED request.
+   * Clears the old approval chain, resets the request to DRAFT so the maker
+   * can review / edit before submitting again.
+   */
+  async resubmit(id: string, actorId: string): Promise<PaymentRequest> {
+    return this.dataSource.transaction(async (em) => {
+      const pr = await em.findOne(PaymentRequest, { where: { id } });
+      if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
+      if (pr.status !== 'REJECTED') {
+        throw new BadRequestException(`Only REJECTED requests can be resubmitted (current status: ${pr.status}).`);
+      }
+      if (pr.createdBy !== actorId) {
+        throw new ForbiddenException('Only the original maker can resubmit this request.');
+      }
+
+      // Delete all previous approval steps so a fresh chain is created on next submit.
+      await em.delete(PaymentRequestApproval, { paymentRequestId: pr.id });
+
+      pr.status = 'DRAFT';
+      pr.currentStepOrder = null;
+      pr.matrixId = null;
+      pr.matrixVersion = null;
+      pr.rejectionReason = null;
+      pr.submittedAt = null;
+      pr.approvedAt = null;
+      pr.updatedBy = actorId;
+      await em.save(pr);
+
+      return this.loadOne(pr.id, em.getRepository(PaymentRequest));
+    });
+  }
+
   async withdraw(id: string, dto: WithdrawDto, actorId: string): Promise<PaymentRequest> {
     const pr = await this.findOne(id);
     if (pr.status !== 'DRAFT' && pr.status !== 'PENDING_APPROVAL') {
@@ -432,6 +564,8 @@ export class PaymentRequestsService {
       if (pr.status !== 'APPROVED') {
         throw new BadRequestException(`Cannot release in status ${pr.status}`);
       }
+      // Only the payment type's configured maker may release.
+      await this.assertCanMake(actorId, pr.paymentTypeId);
 
       const acc = await em.findOne(BankAccount, { where: { id: dto.sourceAccountId } });
       if (!acc) throw new NotFoundException('Source account not found.');
@@ -469,6 +603,7 @@ export class PaymentRequestsService {
       if (pr.status !== 'AWAITING_PAYMENT_CONFIRMATION') {
         throw new BadRequestException(`Cannot mark paid in status ${pr.status}`);
       }
+      await this.assertCanMake(actorId, pr.paymentTypeId);
 
       // Debit the source account's remaining balance on PAID (§2.5).
       if (pr.sourceAccountId) {
@@ -495,6 +630,7 @@ export class PaymentRequestsService {
     if (pr.status !== 'PAID' && pr.status !== 'AWAITING_PAYMENT_CONFIRMATION') {
       throw new BadRequestException(`Cannot upload proof in status ${pr.status}`);
     }
+    await this.assertCanMake(actorId, pr.paymentTypeId);
     pr.proofOfPaymentUrl = dto.proofOfPaymentUrl;
     pr.updatedBy = actorId;
     return this.repo.save(pr);
@@ -530,8 +666,8 @@ export class PaymentRequestsService {
     actorId: string,
   ): Promise<PaymentRequestDocument> {
     const pr = await this.findOne(id);
-    if (pr.status !== 'DRAFT') {
-      throw new BadRequestException('Documents can only be attached in DRAFT.');
+    if (pr.status !== 'DRAFT' && pr.status !== 'REJECTED') {
+      throw new BadRequestException('Documents can only be attached in DRAFT or REJECTED status.');
     }
     const doc = this.docRepo.create({
       paymentRequestId: pr.id,
@@ -548,8 +684,8 @@ export class PaymentRequestsService {
 
   async removeDocument(id: string, documentId: string, _actorId: string): Promise<void> {
     const pr = await this.findOne(id);
-    if (pr.status !== 'DRAFT') {
-      throw new BadRequestException('Documents can only be removed in DRAFT.');
+    if (pr.status !== 'DRAFT' && pr.status !== 'REJECTED') {
+      throw new BadRequestException('Documents can only be removed in DRAFT or REJECTED status.');
     }
     const doc = await this.docRepo.findOne({ where: { id: documentId, paymentRequestId: pr.id } });
     if (!doc) throw new NotFoundException('Document not found.');
@@ -624,8 +760,8 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('approval.decidedByUser', 'decidedByUser')
       .leftJoinAndSelect('pr.documents', 'document')
       .where('pr.id = :id', { id })
-      .orderBy('approval.step_order', 'ASC')
-      .addOrderBy('document.uploaded_at', 'ASC')
+      .orderBy('approval.stepOrder', 'ASC')
+      .addOrderBy('document.uploadedAt', 'ASC')
       .getOne();
     if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
     return pr;
@@ -659,5 +795,103 @@ export class PaymentRequestsService {
       iban: b.iban ?? null,
       swiftBic: b.swiftBic ?? null,
     };
+  }
+
+  /**
+   * §6.4 — Rule-based anomaly detection. Runs at submit time against the
+   * beneficiary account. Does NOT block the payment — sets anomaly_flag and
+   * anomaly_notes for reviewer awareness.
+   *
+   * Rules:
+   *  1. Amount spike  — current amount > 3× the average of the last 10
+   *                     PAID/APPROVED payments to the same beneficiary.
+   *  2. Rapid repeat  — 2 or more payment requests already submitted to the
+   *                     same beneficiary in the last 7 days (this would make 3+).
+   *  3. Recent modify — a MODIFY change request was approved for this
+   *                     beneficiary within the last 7 days.
+   *  4. New account   — the beneficiary account was activated (ADD approved)
+   *                     within the last 7 days.
+   */
+  private async detectAnomalies(
+    pr: PaymentRequest,
+    em: EntityManager,
+  ): Promise<{ flagged: boolean; notes: string[] }> {
+    const notes: string[] = [];
+    if (!pr.beneficiaryAccountId) return { flagged: false, notes };
+
+    const bid = pr.beneficiaryAccountId;
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+
+    // Rule 1: Amount spike — flag if current amount > 3× the average of the
+    // last 10 completed payments to the same beneficiary (need at least 3
+    // historical data points to be meaningful).
+    const hist = (await em.query(
+      `SELECT amount FROM payment_requests
+       WHERE beneficiary_account_id = $1
+         AND status IN ('PAID', 'APPROVED')
+         AND deleted_at IS NULL
+         AND id <> $2
+       ORDER BY submitted_at DESC NULLS LAST
+       LIMIT 10`,
+      [bid, pr.id],
+    )) as Array<{ amount: string }>;
+    if (hist.length >= 3) {
+      const avg = hist.reduce((s, r) => s + Number(r.amount), 0) / hist.length;
+      if (Number(pr.amount) > avg * 3) {
+        notes.push(
+          `Amount ${Number(pr.amount).toLocaleString()} is more than 3× the average ` +
+          `(${avg.toLocaleString(undefined, { maximumFractionDigits: 2 })}) of the last ${hist.length} payments to this beneficiary.`,
+        );
+      }
+    }
+
+    // Rule 2: Rapid repeat — flag if 2 or more submissions already exist for
+    // this beneficiary in the last 7 days (making this the 3rd+).
+    const repeatRows = (await em.query(
+      `SELECT COUNT(*) AS cnt FROM payment_requests
+       WHERE beneficiary_account_id = $1
+         AND submitted_at >= $2
+         AND deleted_at IS NULL
+         AND id <> $3`,
+      [bid, sevenDaysAgo, pr.id],
+    )) as Array<{ cnt: string }>;
+    const repeatCount = Number(repeatRows[0]?.cnt ?? 0);
+    if (repeatCount >= 2) {
+      notes.push(
+        `${repeatCount} payment requests have already been submitted to this beneficiary in the last 7 days.`,
+      );
+    }
+
+    // Rule 3: Recent beneficiary modification — a MODIFY change request was
+    // approved within the last 7 days.
+    const modRows = (await em.query(
+      `SELECT COUNT(*) AS cnt FROM beneficiary_account_change_requests
+       WHERE beneficiary_account_id = $1
+         AND change_type = 'MODIFY'
+         AND status = 'APPROVED'
+         AND approved_at >= $2
+         AND deleted_at IS NULL`,
+      [bid, sevenDaysAgo],
+    )) as Array<{ cnt: string }>;
+    if (Number(modRows[0]?.cnt ?? 0) > 0) {
+      notes.push('Beneficiary account details were modified within the last 7 days.');
+    }
+
+    // Rule 4: Newly activated account — an ADD change request was approved
+    // within the last 7 days (account is brand new).
+    const addRows = (await em.query(
+      `SELECT COUNT(*) AS cnt FROM beneficiary_account_change_requests
+       WHERE beneficiary_account_id = $1
+         AND change_type = 'ADD'
+         AND status = 'APPROVED'
+         AND approved_at >= $2
+         AND deleted_at IS NULL`,
+      [bid, sevenDaysAgo],
+    )) as Array<{ cnt: string }>;
+    if (Number(addRows[0]?.cnt ?? 0) > 0) {
+      notes.push('Beneficiary account was activated within the last 7 days.');
+    }
+
+    return { flagged: notes.length > 0, notes };
   }
 }

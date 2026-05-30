@@ -24,6 +24,7 @@ import { CounterpartiesModule } from './modules/counterparties/counterparties.mo
 import { ApprovalMatricesModule } from './modules/approval-matrices/approval-matrices.module';
 import { BeneficiaryAccountsModule } from './modules/beneficiary-accounts/beneficiary-accounts.module';
 import { PaymentRequestsModule } from './modules/payment-requests/payment-requests.module';
+import { UploadsModule } from './modules/uploads/uploads.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { PaymentRequestsModule } from './modules/payment-requests/payment-reques
     ApprovalMatricesModule,
     BeneficiaryAccountsModule,
     PaymentRequestsModule,
+    UploadsModule,
   ],
 })
 export class AppModule {}
