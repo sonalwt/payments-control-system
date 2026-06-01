@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
 import { ApprovalMatrix } from './approval-matrix.entity';
 import { ApprovalMatrixBand } from './approval-matrix-band.entity';
 import { ApprovalMatrixStep } from './approval-matrix-step.entity';
@@ -123,7 +123,59 @@ export class ApprovalMatricesService {
     currentUserId?: string,
   ): Promise<PaginatedResult<ApprovalMatrix>> {
     const { page = 1, limit = 20, search, mine } = query;
-    const qb = this.repo
+
+    // Apply WHERE clauses (search + mine) consistently to both the
+    // paginated-IDs query and the count query.
+    const applyFilters = (qb: SelectQueryBuilder<ApprovalMatrix>): void => {
+      if (search) qb.andWhere('m.name ILIKE :s', { s: `%${search}%` });
+      if (mine === 'true' && currentUserId) {
+        qb.andWhere(
+          `m.id IN (
+            SELECT b.matrix_id
+              FROM approval_matrix_bands b
+              INNER JOIN approval_matrix_steps s ON s.band_id = b.id
+              WHERE s.approver_user_id = :uid
+                 OR s.approver_role_id IN (
+                      SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
+                    )
+            UNION
+            SELECT m2.id
+              FROM approval_matrices m2
+              INNER JOIN payment_types pt ON pt.id = m2.payment_type_id
+              WHERE pt.maker_role_id IN (
+                      SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
+                    )
+                 OR pt.checker_role_id IN (
+                      SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
+                    )
+          )`,
+          { uid: currentUserId },
+        );
+      }
+    };
+
+    // Page over parent IDs only — no joined collections, so LIMIT counts
+    // matrices, not the multiplied band*step rows.
+    const idsQb = this.repo
+      .createQueryBuilder('m')
+      .select('m.id', 'id')
+      .orderBy('m.name', 'ASC')
+      .addOrderBy('m.version', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+    applyFilters(idsQb);
+    const idRows = await idsQb.getRawMany<{ id: string }>();
+    const ids = idRows.map((r) => r.id);
+
+    const countQb = this.repo.createQueryBuilder('m');
+    applyFilters(countQb);
+    const total = await countQb.getCount();
+
+    if (ids.length === 0) {
+      return { data: [], total, page, limit, totalPages: Math.ceil(total / limit) };
+    }
+
+    const data = await this.repo
       .createQueryBuilder('m')
       .leftJoinAndSelect('m.paymentType', 'paymentType')
       .leftJoinAndSelect('paymentType.makerRole', 'paymentTypeMakerRole')
@@ -133,43 +185,13 @@ export class ApprovalMatricesService {
       .leftJoinAndSelect('band.steps', 'step')
       .leftJoinAndSelect('step.approverUser', 'approverUser')
       .leftJoinAndSelect('step.approverRole', 'approverRole')
+      .where('m.id IN (:...ids)', { ids })
       .orderBy('m.name', 'ASC')
       .addOrderBy('m.version', 'DESC')
       .addOrderBy('band.sortOrder', 'ASC')
       .addOrderBy('step.stepOrder', 'ASC')
-      .skip((page - 1) * limit)
-      .take(limit);
-    if (search) {
-      qb.andWhere('m.name ILIKE :s', { s: `%${search}%` });
-    }
-    if (mine === 'true' && currentUserId) {
-      // Show only matrices where the user appears in any step
-      // (as a USER, or via a role they hold) OR they hold the payment
-      // type's maker / checker role.
-      qb.andWhere(
-        `m.id IN (
-          SELECT b.matrix_id
-            FROM approval_matrix_bands b
-            INNER JOIN approval_matrix_steps s ON s.band_id = b.id
-            WHERE s.approver_user_id = :uid
-               OR s.approver_role_id IN (
-                    SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
-                  )
-          UNION
-          SELECT m2.id
-            FROM approval_matrices m2
-            INNER JOIN payment_types pt ON pt.id = m2.payment_type_id
-            WHERE pt.maker_role_id IN (
-                    SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
-                  )
-               OR pt.checker_role_id IN (
-                    SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
-                  )
-        )`,
-        { uid: currentUserId },
-      );
-    }
-    const [data, total] = await qb.getManyAndCount();
+      .getMany();
+
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 

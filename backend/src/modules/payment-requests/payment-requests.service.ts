@@ -280,47 +280,106 @@ export class PaymentRequestsService {
         pr.counterpartySnapshot = this.snapshotCounterparty(pr.counterparty);
       }
 
-      // Step 1 — checker only. The approval matrix is consulted dynamically
-      // when the checker approves (see approve()), so matrix steps are added
-      // at that point, not here. This ensures the checker always sees the
-      // request immediately and the matrix is checked with the latest version.
+      // Approval chain bootstrap.
+      // - If the payment type has a checker configured (user or role), the
+      //   checker becomes Step 1 and the matrix is snapshotted later when
+      //   the checker approves (see approve(), Phase 1). This keeps the
+      //   checker's experience instant and uses the matrix version that's
+      //   current at checker-decision time.
+      // - If no checker is configured (e.g. PDF §5 Vendor Payments,
+      //   Consultants, Capex, Exceptional types), submit must snapshot the
+      //   matrix immediately and seed steps 1..N from it. Phase 2 in
+      //   approve() then walks the chain unchanged.
       const paymentType = await em.findOne(PaymentType, {
         where: { id: pr.paymentTypeId },
         select: ['id', 'checkerUserId', 'checkerRoleId'],
       });
 
-      let checkerType: 'USER' | 'ROLE';
-      let checkerUserId: string | null = null;
-      let checkerRoleId: string | null = null;
+      const hasChecker =
+        !!paymentType?.checkerUserId || !!paymentType?.checkerRoleId;
 
-      if (paymentType?.checkerUserId) {
-        checkerType = 'USER';
-        checkerUserId = paymentType.checkerUserId;
-      } else if (paymentType?.checkerRoleId) {
-        checkerType = 'ROLE';
-        checkerRoleId = paymentType.checkerRoleId;
-      } else {
-        throw new BadRequestException(
-          'No checker configured for this payment type.',
-        );
-      }
-
-      pr.currentStepOrder = 1;
       pr.status = 'PENDING_APPROVAL';
       pr.submittedAt = new Date();
       pr.updatedBy = actorId;
-      await em.save(pr);
 
-      await em.save(
-        em.create(PaymentRequestApproval, {
-          paymentRequestId: pr.id,
-          stepOrder: 1,
-          approverType: checkerType,
-          approverUserId: checkerUserId,
-          approverRoleId: checkerRoleId,
-          decision: 'PENDING',
-        }),
-      );
+      if (hasChecker) {
+        const checkerType: 'USER' | 'ROLE' = paymentType!.checkerUserId
+          ? 'USER'
+          : 'ROLE';
+        pr.currentStepOrder = 1;
+        await em.save(pr);
+        await em.save(
+          em.create(PaymentRequestApproval, {
+            paymentRequestId: pr.id,
+            stepOrder: 1,
+            approverType: checkerType,
+            approverUserId: paymentType!.checkerUserId ?? null,
+            approverRoleId: paymentType!.checkerRoleId ?? null,
+            decision: 'PENDING',
+          }),
+        );
+      } else {
+        // No checker — snapshot the matrix immediately and seed steps 1..N.
+        const matrix = await em
+          .createQueryBuilder(ApprovalMatrix, 'm')
+          .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
+          .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
+          .andWhere("m.status = 'PUBLISHED'")
+          .andWhere('m.deleted_at IS NULL')
+          .orderBy('m.version', 'DESC')
+          .getOne();
+        if (!matrix) {
+          throw new BadRequestException(
+            'No published approval matrix found for this payment type and currency. ' +
+              'Please create and publish an approval matrix under Masters → Approval Matrices before submitting.',
+          );
+        }
+
+        const bands = await em.find(ApprovalMatrixBand, {
+          where: { matrixId: matrix.id },
+          order: { sortOrder: 'ASC' },
+        });
+        const amountNum = Number(pr.amount);
+        const band = bands.find((b) => {
+          const min = Number(b.minAmount);
+          const max = b.maxAmount == null ? Infinity : Number(b.maxAmount);
+          return amountNum >= min && amountNum <= max;
+        });
+        if (!band) {
+          throw new BadRequestException(
+            `The payment amount (${pr.amount}) does not fall within any band defined in the approval matrix. ` +
+              'Please update the matrix bands under Masters → Approval Matrices.',
+          );
+        }
+        const matrixSteps = await em.find(ApprovalMatrixStep, {
+          where: { bandId: band.id },
+          order: { stepOrder: 'ASC' },
+        });
+        if (!matrixSteps.length) {
+          throw new BadRequestException(
+            'The matched approval band has no steps configured. Please update the matrix.',
+          );
+        }
+
+        pr.matrixId = matrix.id;
+        pr.matrixVersion = matrix.version;
+        pr.currentStepOrder = 1;
+        await em.save(pr);
+
+        let order = 1;
+        for (const s of matrixSteps) {
+          await em.save(
+            em.create(PaymentRequestApproval, {
+              paymentRequestId: pr.id,
+              stepOrder: order++,
+              approverType: s.approverType,
+              approverUserId: s.approverUserId ?? null,
+              approverRoleId: s.approverRoleId ?? null,
+              decision: 'PENDING',
+            }),
+          );
+        }
+      }
 
       return this.loadOne(pr.id, em.getRepository(PaymentRequest));
     });
