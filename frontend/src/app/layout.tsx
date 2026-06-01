@@ -6,7 +6,6 @@ export const metadata: Metadata = {
   title: 'Payments Control System',
   description: 'Enterprise payments operations and controls',
 };
-
 export default function RootLayout({
   children,
 }: {
