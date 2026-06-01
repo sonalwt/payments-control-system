@@ -43,6 +43,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/banks',          label: 'Banks',          icon: Building },
       { href: '/account-types',  label: 'Account Types',  icon: ListChecks },
       { href: '/bank-accounts',  label: 'Bank Accounts',  icon: Landmark },
+      { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: Wallet2 },
       { href: '/payment-categories', label: 'Payment Categories', icon: FolderTree },
       { href: '/payment-types',      label: 'Payment Types',      icon: FileType2 },
       { href: '/approval-matrices',  label: 'Approval Matrices',  icon: GitBranch },
@@ -64,7 +65,6 @@ const NAV_GROUPS: NavGroup[] = [
     // to access matrices and create payment requests they're eligible for.
     items: [
       { href: '/payment-requests',     label: 'Payment Requests',     icon: CreditCard },
-      { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: Wallet2 },
     ],
   },
 ];
