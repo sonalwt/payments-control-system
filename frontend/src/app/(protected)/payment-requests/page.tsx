@@ -26,7 +26,6 @@ import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { PaymentRequestForm, type PaymentRequestFormData } from './payment-request-form';
 import { useAuth } from '@/hooks/use-auth';
-import { hasAnyRole, RoleCode } from '@/lib/roles';
 
 const KEY = 'payment-requests';
 
@@ -49,16 +48,13 @@ export default function PaymentRequestsPage(): React.ReactElement {
   const notify = useNotify();
   const qc = useQueryClient();
   const { user } = useAuth();
-  const isAdmin = hasAnyRole(user?.roles ?? [], [RoleCode.SUPER_ADMIN]);
 
-  // Only show the create button if the user is a maker for at least one
-  // payment type. Checkers (and other non-maker roles) must not see it.
   const { data: makerCheck } = useQuery({
     queryKey: ['payment-types-mine-check'],
     queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?mine=true&limit=1'),
-    enabled: !!user && !isAdmin,
+    enabled: !!user,
   });
-  const canCreate = !!user && !isAdmin && (makerCheck?.total ?? 0) > 0;
+  const canCreate = !!user && (makerCheck?.total ?? 0) > 0;
 
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
