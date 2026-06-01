@@ -479,25 +479,45 @@ export class PaymentRequestsService {
           );
         }
 
+        // Skip any matrix step whose approver matches the checker that just
+        // approved step 1 — prevents the same role/user appearing twice.
+        const paymentType = await em.findOne(PaymentType, {
+          where: { id: pr.paymentTypeId },
+          select: ['id', 'checkerRoleId', 'checkerUserId'],
+        });
+        const stepsToSeed = matrixSteps.filter((s) => {
+          if (paymentType?.checkerRoleId && s.approverRoleId === paymentType.checkerRoleId) return false;
+          if (paymentType?.checkerUserId && s.approverUserId === paymentType.checkerUserId) return false;
+          return true;
+        });
+
         pr.matrixId = matrix.id;
         pr.matrixVersion = matrix.version;
 
-        // Checker was step 1 (APPROVED). Matrix steps start at step 2.
-        let nextOrder = 2;
-        for (const s of matrixSteps) {
-          await em.save(
-            em.create(PaymentRequestApproval, {
-              paymentRequestId: pr.id,
-              stepOrder: nextOrder++,
-              approverType: s.approverType,
-              approverUserId: s.approverUserId ?? null,
-              approverRoleId: s.approverRoleId ?? null,
-              decision: 'PENDING',
-            }),
-          );
+        if (!stepsToSeed.length) {
+          // All remaining matrix steps were duplicates of the checker —
+          // the chain is complete, go straight to APPROVED.
+          pr.status = 'APPROVED';
+          pr.currentStepOrder = null;
+          pr.approvedAt = new Date();
+        } else {
+          // Checker was step 1 (APPROVED). Matrix steps start at step 2.
+          let nextOrder = 2;
+          for (const s of stepsToSeed) {
+            await em.save(
+              em.create(PaymentRequestApproval, {
+                paymentRequestId: pr.id,
+                stepOrder: nextOrder++,
+                approverType: s.approverType,
+                approverUserId: s.approverUserId ?? null,
+                approverRoleId: s.approverRoleId ?? null,
+                decision: 'PENDING',
+              }),
+            );
+          }
+          pr.currentStepOrder = 2;
+          // status stays PENDING_APPROVAL — matrix approvers review next
         }
-        pr.currentStepOrder = 2;
-        // status stays PENDING_APPROVAL — matrix approvers review next
       } else {
         // ── Phase 2: progressing through matrix steps ─────────────────────
         const totalSteps = await em.count(PaymentRequestApproval, {

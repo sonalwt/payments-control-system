@@ -5,10 +5,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
 import { CheckCircle2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/hooks/use-auth';
-import { hasAnyRole, RoleCode } from '@/lib/roles';
 import type {
   BankAccount,
   BeneficiaryAccount,
@@ -95,21 +94,13 @@ export function PaymentRequestForm({
 
   const counterpartyId = watch('counterpartyId');
   const currencyId = watch('currencyId');
+  const beneficiaryAccountId = watch('beneficiaryAccountId');
 
-  // Non-admin users see only payment types they're eligible to act as
-  // Maker for (matching either pt.maker_role_id IN their roles, or
-  // pt.maker_user_id = their id). Admin sees everything; the backend
-  // ignores the mine flag when absent.
   const { user } = useAuth();
-  const isAdmin = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN]);
 
   const { data: paymentTypes } = useQuery({
-    queryKey: ['payment-types-for-request', isAdmin],
-    queryFn: () => {
-      const params = new URLSearchParams({ page: '1', limit: '200' });
-      if (!isAdmin) params.set('mine', 'true');
-      return api.get<Paginated<PaymentType>>(`/payment-types?${params.toString()}`);
-    },
+    queryKey: ['payment-types-for-request'],
+    queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?page=1&limit=200'),
   });
   const { data: legalEntities } = useQuery({
     queryKey: ['legal-entities-all'],
@@ -142,8 +133,17 @@ export function PaymentRequestForm({
   });
 
   const paymentTypeOptions = (paymentTypes?.data ?? [])
-    .filter((p) => p.isActive)
+    .filter((p) => p.isActive && p.makerRole?.code && user?.roles?.includes(p.makerRole.code))
     .map((p) => ({ label: `${p.code} — ${p.name}`, value: p.id }));
+
+  const selectedBeneficiary = (beneficiaries?.data ?? []).find((b) => b.id === beneficiaryAccountId);
+
+  // When a beneficiary account is selected, auto-set the currency to match it.
+  useEffect(() => {
+    if (selectedBeneficiary?.currencyId) {
+      setValue('currencyId', selectedBeneficiary.currencyId, { shouldValidate: true });
+    }
+  }, [selectedBeneficiary?.currencyId, setValue]);
 
   const { fields, append, remove } = useFieldArray({ control, name: 'documents' });
 
@@ -157,9 +157,6 @@ export function PaymentRequestForm({
           options={paymentTypeOptions}
           {...register('paymentTypeId')} />
         {errors.paymentTypeId && <p className="text-xs text-destructive">{errors.paymentTypeId.message}</p>}
-        {!isAdmin && (
-          <p className="text-xs text-muted-foreground">Showing only payment types where you are the configured Maker.</p>
-        )}
       </div>
       <div className="space-y-2">
         <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
@@ -218,7 +215,9 @@ export function PaymentRequestForm({
         <div className="space-y-2">
           <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
           <Select id="currencyId" placeholder="Select"
-            options={(currencies?.data ?? []).map((c) => ({ label: c.code ? `${c.code} — ${c.name ?? ''}` : (c.name ?? c.id), value: c.id }))}
+            options={(currencies?.data ?? [])
+              .filter((c) => !selectedBeneficiary || c.id === selectedBeneficiary.currencyId)
+              .map((c) => ({ label: c.code ? `${c.code} — ${c.name ?? ''}` : (c.name ?? c.id), value: c.id }))}
             {...register('currencyId')} />
         </div>
         <div className="space-y-2">
