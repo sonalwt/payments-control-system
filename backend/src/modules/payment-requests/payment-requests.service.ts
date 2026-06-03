@@ -8,6 +8,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { RoleCode } from '../../common/enums/role.enum';
 import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import {
+  dubaiDayRangeUtc,
+  dubaiMonthStart,
+  dubaiToday,
+  dubaiYear,
+} from '../../common/utils/datetime';
 import { PaymentRequest, PaymentRequestStatus } from './payment-request.entity';
 import { PaymentRequestApproval } from './payment-request-approval.entity';
 import { PaymentRequestDocument } from './payment-request-document.entity';
@@ -16,10 +22,9 @@ import { UpdatePaymentRequestDto } from './dto/update-payment-request.dto';
 import {
   ApproveDto,
   CancelDto,
-  MarkPaidDto,
   RejectDto,
-  ReleaseDto,
-  UploadProofDto,
+  TreasuryDecisionDto,
+  TreasurySubmitDto,
   WithdrawDto,
 } from './dto/action.dto';
 import { BeneficiaryAccountsService } from '../beneficiary-accounts/beneficiary-accounts.service';
@@ -63,7 +68,6 @@ export class PaymentRequestsService {
       const pr = em.create(PaymentRequest, {
         requestNumber,
         paymentTypeId: dto.paymentTypeId,
-        legalEntityId: dto.legalEntityId,
         counterpartyId: dto.counterpartyId ?? null,
         employeeId: dto.employeeId ?? null,
         beneficiaryAccountId: dto.beneficiaryAccountId ?? null,
@@ -100,26 +104,49 @@ export class PaymentRequestsService {
   }
 
   async findAll(
-    query: PaginationQueryDto & { status?: string; legalEntityId?: string; paymentTypeId?: string },
+    query: PaginationQueryDto & {
+      status?: string;
+      paymentTypeId?: string;
+      // Activity-date filter (filters on *when someone worked on* the request).
+      activityPeriod?: 'today' | 'month' | string;
+      dateFrom?: string;
+      dateTo?: string;
+      // When 'true', return only requests awaiting the viewer's action now
+      // (their active approval step, or a treasury stage they own).
+      awaitingAction?: string;
+    },
     viewer?: AuthenticatedUser,
   ): Promise<PaginatedResult<PaymentRequest>> {
     const { page = 1, limit = 20, search } = query;
     const qb = this.repo
       .createQueryBuilder('pr')
       .leftJoinAndSelect('pr.paymentType', 'paymentType')
-      .leftJoinAndSelect('pr.legalEntity', 'legalEntity')
+      .leftJoinAndSelect('paymentType.legalEntity', 'legalEntity')
       .leftJoinAndSelect('pr.counterparty', 'counterparty')
       .leftJoinAndSelect('pr.employee', 'employee')
       .leftJoinAndSelect('pr.currency', 'currency')
       .leftJoinAndSelect('pr.beneficiaryAccount', 'beneficiaryAccount')
       .leftJoinAndSelect('beneficiaryAccount.bank', 'beneficiaryBank')
       .leftJoinAndSelect('pr.sourceAccount', 'sourceAccount')
+      // Actors that worked on the request: the maker (created_by) plus the
+      // approval chain (each approver and who decided each step). Used by the
+      // "Worked on by" column and the role-based scoping below.
+      .leftJoinAndMapOne(
+        'pr.createdByUser',
+        User,
+        'createdByUser',
+        'createdByUser.id = pr.created_by',
+      )
+      .leftJoinAndSelect('pr.approvals', 'approval')
+      .leftJoinAndSelect('approval.approverUser', 'approverUser')
+      .leftJoinAndSelect('approval.approverRole', 'approverRole')
+      .leftJoinAndSelect('approval.decidedByUser', 'decidedByUser')
       .orderBy('pr.createdAt', 'DESC')
+      .addOrderBy('approval.stepOrder', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
 
     if (query.status) qb.andWhere('pr.status = :status', { status: query.status });
-    if (query.legalEntityId) qb.andWhere('pr.legal_entity_id = :le', { le: query.legalEntityId });
     if (query.paymentTypeId) qb.andWhere('pr.payment_type_id = :pt', { pt: query.paymentTypeId });
     if (search) {
       qb.andWhere(
@@ -129,26 +156,29 @@ export class PaymentRequestsService {
     }
 
     // Role-based visibility — works with any custom role codes in the DB.
-    // No hardcoded role enum values are used here.
+    // No hardcoded role enum values are used here. Auto-scoped to the viewer:
+    // they see requests they (or their roles) have worked on or are assigned to.
     if (viewer) {
       const orClauses: string[] = [];
       const params: Record<string, unknown> = { viewerId: viewer.id };
 
-      // (1) Creator always sees their own requests at any status (incl.
-      //     APPROVED / AWAITING so the maker can release + mark-paid).
+      // (1) Creator always sees their own requests at any status (incl. the
+      //     treasury stages, so they can track execution / handle rejects).
       orClauses.push('pr.created_by = :viewerId');
 
-      // (2) Approver sequential visibility: see requests whose CURRENT
-      //     pending step is assigned to one of the viewer's roles or their
-      //     exact user ID.  Handles both ROLE-type and USER-type steps.
+      // (2) Approver visibility: any step in the chain assigned to one of the
+      //     viewer's roles or their user ID, OR a step the viewer personally
+      //     decided. Covers both the live queue (PENDING steps awaiting them)
+      //     and history (steps they already actioned). Handles ROLE and USER
+      //     step types.
       if (viewer.roles.length > 0) {
         orClauses.push(`EXISTS (
           SELECT 1 FROM payment_request_approvals pra2
           LEFT JOIN roles rl ON rl.id = pra2.approver_role_id
           WHERE pra2.payment_request_id = pr.id
-            AND pra2.step_order = pr.current_step_order
-            AND pra2.decision = 'PENDING'
-            AND (pra2.approver_user_id = :viewerId OR rl.code IN (:...viewerRoles))
+            AND (pra2.approver_user_id = :viewerId
+                 OR pra2.decided_by = :viewerId
+                 OR rl.code IN (:...viewerRoles))
         )`);
         params.viewerRoles = viewer.roles;
       } else {
@@ -156,17 +186,123 @@ export class PaymentRequestsService {
         orClauses.push(`EXISTS (
           SELECT 1 FROM payment_request_approvals pra2
           WHERE pra2.payment_request_id = pr.id
-            AND pra2.step_order = pr.current_step_order
-            AND pra2.decision = 'PENDING'
-            AND pra2.approver_user_id = :viewerId
+            AND (pra2.approver_user_id = :viewerId OR pra2.decided_by = :viewerId)
         )`);
       }
 
+      // (3) Treasury visibility: a treasury maker / checker / authoriser sees
+      //     the requests currently awaiting their stage (the maker stage is
+      //     split by the request's TT mode), plus any treasury stage they have
+      //     already actioned. Treasury actors are NOT part of the approval
+      //     chain, so without this they would never see their queue.
+      const tRoles = viewer.roles ?? [];
+      if (tRoles.includes('TREASURY_MAKER_ONLINE')) {
+        // Online maker also covers legacy rows with no tt_mode (→ online).
+        orClauses.push(`(pr.status = 'TREASURY_MAKER' AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
+      }
+      if (tRoles.includes('TREASURY_MAKER_OFFLINE')) {
+        orClauses.push(`(pr.status = 'TREASURY_MAKER' AND pr.tt_mode = 'OFFLINE_TT')`);
+      }
+      if (tRoles.includes('TREASURY_CHECKER')) {
+        orClauses.push(`(pr.status = 'TREASURY_CHECKER')`);
+      }
+      if (tRoles.includes('TREASURY_AUTHORISER')) {
+        orClauses.push(`(pr.status = 'TREASURY_AUTHORISER')`);
+      }
+      orClauses.push(
+        `(pr.treasury_maker_by = :viewerId OR pr.treasury_checker_by = :viewerId OR pr.treasury_authoriser_by = :viewerId)`,
+      );
+
       qb.andWhere(`(${orClauses.join(' OR ')})`, params);
+
+      // "Needs your attention" — narrow to requests awaiting THIS viewer's
+      // action right now: the active (PENDING) approval step assigned to them,
+      // or a treasury stage they own (maker stage split by TT mode).
+      if (query.awaitingAction === 'true') {
+        const aw: string[] = [];
+        const awParams: Record<string, unknown> = { viewerId: viewer.id };
+        if (viewer.roles.length > 0) {
+          aw.push(`(pr.status = 'PENDING_APPROVAL' AND EXISTS (
+            SELECT 1 FROM payment_request_approvals praA
+            LEFT JOIN roles rlA ON rlA.id = praA.approver_role_id
+            WHERE praA.payment_request_id = pr.id
+              AND praA.step_order = pr.current_step_order
+              AND praA.decision = 'PENDING'
+              AND (praA.approver_user_id = :viewerId OR rlA.code IN (:...awRoles))
+          ))`);
+          awParams.awRoles = viewer.roles;
+        } else {
+          aw.push(`(pr.status = 'PENDING_APPROVAL' AND EXISTS (
+            SELECT 1 FROM payment_request_approvals praA
+            WHERE praA.payment_request_id = pr.id
+              AND praA.step_order = pr.current_step_order
+              AND praA.decision = 'PENDING'
+              AND praA.approver_user_id = :viewerId
+          ))`);
+        }
+        const r = viewer.roles ?? [];
+        if (r.includes('TREASURY_MAKER_ONLINE'))
+          aw.push(`(pr.status = 'TREASURY_MAKER' AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
+        if (r.includes('TREASURY_MAKER_OFFLINE'))
+          aw.push(`(pr.status = 'TREASURY_MAKER' AND pr.tt_mode = 'OFFLINE_TT')`);
+        if (r.includes('TREASURY_CHECKER')) aw.push(`(pr.status = 'TREASURY_CHECKER')`);
+        if (r.includes('TREASURY_AUTHORISER')) aw.push(`(pr.status = 'TREASURY_AUTHORISER')`);
+        qb.andWhere(`(${aw.join(' OR ')})`, awParams);
+      }
+    }
+
+    // Activity-date filter. A request matches when any recorded action — its
+    // creation, a lifecycle transition, or an approval decision — falls inside
+    // the window. Periods are resolved against the Dubai calendar; custom
+    // dates are inclusive YYYY-MM-DD Dubai days.
+    const range = this.resolveActivityRange(query);
+    if (range) {
+      qb.andWhere(
+        `(
+          (pr.created_at >= :actStart AND pr.created_at < :actEnd)
+          OR (pr.submitted_at >= :actStart AND pr.submitted_at < :actEnd)
+          OR (pr.approved_at >= :actStart AND pr.approved_at < :actEnd)
+          OR (pr.treasury_maker_at >= :actStart AND pr.treasury_maker_at < :actEnd)
+          OR (pr.treasury_checker_at >= :actStart AND pr.treasury_checker_at < :actEnd)
+          OR (pr.treasury_authoriser_at >= :actStart AND pr.treasury_authoriser_at < :actEnd)
+          OR (pr.completed_at >= :actStart AND pr.completed_at < :actEnd)
+          OR (pr.updated_at >= :actStart AND pr.updated_at < :actEnd)
+          OR EXISTS (
+            SELECT 1 FROM payment_request_approvals pra3
+            WHERE pra3.payment_request_id = pr.id
+              AND pra3.decided_at >= :actStart AND pra3.decided_at < :actEnd
+          )
+        )`,
+        { actStart: range.start, actEnd: range.end },
+      );
     }
 
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  /**
+   * Resolve the activity-date filter into a half-open UTC instant range, or
+   * null when no date filter was requested. `today` / `month` are derived from
+   * the Dubai calendar; an explicit dateFrom/dateTo pair is treated as
+   * inclusive Dubai calendar days.
+   */
+  private resolveActivityRange(query: {
+    activityPeriod?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): { start: Date; end: Date } | null {
+    if (query.activityPeriod === 'today') {
+      const d = dubaiToday();
+      return dubaiDayRangeUtc(d, d);
+    }
+    if (query.activityPeriod === 'month') {
+      return dubaiDayRangeUtc(dubaiMonthStart(), dubaiToday());
+    }
+    if (query.dateFrom) {
+      return dubaiDayRangeUtc(query.dateFrom, query.dateTo || query.dateFrom);
+    }
+    return null;
   }
 
   findOne(id: string): Promise<PaymentRequest> {
@@ -180,7 +316,6 @@ export class PaymentRequestsService {
     }
     Object.assign(pr, {
       paymentTypeId: dto.paymentTypeId ?? pr.paymentTypeId,
-      legalEntityId: dto.legalEntityId ?? pr.legalEntityId,
       counterpartyId: dto.counterpartyId ?? pr.counterpartyId,
       employeeId: dto.employeeId ?? pr.employeeId,
       beneficiaryAccountId: dto.beneficiaryAccountId ?? pr.beneficiaryAccountId,
@@ -211,7 +346,6 @@ export class PaymentRequestsService {
 
   /**
    * §3 — Submit a DRAFT for approval.
-   * - Validates the document policy of the payment type.
    * - Validates that the destination beneficiary is payable.
    * - Snapshots the matrix band matching (currency, amount) and creates
    *   one PaymentRequestApproval per step.
@@ -227,25 +361,6 @@ export class PaymentRequestsService {
       if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
       if (pr.status !== 'DRAFT') {
         throw new BadRequestException(`Cannot submit in status ${pr.status}`);
-      }
-
-      // §4.1 — verify the required documents are attached.
-      const docs = await em.find(PaymentRequestDocument, {
-        where: { paymentRequestId: pr.id },
-      });
-      const policy = (pr.paymentType?.documentPolicy ?? []) as Array<{
-        code: string;
-        label: string;
-        required: boolean;
-      }>;
-      const attachedCodes = new Set(docs.map((d) => d.documentCode));
-      const missing = policy
-        .filter((p) => p.required && !attachedCodes.has(p.code))
-        .map((p) => p.code);
-      if (missing.length) {
-        throw new BadRequestException(
-          `Missing required documents: ${missing.join(', ')}`,
-        );
       }
 
       // §6 — destination beneficiary must be payable.
@@ -284,7 +399,7 @@ export class PaymentRequestsService {
       // - If the payment type has a checker configured (user or role), the
       //   checker becomes Step 1 and the matrix is snapshotted later when
       //   the checker approves (see approve(), Phase 1). This keeps the
-      //   checker's experience instant and uses the matrix version that's
+      //   checker's experience instant and uses the matrix that's
       //   current at checker-decision time.
       // - If no checker is configured (e.g. PDF §5 Vendor Payments,
       //   Consultants, Capex, Exceptional types), submit must snapshot the
@@ -324,14 +439,14 @@ export class PaymentRequestsService {
           .createQueryBuilder(ApprovalMatrix, 'm')
           .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
           .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
-          .andWhere("m.status = 'PUBLISHED'")
+          .andWhere('m.is_active = true')
           .andWhere('m.deleted_at IS NULL')
-          .orderBy('m.version', 'DESC')
+          .orderBy('m.created_at', 'DESC')
           .getOne();
         if (!matrix) {
           throw new BadRequestException(
-            'No published approval matrix found for this payment type and currency. ' +
-              'Please create and publish an approval matrix under Masters → Approval Matrices before submitting.',
+            'No active approval matrix found for this payment type and currency. ' +
+              'Please create an approval matrix under Masters → Approval Matrices before submitting.',
           );
         }
 
@@ -362,7 +477,7 @@ export class PaymentRequestsService {
         }
 
         pr.matrixId = matrix.id;
-        pr.matrixVersion = matrix.version;
+        pr.ttMode = matrix.ttMode;
         pr.currentStepOrder = 1;
         await em.save(pr);
 
@@ -390,7 +505,7 @@ export class PaymentRequestsService {
    *
    * Two-phase flow:
    *   Phase 1 — Checker (pr.matrixId is null, step 1):
-   *     After the checker approves, look up the published approval matrix.
+   *     After the checker approves, look up the active approval matrix.
    *     If one exists, append its steps (starting at step 2) and advance
    *     currentStepOrder to 2. If none exists, go straight to APPROVED.
    *
@@ -439,16 +554,16 @@ export class PaymentRequestsService {
           .createQueryBuilder(ApprovalMatrix, 'm')
           .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
           .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
-          .andWhere("m.status = 'PUBLISHED'")
+          .andWhere('m.is_active = true')
           .andWhere('m.deleted_at IS NULL')
-          .orderBy('m.version', 'DESC')
+          .orderBy('m.created_at', 'DESC')
           .getOne();
 
         if (!matrix) {
-          // No published matrix — block the approval.
+          // No active matrix — block the approval.
           throw new BadRequestException(
-            'No published approval matrix found for this payment type and currency. ' +
-            'Please create and publish an approval matrix under Masters → Approval Matrices before approving.',
+            'No active approval matrix found for this payment type and currency. ' +
+            'Please create an approval matrix under Masters → Approval Matrices before approving.',
           );
         }
 
@@ -492,12 +607,12 @@ export class PaymentRequestsService {
         });
 
         pr.matrixId = matrix.id;
-        pr.matrixVersion = matrix.version;
+        pr.ttMode = matrix.ttMode;
 
         if (!stepsToSeed.length) {
-          // All remaining matrix steps were duplicates of the checker —
-          // the chain is complete, go straight to APPROVED.
-          pr.status = 'APPROVED';
+          // All remaining matrix steps were duplicates of the checker — the
+          // chain is complete, forward straight to the Treasury Team.
+          pr.status = 'TREASURY_MAKER';
           pr.currentStepOrder = null;
           pr.approvedAt = new Date();
         } else {
@@ -530,7 +645,17 @@ export class PaymentRequestsService {
           );
         }
         if (isFinalStep) {
-          pr.status = 'APPROVED';
+          // Final approval — forward to the Treasury Team for execution.
+          // Ensure the TT mode is snapshotted before the hand-off (covers
+          // requests whose matrix was frozen before tt_mode was captured).
+          if (!pr.ttMode && pr.matrixId) {
+            const m = await em.findOne(ApprovalMatrix, {
+              where: { id: pr.matrixId },
+              select: ['id', 'ttMode'],
+            });
+            if (m) pr.ttMode = m.ttMode;
+          }
+          pr.status = 'TREASURY_MAKER';
           pr.currentStepOrder = null;
           pr.approvedAt = new Date();
           if (dto.sanctionOverrideReason) pr.sanctionOverrideReason = dto.sanctionOverrideReason;
@@ -609,10 +734,20 @@ export class PaymentRequestsService {
       pr.status = 'DRAFT';
       pr.currentStepOrder = null;
       pr.matrixId = null;
-      pr.matrixVersion = null;
       pr.rejectionReason = null;
       pr.submittedAt = null;
       pr.approvedAt = null;
+      // Clear any treasury-stage data captured before the rejection.
+      pr.ttMode = null;
+      pr.treasuryReferenceNumber = null;
+      pr.swiftCopyUrl = null;
+      pr.treasuryMakerBy = null;
+      pr.treasuryMakerAt = null;
+      pr.treasuryCheckerBy = null;
+      pr.treasuryCheckerAt = null;
+      pr.treasuryAuthoriserBy = null;
+      pr.treasuryAuthoriserAt = null;
+      pr.completedAt = null;
       pr.updatedBy = actorId;
       await em.save(pr);
 
@@ -635,38 +770,37 @@ export class PaymentRequestsService {
     return this.repo.save(pr);
   }
 
-  /** §4.3 — Maker releases an APPROVED request to the bank. */
-  async release(id: string, dto: ReleaseDto, actorId: string): Promise<PaymentRequest> {
+  // ===================================================================
+  // Treasury Team execution (post final-approval)
+  // ===================================================================
+
+  /**
+   * Treasury maker captures the bank reference + SWIFT/MT103 copy and forwards
+   * the request to the treasury checker. The maker role depends on the TT mode
+   * snapshotted from the approval matrix (online vs offline).
+   */
+  async treasurySubmit(
+    id: string,
+    dto: TreasurySubmitDto,
+    actorId: string,
+  ): Promise<PaymentRequest> {
     return this.dataSource.transaction(async (em) => {
       const pr = await em.findOne(PaymentRequest, { where: { id } });
       if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
-      if (pr.status !== 'APPROVED') {
-        throw new BadRequestException(`Cannot release in status ${pr.status}`);
+      if (pr.status !== 'TREASURY_MAKER') {
+        throw new BadRequestException(`Cannot submit treasury info in status ${pr.status}`);
       }
-      // Only the payment type's configured maker may release.
-      await this.assertCanMake(actorId, pr.paymentTypeId);
+      const makerRole =
+        pr.ttMode === 'OFFLINE_TT'
+          ? RoleCode.TREASURY_MAKER_OFFLINE
+          : RoleCode.TREASURY_MAKER_ONLINE;
+      await this.assertHasRole(em, actorId, makerRole);
 
-      const acc = await em.findOne(BankAccount, { where: { id: dto.sourceAccountId } });
-      if (!acc) throw new NotFoundException('Source account not found.');
-
-      // §2.5 minimum-balance control (basic, same-currency only)
-      if (acc.currencyId !== pr.currencyId) {
-        throw new BadRequestException(
-          'Cross-currency release is not supported in the MVP. Select a source account in the request currency.',
-        );
-      }
-      const remaining = Number(acc.remainingBalance);
-      const minimum = Number(acc.minimumBalance);
-      const amount = Number(pr.amount);
-      if (remaining - amount < minimum) {
-        throw new BadRequestException(
-          'Releasing this payment would push the source account below its minimum balance.',
-        );
-      }
-
-      pr.sourceAccountId = dto.sourceAccountId;
-      pr.status = 'AWAITING_PAYMENT_CONFIRMATION';
-      pr.releasedAt = new Date();
+      pr.treasuryReferenceNumber = dto.referenceNumber;
+      pr.swiftCopyUrl = dto.swiftCopyUrl;
+      pr.treasuryMakerBy = actorId;
+      pr.treasuryMakerAt = new Date();
+      pr.status = 'TREASURY_CHECKER';
       pr.updatedBy = actorId;
       await em.save(pr);
 
@@ -674,17 +808,46 @@ export class PaymentRequestsService {
     });
   }
 
-  /** §4.4 — Maker captures bank reference + value date → PAID. */
-  async markPaid(id: string, dto: MarkPaidDto, actorId: string): Promise<PaymentRequest> {
+  /** Treasury checker marks the captured info as checked → authoriser. */
+  async treasuryCheck(
+    id: string,
+    _dto: TreasuryDecisionDto,
+    actorId: string,
+  ): Promise<PaymentRequest> {
     return this.dataSource.transaction(async (em) => {
       const pr = await em.findOne(PaymentRequest, { where: { id } });
       if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
-      if (pr.status !== 'AWAITING_PAYMENT_CONFIRMATION') {
-        throw new BadRequestException(`Cannot mark paid in status ${pr.status}`);
+      if (pr.status !== 'TREASURY_CHECKER') {
+        throw new BadRequestException(`Cannot check in status ${pr.status}`);
       }
-      await this.assertCanMake(actorId, pr.paymentTypeId);
+      await this.assertHasRole(em, actorId, RoleCode.TREASURY_CHECKER);
 
-      // Debit the source account's remaining balance on PAID (§2.5).
+      pr.treasuryCheckerBy = actorId;
+      pr.treasuryCheckerAt = new Date();
+      pr.status = 'TREASURY_AUTHORISER';
+      pr.updatedBy = actorId;
+      await em.save(pr);
+
+      return this.loadOne(pr.id, em.getRepository(PaymentRequest));
+    });
+  }
+
+  /** Treasury authoriser marks the payment completed (terminal). */
+  async treasuryComplete(
+    id: string,
+    _dto: TreasuryDecisionDto,
+    actorId: string,
+  ): Promise<PaymentRequest> {
+    return this.dataSource.transaction(async (em) => {
+      const pr = await em.findOne(PaymentRequest, { where: { id } });
+      if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
+      if (pr.status !== 'TREASURY_AUTHORISER') {
+        throw new BadRequestException(`Cannot complete in status ${pr.status}`);
+      }
+      await this.assertHasRole(em, actorId, RoleCode.TREASURY_AUTHORISER);
+
+      // §2.5 — debit the source account's remaining balance on completion
+      // (preserved from the retired mark-paid flow) when one is set.
       if (pr.sourceAccountId) {
         const acc = await em.findOne(BankAccount, { where: { id: pr.sourceAccountId } });
         if (acc) {
@@ -693,10 +856,10 @@ export class PaymentRequestsService {
         }
       }
 
-      pr.bankReference = dto.bankReference;
-      pr.valueDate = dto.valueDate;
-      pr.status = 'PAID';
-      pr.paidAt = new Date();
+      pr.treasuryAuthoriserBy = actorId;
+      pr.treasuryAuthoriserAt = new Date();
+      pr.completedAt = new Date();
+      pr.status = 'COMPLETED';
       pr.updatedBy = actorId;
       await em.save(pr);
 
@@ -704,21 +867,47 @@ export class PaymentRequestsService {
     });
   }
 
-  async uploadProof(id: string, dto: UploadProofDto, actorId: string): Promise<PaymentRequest> {
-    const pr = await this.findOne(id);
-    if (pr.status !== 'PAID' && pr.status !== 'AWAITING_PAYMENT_CONFIRMATION') {
-      throw new BadRequestException(`Cannot upload proof in status ${pr.status}`);
-    }
-    await this.assertCanMake(actorId, pr.paymentTypeId);
-    pr.proofOfPaymentUrl = dto.proofOfPaymentUrl;
-    pr.updatedBy = actorId;
-    return this.repo.save(pr);
+  /**
+   * Any treasury stage may reject — the request returns to the initiator as
+   * REJECTED. The maker then resubmits, which reruns the approval matrix.
+   */
+  async treasuryReject(
+    id: string,
+    dto: RejectDto,
+    actorId: string,
+  ): Promise<PaymentRequest> {
+    return this.dataSource.transaction(async (em) => {
+      const pr = await em.findOne(PaymentRequest, { where: { id } });
+      if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
+
+      const stageRole: RoleCode | null =
+        pr.status === 'TREASURY_MAKER'
+          ? pr.ttMode === 'OFFLINE_TT'
+            ? RoleCode.TREASURY_MAKER_OFFLINE
+            : RoleCode.TREASURY_MAKER_ONLINE
+          : pr.status === 'TREASURY_CHECKER'
+            ? RoleCode.TREASURY_CHECKER
+            : pr.status === 'TREASURY_AUTHORISER'
+              ? RoleCode.TREASURY_AUTHORISER
+              : null;
+      if (!stageRole) {
+        throw new BadRequestException(`Cannot reject in status ${pr.status}`);
+      }
+      await this.assertHasRole(em, actorId, stageRole);
+
+      pr.status = 'REJECTED';
+      pr.rejectionReason = dto.comments;
+      pr.updatedBy = actorId;
+      await em.save(pr);
+
+      return this.loadOne(pr.id, em.getRepository(PaymentRequest));
+    });
   }
 
   /** Administrative cancel — any non-terminal status. */
   async cancel(id: string, dto: CancelDto, actorId: string): Promise<PaymentRequest> {
     const pr = await this.findOne(id);
-    if (pr.status === 'PAID' || pr.status === 'CANCELLED' || pr.status === 'REJECTED' || pr.status === 'WITHDRAWN') {
+    if (pr.status === 'COMPLETED' || pr.status === 'CANCELLED' || pr.status === 'REJECTED' || pr.status === 'WITHDRAWN') {
       throw new BadRequestException(`Cannot cancel in status ${pr.status}`);
     }
     pr.status = 'CANCELLED';
@@ -783,11 +972,39 @@ export class PaymentRequestsService {
    *
    * Throws ForbiddenException when the actor does not qualify.
    */
+  /**
+   * Assert the actor holds the given role code (SUPER_ADMIN / platform-admin
+   * bypass). Used to gate the treasury maker / checker / authoriser stages.
+   */
+  private async assertHasRole(
+    em: EntityManager,
+    actorId: string,
+    code: RoleCode,
+  ): Promise<void> {
+    const userRow = await em
+      .getRepository(User)
+      .findOne({ where: { id: actorId }, select: ['id', 'isPlatformAdmin'] });
+    if (userRow?.isPlatformAdmin) return;
+
+    const has = await em
+      .getRepository(UserRole)
+      .createQueryBuilder('ur')
+      .innerJoin('ur.role', 'r')
+      .where('ur.user_id = :uid', { uid: actorId })
+      .andWhere('r.code IN (:...codes)', { codes: [code, RoleCode.SUPER_ADMIN] })
+      .getCount();
+    if (has > 0) return;
+
+    throw new ForbiddenException(
+      `You do not hold the required role (${code}) to act on this treasury stage.`,
+    );
+  }
+
   private async assertCanMake(actorId: string, paymentTypeId: string): Promise<void> {
     const ptRepo = this.dataSource.getRepository(PaymentType);
     const pt = await ptRepo.findOne({
       where: { id: paymentTypeId },
-      select: ['id', 'code', 'name', 'makerRoleId', 'makerUserId'],
+      select: ['id', 'code', 'name', 'makerRoleId', 'makerRoleIds', 'makerUserId'],
     });
     if (!pt) throw new NotFoundException(`Payment type ${paymentTypeId} not found`);
 
@@ -808,11 +1025,19 @@ export class PaymentRequestsService {
     // Named-user maker match.
     if (pt.makerUserId && pt.makerUserId === actorId) return;
 
-    // Role-based maker match.
-    if (pt.makerRoleId) {
+    // Role-based maker match — the actor may hold any of the type's maker
+    // roles (maker_role_ids), or the legacy single primary (maker_role_id).
+    const makerRoleIds = [
+      ...(pt.makerRoleIds ?? []),
+      ...(pt.makerRoleId ? [pt.makerRoleId] : []),
+    ];
+    if (makerRoleIds.length > 0) {
       const has = await this.dataSource
         .getRepository(UserRole)
-        .count({ where: { userId: actorId, roleId: pt.makerRoleId } });
+        .createQueryBuilder('ur')
+        .where('ur.user_id = :uid', { uid: actorId })
+        .andWhere('ur.role_id IN (:...roleIds)', { roleIds: makerRoleIds })
+        .getCount();
       if (has > 0) return;
     }
 
@@ -825,7 +1050,7 @@ export class PaymentRequestsService {
     const pr = await repo
       .createQueryBuilder('pr')
       .leftJoinAndSelect('pr.paymentType', 'paymentType')
-      .leftJoinAndSelect('pr.legalEntity', 'legalEntity')
+      .leftJoinAndSelect('paymentType.legalEntity', 'legalEntity')
       .leftJoinAndSelect('pr.counterparty', 'counterparty')
       .leftJoinAndSelect('pr.employee', 'employee')
       .leftJoinAndSelect('pr.currency', 'currency')
@@ -837,6 +1062,9 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('approval.approverUser', 'approverUser')
       .leftJoinAndSelect('approval.approverRole', 'approverRole')
       .leftJoinAndSelect('approval.decidedByUser', 'decidedByUser')
+      .leftJoinAndSelect('pr.treasuryMakerByUser', 'treasuryMakerByUser')
+      .leftJoinAndSelect('pr.treasuryCheckerByUser', 'treasuryCheckerByUser')
+      .leftJoinAndSelect('pr.treasuryAuthoriserByUser', 'treasuryAuthoriserByUser')
       .leftJoinAndSelect('pr.documents', 'document')
       .where('pr.id = :id', { id })
       .orderBy('approval.stepOrder', 'ASC')
@@ -849,7 +1077,7 @@ export class PaymentRequestsService {
   private async nextRequestNumber(em: { query: (s: string) => Promise<unknown> }): Promise<string> {
     const rows = (await em.query("SELECT nextval('payment_request_seq') AS n")) as Array<{ n: string }>;
     const seq = Number(rows[0].n);
-    const year = new Date().getUTCFullYear();
+    const year = dubaiYear();
     return `PR-${year}-${String(seq).padStart(5, '0')}`;
   }
 
@@ -883,7 +1111,8 @@ export class PaymentRequestsService {
    *
    * Rules:
    *  1. Amount spike  — current amount > 3× the average of the last 10
-   *                     PAID/APPROVED payments to the same beneficiary.
+   *                     fully-approved payments to the same beneficiary
+   *                     (those that reached the treasury stages / completed).
    *  2. Rapid repeat  — 2 or more payment requests already submitted to the
    *                     same beneficiary in the last 7 days (this would make 3+).
    *  3. Recent modify — a MODIFY change request was approved for this
@@ -907,7 +1136,7 @@ export class PaymentRequestsService {
     const hist = (await em.query(
       `SELECT amount FROM payment_requests
        WHERE beneficiary_account_id = $1
-         AND status IN ('PAID', 'APPROVED')
+         AND status IN ('TREASURY_MAKER', 'TREASURY_CHECKER', 'TREASURY_AUTHORISER', 'COMPLETED')
          AND deleted_at IS NULL
          AND id <> $2
        ORDER BY submitted_at DESC NULLS LAST

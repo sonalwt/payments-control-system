@@ -203,8 +203,8 @@ BEGIN
     -- =================================================================
     -- 5.1 Trade Payments (all 4 bands complete)
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Trade Payments — Authority Matrix', 'Per policy section 5.1', pt_trade, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Trade Payments — Authority Matrix', 'Per policy section 5.1', pt_trade, v_currency_usd)
     RETURNING id INTO v_matrix_id;
 
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, 100000) RETURNING id INTO v_band_id;
@@ -238,8 +238,8 @@ BEGIN
     -- =================================================================
     -- 5.2 Travel Desk (all 3 bands complete)
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Travel Desk — Authority Matrix', 'Per policy section 5.2', pt_travel, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Travel Desk — Authority Matrix', 'Per policy section 5.2', pt_travel, v_currency_usd)
     RETURNING id INTO v_matrix_id;
 
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, 1000) RETURNING id INTO v_band_id;
@@ -267,10 +267,10 @@ BEGIN
     -- Annual Subscriptions — only the "Above 50,000" band has complete
     -- info (Maker / Checker / A1 / A2). Lower bands have no A2.
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
     VALUES ('Annual Subscription — Authority Matrix',
             'Per policy section 5 (Annual subscriptions — Above 50,000 band only).',
-            pt_subscription, v_currency_usd, 'PUBLISHED', now())
+            pt_subscription, v_currency_usd)
     RETURNING id INTO v_matrix_id;
 
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 50000.0001, NULL) RETURNING id INTO v_band_id;
@@ -283,8 +283,8 @@ BEGIN
     -- =================================================================
     -- 5.3 Salaries — single band (any amount)
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Salaries — Authority Matrix', 'Per policy section 5.3', pt_salaries, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Salaries — Authority Matrix', 'Per policy section 5.3', pt_salaries, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES
@@ -295,8 +295,8 @@ BEGIN
     -- =================================================================
     -- 5.3 Statutory Dues
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Statutory Dues — Authority Matrix', 'Per policy section 5.3 (VAT, TDS)', pt_statutory, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Statutory Dues — Authority Matrix', 'Per policy section 5.3 (VAT, TDS)', pt_statutory, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES
@@ -307,8 +307,8 @@ BEGIN
     -- =================================================================
     -- 5.3 Rent & Utilities — Singapore (Magaeshwari/Magaeshwari/Ganesh)
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Rent & Utilities — Singapore Office', 'Per policy section 5.3', pt_rent_sg, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Rent & Utilities — Singapore Office', 'Per policy section 5.3', pt_rent_sg, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES
@@ -319,8 +319,8 @@ BEGIN
     -- =================================================================
     -- 5.3 Rent & Utilities — Dubai (Shivam/Shivam/Mr Ali)
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Rent & Utilities — Dubai Office', 'Per policy section 5.3', pt_rent_dxb, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Rent & Utilities — Dubai Office', 'Per policy section 5.3', pt_rent_dxb, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES
@@ -331,8 +331,8 @@ BEGIN
     -- =================================================================
     -- 5.3 Rent & Utilities — Geneva (Ghizlane/Abhishek Team/Tarang)
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Rent & Utilities — Geneva Office', 'Per policy section 5.3', pt_rent_geneva, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Rent & Utilities — Geneva Office', 'Per policy section 5.3', pt_rent_geneva, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES
@@ -343,8 +343,8 @@ BEGIN
     -- =================================================================
     -- 5.3 Rent & Utilities — UK (Saritha/Abhishek Team/Tarang)
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Rent & Utilities — UK Office', 'Per policy section 5.3', pt_rent_uk, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Rent & Utilities — UK Office', 'Per policy section 5.3', pt_rent_uk, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES
@@ -355,8 +355,8 @@ BEGIN
     -- =================================================================
     -- 5.3 Rent & Utilities — US (Saritha/Abhishek Team/Tarang)
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Rent & Utilities — US Office', 'Per policy section 5.3', pt_rent_us, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Rent & Utilities — US Office', 'Per policy section 5.3', pt_rent_us, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES
@@ -367,8 +367,8 @@ BEGIN
     -- =================================================================
     -- 5.4 Capex — single approver (Pinkesh) per band, all bands.
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Capital Expenditure — Authority Matrix', 'Per policy section 5.4', pt_capex, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Capital Expenditure — Authority Matrix', 'Per policy section 5.4', pt_capex, v_currency_usd)
     RETURNING id INTO v_matrix_id;
 
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, 50000) RETURNING id INTO v_band_id;
@@ -383,32 +383,32 @@ BEGIN
     -- =================================================================
     -- 5.5 Exceptional Payments — single approver (Pinkesh) per matrix
     -- =================================================================
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Exceptional — M&A', 'Per policy section 5.5', pt_exc_ma, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Exceptional — M&A', 'Per policy section 5.5', pt_exc_ma, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES (v_band_id, 1, 'USER', NULL, u_pinkesh);
 
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Exceptional — Related Party', 'Per policy section 5.5', pt_exc_rpt, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Exceptional — Related Party', 'Per policy section 5.5', pt_exc_rpt, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES (v_band_id, 1, 'USER', NULL, u_pinkesh);
 
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Exceptional — Legal Settlement', 'Per policy section 5.5', pt_exc_legal, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Exceptional — Legal Settlement', 'Per policy section 5.5', pt_exc_legal, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES (v_band_id, 1, 'USER', NULL, u_pinkesh);
 
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Exceptional — Write-off', 'Per policy section 5.5', pt_exc_writeoff, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Exceptional — Write-off', 'Per policy section 5.5', pt_exc_writeoff, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES (v_band_id, 1, 'USER', NULL, u_pinkesh);
 
-    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
-    VALUES ('Exceptional — CSR / Donations', 'Per policy section 5.5', pt_exc_csr, v_currency_usd, 'PUBLISHED', now())
+    INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
+    VALUES ('Exceptional — CSR / Donations', 'Per policy section 5.5', pt_exc_csr, v_currency_usd)
     RETURNING id INTO v_matrix_id;
     INSERT INTO approval_matrix_bands (matrix_id, sort_order, min_amount, max_amount) VALUES (v_matrix_id, 1, 0, NULL) RETURNING id INTO v_band_id;
     INSERT INTO approval_matrix_steps (band_id, step_order, approver_type, approver_role_id, approver_user_id) VALUES (v_band_id, 1, 'USER', NULL, u_pinkesh);

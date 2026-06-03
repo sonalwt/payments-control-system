@@ -15,33 +15,6 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-class DocumentPolicyItemDto {
-  @ApiProperty({ example: 'INVOICE' })
-  @IsString()
-  @IsNotEmpty()
-  code!: string;
-
-  @ApiProperty({ example: 'Invoice PDF' })
-  @IsString()
-  @IsNotEmpty()
-  label!: string;
-
-  @ApiProperty({ example: true })
-  @IsBoolean()
-  required!: boolean;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  amountThresholdMinor?: number | null;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  currencyCode?: string | null;
-}
-
 class FieldConfigItemDto {
   @ApiProperty()
   @IsString()
@@ -125,13 +98,6 @@ export class CreatePaymentTypeDto {
   @IsBoolean()
   allowsCrossCurrency?: boolean;
 
-  @ApiPropertyOptional({ type: [DocumentPolicyItemDto] })
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => DocumentPolicyItemDto)
-  documentPolicy?: DocumentPolicyItemDto[];
-
   @ApiPropertyOptional({ type: [FieldConfigItemDto] })
   @IsOptional()
   @IsArray()
@@ -149,7 +115,20 @@ export class CreatePaymentTypeDto {
   @IsUUID()
   paymentCategoryId?: string | null;
 
-  @ApiPropertyOptional({ description: 'Default Maker (creator) role UUID' })
+  @ApiProperty({ description: 'Legal entity master UUID this payment type belongs to' })
+  @IsUUID()
+  legalEntityId!: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Maker (creator) role UUIDs. Any user holding one of these roles may create requests for this payment type.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  makerRoleIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Deprecated — single Maker role UUID. Prefer makerRoleIds.' })
   @IsOptional()
   @IsUUID()
   makerRoleId?: string | null;

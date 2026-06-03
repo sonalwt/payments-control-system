@@ -59,10 +59,6 @@ export class CreatePaymentRequestDto {
   @IsUUID()
   paymentTypeId!: string;
 
-  @ApiProperty()
-  @IsUUID()
-  legalEntityId!: string;
-
   @ApiPropertyOptional({ description: 'Required for vendor / incoming receipt types.' })
   @IsOptional()
   @IsUUID()

@@ -1,18 +1,11 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { PaymentCategory } from '../payment-categories/payment-category.entity';
+import { LegalEntity } from '../legal-entities/legal-entity.entity';
 import { Role } from '../roles/role.entity';
 import { User } from '../users/user.entity';
 
 export type PaymentDirection = 'OUTGOING' | 'INCOMING';
-
-export interface DocumentPolicyItem {
-  code: string;
-  label: string;
-  required: boolean;
-  amountThresholdMinor?: number | null;
-  currencyCode?: string | null;
-}
 
 export interface FieldConfigItem {
   key: string;
@@ -53,9 +46,6 @@ export class PaymentType extends BaseEntity {
   @Column({ name: 'allows_cross_currency', type: 'boolean', default: true })
   allowsCrossCurrency!: boolean;
 
-  @Column({ name: 'document_policy', type: 'jsonb', default: () => "'[]'" })
-  documentPolicy!: DocumentPolicyItem[];
-
   @Column({ name: 'field_config', type: 'jsonb', default: () => "'[]'" })
   fieldConfig!: FieldConfigItem[];
 
@@ -80,6 +70,20 @@ export class PaymentType extends BaseEntity {
   @ManyToOne(() => PaymentCategory)
   @JoinColumn({ name: 'payment_category_id' })
   paymentCategory?: PaymentCategory | null;
+
+  @Column({ name: 'legal_entity_id', type: 'uuid' })
+  legalEntityId!: string;
+
+  @ManyToOne(() => LegalEntity, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'legal_entity_id' })
+  legalEntity?: LegalEntity;
+
+  // Maker roles — a payment type may have several maker roles; any user
+  // holding one of them can create requests for this type. `maker_role_ids`
+  // is the source of truth; `maker_role_id` is kept in sync with the first
+  // entry as a denormalised "primary" for legacy single-role consumers.
+  @Column({ name: 'maker_role_ids', type: 'uuid', array: true, default: () => "'{}'" })
+  makerRoleIds!: string[];
 
   @Column({ name: 'maker_role_id', type: 'uuid', nullable: true })
   makerRoleId?: string | null;

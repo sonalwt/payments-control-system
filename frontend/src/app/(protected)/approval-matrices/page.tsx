@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Eye, FileEdit, Lock, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { Eye, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { ApprovalMatrix, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
@@ -24,21 +24,15 @@ import { ApprovalMatrixForm, type ApprovalMatrixFormData } from './approval-matr
 
 const KEY = 'approval-matrices';
 
-const STATUS_STYLES: Record<ApprovalMatrix['status'], string> = {
-  DRAFT: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800',
-  PUBLISHED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800',
-  SUPERSEDED: 'bg-muted text-muted-foreground ring-border',
-};
-
 function MatrixDetails({ m }: { m: ApprovalMatrix }): React.ReactElement {
   const ccyCode = m.currency?.code ?? m.currency?.name ?? '';
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div><span className="text-muted-foreground">Name:</span> <span className="font-medium">{m.name}</span></div>
-        <div><span className="text-muted-foreground">Version:</span> v{m.version}</div>
         <div><span className="text-muted-foreground">Payment type:</span> {m.paymentType?.name ?? '—'}</div>
         <div><span className="text-muted-foreground">Currency:</span> {ccyCode || '—'}</div>
+        <div><span className="text-muted-foreground">TT mode:</span> {m.ttMode === 'OFFLINE_TT' ? 'Offline TT' : 'Online TT'}</div>
         <div><span className="text-muted-foreground">Effective from:</span> {m.effectiveFrom}</div>
         <div><span className="text-muted-foreground">Effective to:</span> {m.effectiveTo ?? '—'}</div>
       </div>
@@ -116,11 +110,6 @@ export default function ApprovalMatricesPage(): React.ReactElement {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setEditing(null); notify.success('Updated'); },
     onError: (e: Error) => notify.error('Update failed', e),
   });
-  const publishMut = useMutation({
-    mutationFn: (id: string) => api.post<ApprovalMatrix>(`/approval-matrices/${id}/publish`, {}),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); notify.success('Matrix published'); },
-    onError: (e: Error) => notify.error('Publish failed', e),
-  });
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.del<void>(`/approval-matrices/${id}`),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setDeleting(null); notify.success('Deleted'); },
@@ -131,7 +120,7 @@ export default function ApprovalMatricesPage(): React.ReactElement {
     <div>
       <PageHeader
         title="Approval Matrices"
-        description="Per-payment-type approval bands in native currency (SoW §1.5). Matrices version with effective dates; in-flight requests retain the matrix snapshot active at submission."
+        description="Per-payment-type approval bands in native currency (SoW §1.5). Matrices carry effective dates; in-flight requests retain the matrix snapshot active at submission."
         actions={
           isAdmin ? (
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -157,59 +146,39 @@ export default function ApprovalMatricesPage(): React.ReactElement {
               <TableHead>Name</TableHead>
               <TableHead>Payment type</TableHead>
               <TableHead>Currency</TableHead>
-              <TableHead>Version</TableHead>
+              <TableHead>TT mode</TableHead>
               <TableHead>Effective</TableHead>
               <TableHead>Bands</TableHead>
-              <TableHead>Status</TableHead>
               <TableHead className="w-44 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={8} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((m) => (
               <TableRow key={m.id}>
                 <TableCell className="font-medium">{m.name}</TableCell>
                 <TableCell>{m.paymentType?.name ?? '—'}</TableCell>
                 <TableCell>{m.currency?.code ?? m.currency?.name ?? '—'}</TableCell>
-                <TableCell>v{m.version}</TableCell>
+                <TableCell className="text-xs">{m.ttMode === 'OFFLINE_TT' ? 'Offline TT' : 'Online TT'}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {m.effectiveFrom}{m.effectiveTo ? ` → ${m.effectiveTo}` : ' →'}
                 </TableCell>
                 <TableCell className="text-muted-foreground">{m.bands?.length ?? 0}</TableCell>
-                <TableCell>
-                  <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${STATUS_STYLES[m.status]}`}>
-                    {m.status}
-                  </span>
-                </TableCell>
                 <TableCell className="text-right">
                   <div className="inline-flex items-center gap-1 whitespace-nowrap">
                     <Button size="icon" variant="ghost" onClick={() => setViewing(m)} title="View"><Eye className="h-4 w-4" /></Button>
-                    {isAdmin && m.status === 'DRAFT' && (
+                    {isAdmin && (
                       <>
                         <Button size="icon" variant="ghost" onClick={() => setEditing(m)} title="Edit"><Pencil className="h-4 w-4" /></Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => publishMut.mutate(m.id)}
-                          disabled={publishMut.isPending}
-                          title="Publish"
-                        >
-                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                        </Button>
                         <Button size="icon" variant="ghost" onClick={() => setDeleting(m)} title="Delete"><Trash2 className="h-4 w-4 text-destructive" /></Button>
                       </>
-                    )}
-                    {m.status !== 'DRAFT' && (
-                      <span title="Published / superseded — read-only">
-                        <Lock className="h-4 w-4 text-muted-foreground" />
-                      </span>
                     )}
                   </div>
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={8} className="py-12 text-center text-muted-foreground">No approval matrices yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No approval matrices yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

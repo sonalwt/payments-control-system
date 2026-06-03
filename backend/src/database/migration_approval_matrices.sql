@@ -16,27 +16,24 @@ CREATE TABLE IF NOT EXISTS approval_matrices (
     description       TEXT,
     payment_type_id   UUID NOT NULL REFERENCES payment_types(id) ON DELETE RESTRICT,
     currency_id       UUID NOT NULL REFERENCES currencies(id)    ON DELETE RESTRICT,
-    version           INT  NOT NULL DEFAULT 1,
-    status            VARCHAR(15) NOT NULL DEFAULT 'DRAFT',
     effective_from    DATE NOT NULL DEFAULT CURRENT_DATE,
     effective_to      DATE,
-    published_at      TIMESTAMPTZ,
-    published_by      UUID,
     is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Treasury Team that executes the payment after final approval.
+    tt_mode           VARCHAR(20) NOT NULL DEFAULT 'ONLINE_TT',
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at        TIMESTAMPTZ,
     created_by        UUID,
     updated_by        UUID,
-    CONSTRAINT chk_matrix_status CHECK (status IN ('DRAFT', 'PUBLISHED', 'SUPERSEDED'))
+    CONSTRAINT chk_approval_matrix_tt_mode CHECK (tt_mode IN ('ONLINE_TT','OFFLINE_TT'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_matrices_payment_type  ON approval_matrices(payment_type_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_matrices_currency      ON approval_matrices(currency_id)      WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_matrices_status        ON approval_matrices(status)           WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_matrices_deleted_at    ON approval_matrices(deleted_at)       WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_matrices_pt_ccy_name_version_live
-    ON approval_matrices(payment_type_id, currency_id, name, version)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_matrices_pt_ccy_name_live
+    ON approval_matrices(payment_type_id, currency_id, name)
     WHERE deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS approval_matrix_bands (

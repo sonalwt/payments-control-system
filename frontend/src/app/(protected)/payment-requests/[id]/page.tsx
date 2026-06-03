@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   FileText,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Send,
@@ -24,13 +25,13 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { api, resolveFileUrl } from '@/lib/api';
-import type { BankAccount, Paginated, PaymentRequest } from '@/types/domain';
+import { formatDateTime } from '@/lib/datetime';
+import type { PaymentRequest } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -41,9 +42,10 @@ import { useAuth } from '@/hooks/use-auth';
 const STATUS_STYLES: Record<string, string> = {
   DRAFT: 'bg-muted text-muted-foreground ring-border',
   PENDING_APPROVAL: 'bg-amber-50 text-amber-700 ring-amber-200',
-  APPROVED: 'bg-blue-50 text-blue-700 ring-blue-200',
-  AWAITING_PAYMENT_CONFIRMATION: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
-  PAID: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  TREASURY_MAKER: 'bg-blue-50 text-blue-700 ring-blue-200',
+  TREASURY_CHECKER: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
+  TREASURY_AUTHORISER: 'bg-violet-50 text-violet-700 ring-violet-200',
+  COMPLETED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   REJECTED: 'bg-rose-50 text-rose-700 ring-rose-200',
   WITHDRAWN: 'bg-muted text-muted-foreground ring-border',
   CANCELLED: 'bg-muted text-muted-foreground ring-border',
@@ -62,17 +64,11 @@ type ApproveData = z.infer<typeof approveSchema>;
 const rejectSchema = z.object({ comments: z.string().min(5, 'Reason required (min 5 chars)') });
 type RejectData = z.infer<typeof rejectSchema>;
 
-const releaseSchema = z.object({ sourceAccountId: z.string().uuid('Select a source account') });
-type ReleaseData = z.infer<typeof releaseSchema>;
-
-const markPaidSchema = z.object({
-  bankReference: z.string().min(1, 'Bank reference required'),
-  valueDate: z.string().min(1, 'Value date required'),
+const treasurySubmitSchema = z.object({
+  referenceNumber: z.string().min(1, 'Reference number required'),
+  swiftCopyUrl: z.string().min(1, 'SWIFT / MT103 copy required'),
 });
-type MarkPaidData = z.infer<typeof markPaidSchema>;
-
-const proofSchema = z.object({ proofOfPaymentUrl: z.string().min(1, 'URL required') });
-type ProofData = z.infer<typeof proofSchema>;
+type TreasurySubmitData = z.infer<typeof treasurySubmitSchema>;
 
 // ---------------------------------------------------------------------
 
@@ -86,9 +82,8 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
 
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [releaseOpen, setReleaseOpen] = useState(false);
-  const [paidOpen, setPaidOpen] = useState(false);
-  const [proofOpen, setProofOpen] = useState(false);
+  const [treasurySubmitOpen, setTreasurySubmitOpen] = useState(false);
+  const [treasuryRejectOpen, setTreasuryRejectOpen] = useState(false);
 
   // Document editing state (used when status = DRAFT)
   const [newDocCode, setNewDocCode] = useState('');
@@ -102,13 +97,6 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     queryKey: ['payment-request', id],
     queryFn: () => api.get<PaymentRequest>(`/payment-requests/${id}`),
     enabled: !!id,
-  });
-
-  // Source accounts (filtered to the request's currency on the form below)
-  const { data: bankAccounts } = useQuery({
-    queryKey: ['bank-accounts-all'],
-    queryFn: () => api.get<Paginated<BankAccount>>('/bank-accounts?page=1&limit=200'),
-    enabled: pr?.status === 'APPROVED',
   });
 
   const mut = (path: string, body: unknown) =>
@@ -139,20 +127,25 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setRejectOpen(false); notify.success('Rejected'); },
     onError: (e: Error) => notify.error('Reject failed', e),
   });
-  const releaseMut = useMutation({
-    mutationFn: (d: ReleaseData) => mut('release', d),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setReleaseOpen(false); notify.success('Released to bank'); },
-    onError: (e: Error) => notify.error('Release failed', e),
+  const treasurySubmitMut = useMutation({
+    mutationFn: (d: TreasurySubmitData) => mut('treasury/submit', d),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setTreasurySubmitOpen(false); notify.success('Submitted to treasury checker'); },
+    onError: (e: Error) => notify.error('Treasury submit failed', e),
   });
-  const markPaidMut = useMutation({
-    mutationFn: (d: MarkPaidData) => mut('mark-paid', d),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setPaidOpen(false); notify.success('Marked paid'); },
-    onError: (e: Error) => notify.error('Mark-paid failed', e),
+  const treasuryCheckMut = useMutation({
+    mutationFn: () => mut('treasury/check', {}),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); notify.success('Marked checked'); },
+    onError: (e: Error) => notify.error('Check failed', e),
   });
-  const proofMut = useMutation({
-    mutationFn: (d: ProofData) => mut('upload-proof', d),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setProofOpen(false); notify.success('Proof uploaded'); },
-    onError: (e: Error) => notify.error('Upload failed', e),
+  const treasuryCompleteMut = useMutation({
+    mutationFn: () => mut('treasury/complete', {}),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); notify.success('Payment completed'); },
+    onError: (e: Error) => notify.error('Complete failed', e),
+  });
+  const treasuryRejectMut = useMutation({
+    mutationFn: (d: RejectData) => mut('treasury/reject', d),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setTreasuryRejectOpen(false); notify.success('Rejected — returned to initiator'); },
+    onError: (e: Error) => notify.error('Reject failed', e),
   });
 
   const attachDocMut = useMutation({
@@ -207,7 +200,14 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   // The backend enforces all permissions; the frontend uses isMine + canActOnStep.
   const isInitiator = true;  // isMine gates Submit/Withdraw
   const isApprover = true;   // canActOnStep gates Approve/Reject
-  const isMaker = isMine;    // creator is the maker for Release/Mark-paid
+
+  // Treasury-stage gating. SUPER_ADMIN may act on any stage (mirrors the
+  // backend bypass). The maker role depends on the request's TT mode.
+  const isSuperAdmin = userRoles.includes('SUPER_ADMIN');
+  const makerRoleNeeded = pr.ttMode === 'OFFLINE_TT' ? 'TREASURY_MAKER_OFFLINE' : 'TREASURY_MAKER_ONLINE';
+  const canTreasuryMaker = isSuperAdmin || userRoles.includes(makerRoleNeeded);
+  const canTreasuryChecker = isSuperAdmin || userRoles.includes('TREASURY_CHECKER');
+  const canTreasuryAuthoriser = isSuperAdmin || userRoles.includes('TREASURY_AUTHORISER');
 
   // Active step authorisation hint: for ROLE-steps any holder can act; for
   // USER-steps only the assigned user. The backend re-checks regardless.
@@ -217,18 +217,6 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       ? (activeStep.approverType === 'USER' && activeStep.approverUserId === user?.id) ||
         (activeStep.approverType === 'ROLE' && !!activeStep.approverRole?.code && userRoles.includes(activeStep.approverRole.code))
       : false;
-
-  // The final approver must not reject — all prior checks are complete.
-  const totalSteps = pr.approvals?.length ?? 0;
-  const isFinalStep = totalSteps > 0 && (pr.currentStepOrder ?? 0) === totalSteps;
-
-  // Filter source accounts to the request currency.
-  const sourceAccountOptions = (bankAccounts?.data ?? [])
-    .filter((a) => a.currencyId === pr.currencyId && a.isActive)
-    .map((a) => ({
-      label: `${a.bank?.name ?? a.bankName ?? 'Bank'} · ${a.accountNumber} · remaining ${Number(a.remainingBalance).toLocaleString()}`,
-      value: a.id,
-    }));
 
   return (
     <div>
@@ -256,6 +244,13 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         description={pr.paymentType?.description ?? undefined}
         actions={
           <div className="flex gap-2">
+            {pr.status === 'DRAFT' && isMine && (
+              <Link href={`/payment-requests/${id}/edit`}>
+                <Button size="sm" variant="outline">
+                  <Pencil className="mr-1 h-4 w-4" /> Edit
+                </Button>
+              </Link>
+            )}
             {pr.status === 'DRAFT' && isInitiator && isMine && (
               <Button size="sm" onClick={() => submitMut.mutate()} disabled={submitMut.isPending}>
                 <Send className="mr-1 h-4 w-4" /> Submit
@@ -281,20 +276,35 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
                 </Button>
               </>
             )}
-            {pr.status === 'APPROVED' && isMaker && (
-              <Button size="sm" onClick={() => setReleaseOpen(true)}>
-                <Send className="mr-1 h-4 w-4" /> Release to bank
-              </Button>
+            {pr.status === 'TREASURY_MAKER' && canTreasuryMaker && (
+              <>
+                <Button size="sm" onClick={() => setTreasurySubmitOpen(true)}>
+                  <Send className="mr-1 h-4 w-4" /> Submit treasury info
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setTreasuryRejectOpen(true)}>
+                  <XCircle className="mr-1 h-4 w-4 text-destructive" /> Reject
+                </Button>
+              </>
             )}
-            {pr.status === 'AWAITING_PAYMENT_CONFIRMATION' && isMaker && (
-              <Button size="sm" onClick={() => setPaidOpen(true)}>
-                <BadgeCheck className="mr-1 h-4 w-4" /> Mark paid
-              </Button>
+            {pr.status === 'TREASURY_CHECKER' && canTreasuryChecker && (
+              <>
+                <Button size="sm" onClick={() => treasuryCheckMut.mutate()} disabled={treasuryCheckMut.isPending}>
+                  <BadgeCheck className="mr-1 h-4 w-4" /> Mark checked
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setTreasuryRejectOpen(true)}>
+                  <XCircle className="mr-1 h-4 w-4 text-destructive" /> Reject
+                </Button>
+              </>
             )}
-            {(pr.status === 'PAID' || pr.status === 'AWAITING_PAYMENT_CONFIRMATION') && isMaker && (
-              <Button size="sm" variant="outline" onClick={() => setProofOpen(true)}>
-                <Upload className="mr-1 h-4 w-4" /> Proof of payment
-              </Button>
+            {pr.status === 'TREASURY_AUTHORISER' && canTreasuryAuthoriser && (
+              <>
+                <Button size="sm" onClick={() => treasuryCompleteMut.mutate()} disabled={treasuryCompleteMut.isPending}>
+                  <CheckCircle2 className="mr-1 h-4 w-4" /> Mark completed
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setTreasuryRejectOpen(true)}>
+                  <XCircle className="mr-1 h-4 w-4 text-destructive" /> Reject
+                </Button>
+              </>
             )}
           </div>
         }
@@ -302,10 +312,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
 
       <div className="grid grid-cols-3 gap-4">
         {/* Header */}
-        <Card className="col-span-2">
+        <Card className="order-1 col-span-2">
           <CardHeader><CardTitle>Request</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 gap-3 text-sm">
-            <Field label="Legal entity" value={pr.legalEntity?.name ?? '—'} />
+            <Field label="Payment type" value={pr.paymentType?.name ?? '—'} />
+            <Field label="Legal entity" value={pr.paymentType?.legalEntity?.name ?? '—'} />
             <Field label="Counterparty" value={pr.counterparty?.legalName ?? pr.employee?.fullName ?? '—'} />
             <Field label="Currency" value={pr.currency?.code ?? '—'} />
             <Field label="Amount" value={Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} />
@@ -314,12 +325,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
             <Field label="Beneficiary" value={pr.beneficiaryAccount?.accountHolderName ?? '—'} />
             <Field label="Beneficiary acc #" value={pr.beneficiaryAccount?.accountNumber ?? '—'} />
             {pr.sourceAccount && (
-              <>
-                <Field label="Source account" value={`${pr.sourceAccount.bank?.name ?? pr.sourceAccount.bankName ?? ''} · ${pr.sourceAccount.accountNumber}`} />
-                <Field label="Bank reference" value={pr.bankReference ?? '—'} />
-                <Field label="Value date" value={pr.valueDate ?? '—'} />
-                <Field label="Proof of payment" value={pr.proofOfPaymentUrl ?? '—'} />
-              </>
+              <Field label="Source account" value={`${pr.sourceAccount.bank?.name ?? pr.sourceAccount.bankName ?? ''} · ${pr.sourceAccount.accountNumber}`} />
             )}
             {pr.purposeDescription && (
               <div className="col-span-2">
@@ -348,7 +354,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         </Card>
 
         {/* Approval chain */}
-        <Card>
+        <Card className="order-3 col-span-3">
           <CardHeader><CardTitle>Approval chain</CardTitle></CardHeader>
           <CardContent className="text-sm">
             {!pr.approvals?.length ? (
@@ -380,7 +386,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
                       </div>
                       {step.decidedAt && (
                         <div className="mt-1 text-xs text-muted-foreground">
-                          {step.decidedByUser?.fullName ?? '—'} · {new Date(step.decidedAt).toLocaleString()}
+                          {step.decidedByUser?.fullName ?? '—'} · {formatDateTime(step.decidedAt)}
                         </div>
                       )}
                       {step.comments && (
@@ -394,8 +400,62 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
           </CardContent>
         </Card>
 
+        {/* Treasury Team chain */}
+        {pr.ttMode && (
+          <Card className="order-4 col-span-3">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                Treasury Team chain
+                <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-border">
+                  {pr.ttMode === 'OFFLINE_TT' ? 'Offline TT' : 'Online TT'}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm">
+              <ol className="space-y-2">
+                {treasurySteps(pr).map((step) => {
+                  const ringStyle =
+                    step.state === 'DONE' ? 'bg-emerald-50 ring-emerald-200' :
+                    step.state === 'REJECTED' ? 'bg-rose-50 ring-rose-200' :
+                    step.state === 'ACTIVE' ? 'bg-amber-50 ring-amber-200' :
+                    'bg-muted ring-border';
+                  return (
+                    <li key={step.order} className={`rounded-md px-3 py-2 ring-1 ${ringStyle}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-card text-xs font-medium">
+                            {step.order}
+                          </span>
+                          <span className="text-xs uppercase tracking-wide text-muted-foreground">{step.role}</span>
+                          <span className="font-medium">{step.label}</span>
+                        </div>
+                        <span className="text-xs">{step.badge}</span>
+                      </div>
+                      {step.actor && step.at && (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {step.actor} · {formatDateTime(step.at)}
+                        </div>
+                      )}
+                      {step.detail && (
+                        <div className="mt-1 text-xs whitespace-pre-wrap">{step.detail}</div>
+                      )}
+                      {step.order === 1 && pr.swiftCopyUrl && (
+                        <div className="mt-1">
+                          <a className="text-xs underline text-muted-foreground" href={resolveFileUrl(pr.swiftCopyUrl)} target="_blank" rel="noreferrer">
+                            Open SWIFT / MT103 copy
+                          </a>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Documents */}
-        <Card className="col-span-3">
+        <Card className="order-2 col-span-1">
           <CardHeader><CardTitle>Documents</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             {!pr.documents?.length ? (
@@ -487,16 +547,12 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       <RejectDialog open={rejectOpen} onOpenChange={setRejectOpen}
         submitting={rejectMut.isPending}
         onSubmit={(d) => rejectMut.mutate(d)} />
-      <ReleaseDialog open={releaseOpen} onOpenChange={setReleaseOpen}
-        options={sourceAccountOptions}
-        submitting={releaseMut.isPending}
-        onSubmit={(d) => releaseMut.mutate(d)} />
-      <MarkPaidDialog open={paidOpen} onOpenChange={setPaidOpen}
-        submitting={markPaidMut.isPending}
-        onSubmit={(d) => markPaidMut.mutate(d)} />
-      <ProofDialog open={proofOpen} onOpenChange={setProofOpen}
-        submitting={proofMut.isPending}
-        onSubmit={(d) => proofMut.mutate(d)} />
+      <TreasurySubmitDialog open={treasurySubmitOpen} onOpenChange={setTreasurySubmitOpen}
+        submitting={treasurySubmitMut.isPending}
+        onSubmit={(d) => treasurySubmitMut.mutate(d)} />
+      <RejectDialog open={treasuryRejectOpen} onOpenChange={setTreasuryRejectOpen}
+        submitting={treasuryRejectMut.isPending}
+        onSubmit={(d) => treasuryRejectMut.mutate(d)} />
     </div>
   );
 }
@@ -508,6 +564,52 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
       <p>{value}</p>
     </div>
   );
+}
+
+type TtStepView = {
+  order: number;
+  role: string;
+  label: string;
+  badge: string;
+  state: 'DONE' | 'ACTIVE' | 'REJECTED' | 'PENDING';
+  actor: string | null;
+  at: string | null;
+  detail: string | null;
+};
+
+/**
+ * Builds the Treasury Team timeline (maker → checker → authoriser) from the
+ * request's treasury fields, mirroring the approval-chain display. A treasury
+ * reject marks the first not-yet-completed stage as REJECTED. The same person
+ * may legitimately appear on more than one stage.
+ */
+function treasurySteps(pr: PaymentRequest): TtStepView[] {
+  const stages = [
+    { order: 1, role: 'MAKER', label: 'Treasury Maker', user: pr.treasuryMakerByUser, at: pr.treasuryMakerAt, activeStatus: 'TREASURY_MAKER', doneBadge: 'SUBMITTED' },
+    { order: 2, role: 'CHECKER', label: 'Treasury Checker', user: pr.treasuryCheckerByUser, at: pr.treasuryCheckerAt, activeStatus: 'TREASURY_CHECKER', doneBadge: 'CHECKED' },
+    { order: 3, role: 'AUTHORISER', label: 'Treasury Authoriser', user: pr.treasuryAuthoriserByUser, at: pr.treasuryAuthoriserAt, activeStatus: 'TREASURY_AUTHORISER', doneBadge: 'COMPLETED' },
+  ] as const;
+  const rejectedIdx = pr.status === 'REJECTED' ? stages.findIndex((s) => !s.at) : -1;
+  return stages.map((s, i) => {
+    const done = !!s.at;
+    const active = pr.status === s.activeStatus;
+    const rejected = i === rejectedIdx;
+    const state: TtStepView['state'] = done ? 'DONE' : rejected ? 'REJECTED' : active ? 'ACTIVE' : 'PENDING';
+    const badge = done ? s.doneBadge : rejected ? 'REJECTED' : active ? 'PENDING' : '—';
+    let detail: string | null = null;
+    if (s.order === 1 && pr.treasuryReferenceNumber) detail = `Reference: ${pr.treasuryReferenceNumber}`;
+    if (rejected && pr.rejectionReason) detail = pr.rejectionReason;
+    return {
+      order: s.order,
+      role: s.role,
+      label: s.label,
+      badge,
+      state,
+      actor: s.user?.fullName ?? null,
+      at: s.at ?? null,
+      detail,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -578,87 +680,74 @@ function RejectDialog({
   );
 }
 
-function ReleaseDialog({
-  open, onOpenChange, options, onSubmit, submitting,
+function TreasurySubmitDialog({
+  open, onOpenChange, onSubmit, submitting,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  options: { label: string; value: string }[];
-  onSubmit: (d: ReleaseData) => void;
+  onSubmit: (d: TreasurySubmitData) => void;
   submitting?: boolean;
 }) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<ReleaseData>({ resolver: zodResolver(releaseSchema) });
+  const notify = useNotify();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
+  const [fileName, setFileName] = useState('');
+  const { register, handleSubmit, reset, setValue, formState: { errors } } =
+    useForm<TreasurySubmitData>({ resolver: zodResolver(treasurySubmitSchema) });
+
+  function resetAll() {
+    reset();
+    setUploadState('idle');
+    setFileName('');
+    if (fileRef.current) fileRef.current.value = '';
+  }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadState('uploading');
+    try {
+      const result = await api.upload(file);
+      setValue('swiftCopyUrl', result.url, { shouldValidate: true });
+      setFileName(result.fileName);
+      setUploadState('done');
+    } catch (err) {
+      setUploadState('error');
+      notify.error('Upload failed', err instanceof Error ? err : new Error('Upload failed'));
+    }
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) resetAll(); onOpenChange(o); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Release to bank</DialogTitle>
-          <p className="text-xs text-muted-foreground">§4.3 — select the source account. Same-currency only in MVP; balance must stay above minimum.</p>
+          <DialogTitle>Submit treasury info</DialogTitle>
+          <p className="text-xs text-muted-foreground">Capture the bank reference number and attach the SWIFT / MT103 copy received from the bank.</p>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="sourceAccountId">Source account <span className="text-destructive">*</span></Label>
-            <Select id="sourceAccountId" placeholder="Select source account" options={options} {...register('sourceAccountId')} />
-            {errors.sourceAccountId && <p className="text-xs text-destructive">{errors.sourceAccountId.message}</p>}
-          </div>
-          <DialogFooter><Button type="submit" disabled={submitting}>{submitting ? 'Releasing…' : 'Release'}</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function MarkPaidDialog({
-  open, onOpenChange, onSubmit, submitting,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  onSubmit: (d: MarkPaidData) => void;
-  submitting?: boolean;
-}) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<MarkPaidData>({ resolver: zodResolver(markPaidSchema) });
-  return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Mark paid</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="bankReference">Bank reference (UTR / wire ID) <span className="text-destructive">*</span></Label>
-            <Input id="bankReference" {...register('bankReference')} />
-            {errors.bankReference && <p className="text-xs text-destructive">{errors.bankReference.message}</p>}
+            <Label htmlFor="referenceNumber">Reference number <span className="text-destructive">*</span></Label>
+            <Input id="referenceNumber" placeholder="e.g. FT26154ABCD" {...register('referenceNumber')} />
+            {errors.referenceNumber && <p className="text-xs text-destructive">{errors.referenceNumber.message}</p>}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="valueDate">Value date <span className="text-destructive">*</span></Label>
-            <Input id="valueDate" type="date" {...register('valueDate')} />
-            {errors.valueDate && <p className="text-xs text-destructive">{errors.valueDate.message}</p>}
+            <Label>SWIFT / MT103 copy <span className="text-destructive">*</span></Label>
+            <input type="hidden" {...register('swiftCopyUrl')} />
+            <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => { void handleFile(e); }} />
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button type="button" size="sm" variant="outline" disabled={uploadState === 'uploading'} onClick={() => fileRef.current?.click()}>
+                <Upload className="mr-1 h-4 w-4" />
+                {uploadState === 'uploading' ? 'Uploading…' : uploadState === 'done' ? fileName : 'Choose file'}
+              </Button>
+              {uploadState === 'error' && <span className="text-xs text-destructive">Upload failed — try again</span>}
+            </div>
+            {errors.swiftCopyUrl && <p className="text-xs text-destructive">{errors.swiftCopyUrl.message}</p>}
           </div>
-          <DialogFooter><Button type="submit" disabled={submitting}>Mark paid</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ProofDialog({
-  open, onOpenChange, onSubmit, submitting,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  onSubmit: (d: ProofData) => void;
-  submitting?: boolean;
-}) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<ProofData>({ resolver: zodResolver(proofSchema) });
-  return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Upload proof of payment</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="proofOfPaymentUrl">Proof URL <span className="text-destructive">*</span></Label>
-            <Input id="proofOfPaymentUrl" placeholder="/uploads/mt103.pdf" {...register('proofOfPaymentUrl')} />
-            {errors.proofOfPaymentUrl && <p className="text-xs text-destructive">{errors.proofOfPaymentUrl.message}</p>}
-          </div>
-          <DialogFooter><Button type="submit" disabled={submitting}>{submitting ? 'Uploading…' : 'Upload'}</Button></DialogFooter>
+          <DialogFooter>
+            <Button type="submit" disabled={submitting || uploadState === 'uploading'}>
+              {submitting ? 'Submitting…' : 'Submit'}
+            </Button>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

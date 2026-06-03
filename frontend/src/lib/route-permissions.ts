@@ -34,6 +34,7 @@ const OPERATIONAL_READ: RoleCode[] = [
  */
 const RULES: RouteRule[] = [
   // Organisation hierarchy & identity admin — SUPER_ADMIN only
+  { prefix: '/audit-logs', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/groups', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/legal-entities', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/countries', roles: [RoleCode.SUPER_ADMIN] },

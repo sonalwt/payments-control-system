@@ -1,24 +1,17 @@
 'use client';
 
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
-import { Plus, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Paginated, PaymentCategory, PaymentType, Role } from '@/types/domain';
+import type { LegalEntity, Paginated, PaymentCategory, PaymentType, Role } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { DialogFooter } from '@/components/ui/dialog';
-
-const docSchema = z.object({
-  code: z.string().min(1).max(40),
-  label: z.string().min(1).max(100),
-  required: z.boolean(),
-});
 
 export const paymentTypeSchema = z.object({
   code: z
@@ -29,7 +22,8 @@ export const paymentTypeSchema = z.object({
   name: z.string().min(2).max(100),
   description: z.string().optional().or(z.literal('')),
   paymentCategoryId: z.string().uuid().optional().or(z.literal('')),
-  makerRoleId: z.string().uuid().optional().or(z.literal('')),
+  legalEntityId: z.string().uuid('Select a legal entity'),
+  makerRoleIds: z.array(z.string().uuid()).default([]),
   checkerRoleId: z.string().uuid().optional().or(z.literal('')),
   direction: z.enum(['OUTGOING', 'INCOMING']),
   requiresApprovalChain: z.boolean().optional(),
@@ -37,7 +31,6 @@ export const paymentTypeSchema = z.object({
   isConfidential: z.boolean().optional(),
   mobileInitiationOnly: z.boolean().optional(),
   allowsCrossCurrency: z.boolean().optional(),
-  documentPolicy: z.array(docSchema).optional(),
   isActive: z.boolean().optional(),
 });
 export type PaymentTypeFormData = z.infer<typeof paymentTypeSchema>;
@@ -55,8 +48,9 @@ export function PaymentTypeForm({
 }: Props): React.ReactElement {
   const {
     register,
-    control,
     handleSubmit,
+    watch,
+    setValue,
     formState: { errors },
   } = useForm<PaymentTypeFormData>({
     resolver: zodResolver(paymentTypeSchema),
@@ -65,7 +59,10 @@ export function PaymentTypeForm({
       name: defaultValues?.name ?? '',
       description: defaultValues?.description ?? '',
       paymentCategoryId: defaultValues?.paymentCategoryId ?? '',
-      makerRoleId: defaultValues?.makerRoleId ?? '',
+      legalEntityId: defaultValues?.legalEntityId ?? '',
+      makerRoleIds:
+        defaultValues?.makerRoleIds ??
+        (defaultValues?.makerRoleId ? [defaultValues.makerRoleId] : []),
       checkerRoleId: defaultValues?.checkerRoleId ?? '',
       direction: (defaultValues?.direction ?? 'OUTGOING') as 'OUTGOING' | 'INCOMING',
       requiresApprovalChain: defaultValues?.requiresApprovalChain ?? true,
@@ -73,19 +70,8 @@ export function PaymentTypeForm({
       isConfidential: defaultValues?.isConfidential ?? false,
       mobileInitiationOnly: defaultValues?.mobileInitiationOnly ?? false,
       allowsCrossCurrency: defaultValues?.allowsCrossCurrency ?? true,
-      documentPolicy:
-        defaultValues?.documentPolicy?.map((d) => ({
-          code: d.code,
-          label: d.label,
-          required: d.required,
-        })) ?? [],
       isActive: defaultValues?.isActive ?? true,
     },
-  });
-
-  const { fields, append, remove } = useFieldArray({
-    control,
-    name: 'documentPolicy',
   });
 
   const { data: categories } = useQuery({
@@ -96,11 +82,21 @@ export function PaymentTypeForm({
     .filter((c) => c.isActive)
     .map((c) => ({ label: c.name, value: c.id }));
 
+  const { data: legalEntities } = useQuery({
+    queryKey: ['legal-entities-all'],
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
+  });
+  const legalEntityOptions = (legalEntities?.data ?? [])
+    .filter((le) => le.isActive)
+    .map((le) => ({ label: `${le.code} — ${le.name}`, value: le.id }));
+
   const { data: roles } = useQuery({
     queryKey: ['roles-all'],
     queryFn: () => api.get<Role[]>('/roles'),
   });
   const roleOptions = (roles ?? []).map((r) => ({ label: r.name, value: r.id }));
+
+  const makerRoleIds = watch('makerRoleIds') ?? [];
 
   const isSystem = defaultValues?.isSystem ?? false;
 
@@ -108,7 +104,7 @@ export function PaymentTypeForm({
     onSubmit({
       ...d,
       paymentCategoryId: d.paymentCategoryId ? d.paymentCategoryId : undefined,
-      makerRoleId: d.makerRoleId ? d.makerRoleId : undefined,
+      makerRoleIds: d.makerRoleIds ?? [],
       checkerRoleId: d.checkerRoleId ? d.checkerRoleId : undefined,
     }),
   );
@@ -156,27 +152,59 @@ export function PaymentTypeForm({
           {errors.direction && <p className="text-xs text-destructive">{errors.direction.message}</p>}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="makerRoleId">Payment request creator role (Maker)</Label>
-          <Select
-            id="makerRoleId"
-            placeholder="Select Maker role"
-            options={[{ label: '— None —', value: '' }, ...roleOptions]}
-            {...register('makerRoleId')}
-          />
-          {errors.makerRoleId && <p className="text-xs text-destructive">{errors.makerRoleId.message}</p>}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="checkerRoleId">Payment request checker role (Maker)</Label>
-          <Select
-            id="checkerRoleId"
-            placeholder="Select Checker role"
-            options={[{ label: '— None —', value: '' }, ...roleOptions]}
-            {...register('checkerRoleId')}
-          />
-          {errors.checkerRoleId && <p className="text-xs text-destructive">{errors.checkerRoleId.message}</p>}
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
+        <Select
+          id="legalEntityId"
+          placeholder="Select legal entity"
+          options={legalEntityOptions}
+          {...register('legalEntityId')}
+        />
+        {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
+      </div>
+
+      <div className="space-y-2">
+        <Label>Payment request creator roles (Maker)</Label>
+        <p className="text-xs text-muted-foreground">
+          Select one or more roles. Any user holding one of these may create requests for this payment type.
+        </p>
+        {roleOptions.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No roles available.</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
+            {roleOptions.map((r) => {
+              const selected = makerRoleIds.includes(r.value);
+              return (
+                <label key={r.value} className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-border"
+                    checked={selected}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...makerRoleIds, r.value]
+                        : makerRoleIds.filter((id) => id !== r.value);
+                      setValue('makerRoleIds', next, { shouldValidate: true, shouldDirty: true });
+                    }}
+                  />
+                  <span>{r.label}</span>
+                </label>
+              );
+            })}
+          </div>
+        )}
+        {errors.makerRoleIds && <p className="text-xs text-destructive">{errors.makerRoleIds.message as string}</p>}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="checkerRoleId">Payment request checker role</Label>
+        <Select
+          id="checkerRoleId"
+          placeholder="Select Checker role"
+          options={[{ label: '— None —', value: '' }, ...roleOptions]}
+          {...register('checkerRoleId')}
+        />
+        {errors.checkerRoleId && <p className="text-xs text-destructive">{errors.checkerRoleId.message}</p>}
       </div>
 
       <div className="rounded-md border p-3 space-y-2">
@@ -207,52 +235,6 @@ export function PaymentTypeForm({
             <span>Active</span>
           </label>
         </div>
-      </div>
-
-      <div className="rounded-md border p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium">Document policy</p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => append({ code: '', label: '', required: true })}
-          >
-            <Plus className="mr-1 h-3 w-3" /> Add document
-          </Button>
-        </div>
-        {fields.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No documents required.</p>
-        ) : (
-          <div className="space-y-2">
-            {fields.map((f, idx) => (
-              <div key={f.id} className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
-                <div>
-                  <Label className="text-xs">Code</Label>
-                  <Input placeholder="INVOICE" {...register(`documentPolicy.${idx}.code`)} />
-                </div>
-                <div>
-                  <Label className="text-xs">Label</Label>
-                  <Input placeholder="Invoice PDF" {...register(`documentPolicy.${idx}.label`)} />
-                </div>
-                <label className="mb-2 flex items-center gap-1 text-xs">
-                  <input type="checkbox" className="h-4 w-4 rounded border-border" {...register(`documentPolicy.${idx}.required`)} />
-                  Required
-                </label>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="mb-1"
-                  onClick={() => remove(idx)}
-                  title="Remove"
-                >
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       <DialogFooter>

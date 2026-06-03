@@ -135,6 +135,23 @@ export class UsersService {
     await this.repo.update({ id }, { lastLoginAt: new Date() });
   }
 
+  /** Load a user including the (normally hidden) password hash, by id. */
+  async findByIdWithPassword(id: string): Promise<User | null> {
+    return this.repo
+      .createQueryBuilder('u')
+      .addSelect('u.passwordHash')
+      .where('u.id = :id', { id })
+      .getOne();
+  }
+
+  /** Hash and set a new password for the given user (no current-password check). */
+  async setPassword(id: string, newPassword: string): Promise<void> {
+    const user = await this.findOne(id);
+    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    user.updatedBy = id;
+    await this.repo.save(user);
+  }
+
   async loadRoleCodes(userId: string): Promise<{ roles: string[]; entityIds: string[] }> {
     const rows = await this.repo
       .createQueryBuilder('u')
