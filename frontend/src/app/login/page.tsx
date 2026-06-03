@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -69,6 +70,11 @@ export default function LoginPage(): React.ReactElement {
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting ? 'Signing in…' : 'Sign in'}
             </Button>
+            <p className="text-center text-sm">
+              <Link href="/forgot-password" className="text-muted-foreground underline hover:text-foreground">
+                Forgot password?
+              </Link>
+            </p>
           </form>
         </CardContent>
       </Card>

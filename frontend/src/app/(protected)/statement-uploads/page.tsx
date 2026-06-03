@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Plus, Trash2, UploadCloud } from 'lucide-react';
 import { api, resolveFileUrl } from '@/lib/api';
+import { formatDateMedium } from '@/lib/datetime';
 import type { BankAccount, LegalEntity, Paginated, StatementUpload } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -34,8 +35,7 @@ import { useNotify } from '@/hooks/use-notify';
 // -----------------------------------------------------------------------
 
 function fmtDate(d: string | undefined | null): string {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString(undefined, { dateStyle: 'medium' });
+  return formatDateMedium(d);
 }
 
 function fmtBalance(v: string | number | undefined | null): string {

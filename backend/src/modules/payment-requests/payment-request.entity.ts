@@ -9,7 +9,6 @@ import {
 } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { PaymentType } from '../payment-types/payment-type.entity';
-import { LegalEntity } from '../legal-entities/legal-entity.entity';
 import { Counterparty } from '../counterparties/counterparty.entity';
 import { Employee } from '../employees/employee.entity';
 import { Currency } from '../currencies/currency.entity';
@@ -17,28 +16,38 @@ import { BankAccount } from '../bank-accounts/bank-account.entity';
 import { BeneficiaryAccount } from '../beneficiary-accounts/beneficiary-account.entity';
 import { PaymentRequestApproval } from './payment-request-approval.entity';
 import { PaymentRequestDocument } from './payment-request-document.entity';
+import { User } from '../users/user.entity';
 
-/** SoW §3 — canonical payment request status machine (MVP). */
+/** SoW §3 — canonical payment request status machine. */
 export type PaymentRequestStatus =
   | 'DRAFT'
   | 'PENDING_APPROVAL'
-  | 'APPROVED'
-  | 'AWAITING_PAYMENT_CONFIRMATION'
-  | 'PAID'
+  | 'TREASURY_MAKER'
+  | 'TREASURY_CHECKER'
+  | 'TREASURY_AUTHORISER'
+  | 'COMPLETED'
   | 'REJECTED'
   | 'WITHDRAWN'
   | 'CANCELLED';
+
+/** Treasury-Team execution mode, snapshotted from the approval matrix. */
+export type TtMode = 'ONLINE_TT' | 'OFFLINE_TT';
 
 /**
  * SoW §3 — Payment Request.
  *
  * Canonical lifecycle:
- *   DRAFT → PENDING_APPROVAL → APPROVED → AWAITING_PAYMENT_CONFIRMATION → PAID
+ *   DRAFT → PENDING_APPROVAL → TREASURY_MAKER → TREASURY_CHECKER
+ *         → TREASURY_AUTHORISER → COMPLETED
  *
+ * On final matrix approval the request is forwarded to the Treasury Team,
+ * which executes and signs off the payment (maker → checker → authoriser).
  * Any non-terminal status may also transition to REJECTED, WITHDRAWN
- * (initiator), or CANCELLED (admin). The active approval matrix is
- * snapshotted at submission (§1.5) so in-flight requests are unaffected
- * by later matrix edits.
+ * (initiator), or CANCELLED (admin). A treasury reject sends the request
+ * back to REJECTED; the maker then resubmits and reruns the matrix.
+ *
+ * The active approval matrix is snapshotted at submission (§1.5) so
+ * in-flight requests are unaffected by later matrix edits.
  */
 @Entity({ name: 'payment_requests' })
 @Index('idx_pr_status', ['status'])
@@ -53,13 +62,6 @@ export class PaymentRequest extends BaseEntity {
   @ManyToOne(() => PaymentType, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'payment_type_id' })
   paymentType?: PaymentType;
-
-  @Column({ name: 'legal_entity_id', type: 'uuid' })
-  legalEntityId!: string;
-
-  @ManyToOne(() => LegalEntity, { onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'legal_entity_id' })
-  legalEntity?: LegalEntity;
 
   /** Populated for vendor / incoming receipt payment types. */
   @Column({ name: 'counterparty_id', type: 'uuid', nullable: true })
@@ -132,12 +134,56 @@ export class PaymentRequest extends BaseEntity {
   @Column({ name: 'matrix_id', type: 'uuid', nullable: true })
   matrixId?: string | null;
 
-  @Column({ name: 'matrix_version', type: 'integer', nullable: true })
-  matrixVersion?: number | null;
-
   /** 1-based step index currently awaiting action. Null outside PENDING_APPROVAL. */
   @Column({ name: 'current_step_order', type: 'integer', nullable: true })
   currentStepOrder?: number | null;
+
+  // ── Treasury Team execution (post final-approval) ──────────────────────
+  /** Snapshotted from the approval matrix when the matrix is frozen. */
+  @Column({ name: 'tt_mode', type: 'varchar', length: 20, nullable: true })
+  ttMode?: TtMode | null;
+
+  /** Reference number captured by the TT maker from the bank. */
+  @Column({ name: 'treasury_reference_number', type: 'varchar', length: 100, nullable: true })
+  treasuryReferenceNumber?: string | null;
+
+  /** SWIFT / MT103 copy received from the bank, uploaded by the TT maker. */
+  @Column({ name: 'swift_copy_url', type: 'varchar', length: 500, nullable: true })
+  swiftCopyUrl?: string | null;
+
+  @Column({ name: 'treasury_maker_by', type: 'uuid', nullable: true })
+  treasuryMakerBy?: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_maker_by' })
+  treasuryMakerByUser?: User | null;
+
+  @Column({ name: 'treasury_maker_at', type: 'timestamptz', nullable: true })
+  treasuryMakerAt?: Date | null;
+
+  @Column({ name: 'treasury_checker_by', type: 'uuid', nullable: true })
+  treasuryCheckerBy?: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_checker_by' })
+  treasuryCheckerByUser?: User | null;
+
+  @Column({ name: 'treasury_checker_at', type: 'timestamptz', nullable: true })
+  treasuryCheckerAt?: Date | null;
+
+  @Column({ name: 'treasury_authoriser_by', type: 'uuid', nullable: true })
+  treasuryAuthoriserBy?: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_authoriser_by' })
+  treasuryAuthoriserByUser?: User | null;
+
+  @Column({ name: 'treasury_authoriser_at', type: 'timestamptz', nullable: true })
+  treasuryAuthoriserAt?: Date | null;
+
+  /** Set when the TT authoriser marks the payment completed (terminal). */
+  @Column({ name: 'completed_at', type: 'timestamptz', nullable: true })
+  completedAt?: Date | null;
 
   // §4.4
   @Column({ name: 'bank_reference', type: 'varchar', length: 100, nullable: true })

@@ -252,7 +252,7 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
               {(currencies.data?.data ?? [])
                 .filter((c) => c.isActive)
                 .map((c) => (
-                  <option key={c.id} value={c.code}>
+                  <option key={c.id} value={c.code ?? ''}>
                     {c.code} — {c.name}
                   </option>
                 ))}

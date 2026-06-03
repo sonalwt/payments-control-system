@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2, FileText, Pencil, Send } from 'lucide-react';
 import { api, resolveFileUrl } from '@/lib/api';
+import { formatDateTime, todayInDubai } from '@/lib/datetime';
 import type {
   BankAccount,
   IncomingReceipt,
@@ -85,7 +86,7 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
   const [showForm, setShowForm] = useState(false);
   const [receiveFromAccountId, setReceiveFromAccountId] = useState('');
   const [inwardRef, setInwardRef] = useState('');
-  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [receivedDate, setReceivedDate] = useState(todayInDubai());
   const [receivedAmount, setReceivedAmount] = useState('');
   const [receivedCurrencyCode, setReceivedCurrencyCode] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -226,7 +227,7 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
             <Field label="Inward Bank Reference" value={r.inwardBankReference ?? '—'} mono />
             <Field
               label="Received On"
-              value={r.receivedAt ? new Date(r.receivedAt).toLocaleString() : '—'}
+              value={formatDateTime(r.receivedAt)}
             />
             {r.receivedRemarks && (
               <Field className="md:col-span-2" label="Remarks" value={r.receivedRemarks} />

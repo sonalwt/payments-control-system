@@ -5,12 +5,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   BadgeCheck, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard, Database, FileType2, FolderTree, Globe2, GitBranch, Handshake,
-  Landmark, ListChecks, LogOut, ShieldCheck, Users2, Wallet2,
+  Landmark, ListChecks, LogOut, ScrollText, ShieldCheck, Users2, Wallet2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { hasAnyRole, RoleCode } from '@/lib/roles';
 import { Button } from '@/components/ui/button';
+import { ChangePasswordButton } from '@/components/layout/change-password-button';
 
 interface NavItem {
   href: string;
@@ -65,6 +66,14 @@ const NAV_GROUPS: NavGroup[] = [
     // to access matrices and create payment requests they're eligible for.
     items: [
       { href: '/payment-requests',     label: 'Payment Requests',     icon: CreditCard },
+    ],
+  },
+  {
+    label: 'Administration',
+    icon: ShieldCheck,
+    roles: [RoleCode.SUPER_ADMIN],
+    items: [
+      { href: '/audit-logs', label: 'Audit Logs', icon: ScrollText },
     ],
   },
 ];
@@ -175,6 +184,7 @@ export function Sidebar(): React.ReactElement {
           <p className="font-medium">{user?.fullName ?? 'Anonymous'}</p>
           <p className="truncate text-muted-foreground">{user?.email}</p>
         </div>
+        <ChangePasswordButton />
         <Button
           variant="ghost"
           size="sm"

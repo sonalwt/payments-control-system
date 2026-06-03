@@ -15,6 +15,26 @@ export interface AuditFields {
   updatedBy?: string | null;
 }
 
+export interface AuditLog {
+  id: string;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  userId?: string | null;
+  userEmail?: string | null;
+  httpMethod: string;
+  path: string;
+  statusCode?: number | null;
+  success: boolean;
+  params?: Record<string, unknown> | null;
+  requestBody?: Record<string, unknown> | null;
+  errorMessage?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  durationMs?: number | null;
+  createdAt: string;
+}
+
 export interface Currency extends AuditFields {
   name: string;
   isActive: boolean;
@@ -107,14 +127,6 @@ export interface UserRole {
 
 export type PaymentDirection = 'OUTGOING' | 'INCOMING';
 
-export interface DocumentPolicyItem {
-  code: string;
-  label: string;
-  required: boolean;
-  amountThresholdMinor?: number | null;
-  currencyCode?: string | null;
-}
-
 export interface FieldConfigItem {
   key: string;
   label: string;
@@ -203,7 +215,6 @@ export interface Employee extends AuditFields {
   employmentEndDate?: string | null;
 }
 
-export type ApprovalMatrixStatus = 'DRAFT' | 'PUBLISHED' | 'SUPERSEDED';
 export type ApproverType = 'USER' | 'ROLE';
 
 export interface ApprovalMatrixStep {
@@ -232,13 +243,11 @@ export interface ApprovalMatrix extends AuditFields {
   paymentType?: PaymentType;
   currencyId: string;
   currency?: Currency;
-  version: number;
-  status: ApprovalMatrixStatus;
   effectiveFrom: string;
   effectiveTo?: string | null;
-  publishedAt?: string | null;
-  publishedBy?: string | null;
   isActive: boolean;
+  /** Treasury Team that executes the payment after final approval. */
+  ttMode: TtMode;
   bands?: ApprovalMatrixBand[];
   // Legacy alias (older rows / resolved-chain output)
   paymentTypeCode?: string;
@@ -276,7 +285,6 @@ export interface PaymentType extends AuditFields {
   mobileInitiationOnly: boolean;
   allowsCrossCurrency: boolean;
   approvalMatrixRef?: string | null;
-  documentPolicy: DocumentPolicyItem[];
   fieldConfig: FieldConfigItem[];
   isSystem: boolean;
   isActive: boolean;
@@ -285,6 +293,11 @@ export interface PaymentType extends AuditFields {
   effectiveTo?: string | null;
   paymentCategoryId?: string | null;
   paymentCategory?: PaymentCategory | null;
+  legalEntityId: string;
+  legalEntity?: LegalEntity | null;
+  /** Maker role UUIDs (multi-select). Any holder of one of these can create requests. */
+  makerRoleIds?: string[];
+  /** Deprecated denormalised primary maker role (kept in sync with makerRoleIds[0]). */
   makerRoleId?: string | null;
   makerRole?: Role | null;
   checkerRoleId?: string | null;
@@ -433,12 +446,16 @@ export interface SanctionedCountry extends AuditFields {
 export type PaymentRequestStatus =
   | 'DRAFT'
   | 'PENDING_APPROVAL'
-  | 'APPROVED'
-  | 'AWAITING_PAYMENT_CONFIRMATION'
-  | 'PAID'
+  | 'TREASURY_MAKER'
+  | 'TREASURY_CHECKER'
+  | 'TREASURY_AUTHORISER'
+  | 'COMPLETED'
   | 'REJECTED'
   | 'WITHDRAWN'
   | 'CANCELLED';
+
+/** Treasury-Team execution mode, selected on the approval matrix. */
+export type TtMode = 'ONLINE_TT' | 'OFFLINE_TT';
 
 export type ApprovalDecision = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -542,8 +559,6 @@ export interface PaymentRequest extends AuditFields {
   requestNumber: string;
   paymentTypeId: string;
   paymentType?: PaymentType;
-  legalEntityId: string;
-  legalEntity?: LegalEntity;
   counterpartyId?: string | null;
   counterparty?: Counterparty | null;
   employeeId?: string | null;
@@ -564,11 +579,24 @@ export interface PaymentRequest extends AuditFields {
   releasedAt?: string | null;
   paidAt?: string | null;
   matrixId?: string | null;
-  matrixVersion?: number | null;
   currentStepOrder?: number | null;
   bankReference?: string | null;
   valueDate?: string | null;
   proofOfPaymentUrl?: string | null;
+  // Treasury Team execution (post final-approval)
+  ttMode?: TtMode | null;
+  treasuryReferenceNumber?: string | null;
+  swiftCopyUrl?: string | null;
+  treasuryMakerBy?: string | null;
+  treasuryMakerByUser?: User | null;
+  treasuryMakerAt?: string | null;
+  treasuryCheckerBy?: string | null;
+  treasuryCheckerByUser?: User | null;
+  treasuryCheckerAt?: string | null;
+  treasuryAuthoriserBy?: string | null;
+  treasuryAuthoriserByUser?: User | null;
+  treasuryAuthoriserAt?: string | null;
+  completedAt?: string | null;
   sanctionWarning: boolean;
   sanctionOverrideReason?: string | null;
   /** §6.4 — anomaly flag set at submit time (does not block the payment). */
@@ -583,6 +611,8 @@ export interface PaymentRequest extends AuditFields {
   withdrawnReason?: string | null;
   approvals?: PaymentRequestApproval[];
   documents?: PaymentRequestDocument[];
+  /** Maker who created the request — joined for the "Worked on by" column. */
+  createdByUser?: { id: string; fullName: string; email: string } | null;
 }
 
 // -----------------------------------------------------------------------

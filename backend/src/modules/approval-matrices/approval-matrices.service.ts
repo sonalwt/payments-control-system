@@ -58,18 +58,16 @@ export class ApprovalMatricesService {
 
   async create(dto: CreateApprovalMatrixDto, actorId: string): Promise<ApprovalMatrix> {
     this.validateBands(dto.bands);
-    const version = dto.version ?? 1;
     const dup = await this.repo.findOne({
       where: {
         paymentTypeId: dto.paymentTypeId,
         currencyId: dto.currencyId,
         name: dto.name,
-        version,
       },
     });
     if (dup) {
       throw new ConflictException(
-        `Matrix "${dto.name}" v${version} already exists for this payment type / currency`,
+        `Matrix "${dto.name}" already exists for this payment type / currency`,
       );
     }
 
@@ -79,11 +77,10 @@ export class ApprovalMatricesService {
         description: dto.description ?? null,
         paymentTypeId: dto.paymentTypeId,
         currencyId: dto.currencyId,
-        version,
-        status: 'DRAFT' as const,
         effectiveFrom: dto.effectiveFrom,
         effectiveTo: dto.effectiveTo ?? null,
         isActive: dto.isActive ?? true,
+        ttMode: dto.ttMode,
         createdBy: actorId,
         updatedBy: actorId,
       });
@@ -142,8 +139,10 @@ export class ApprovalMatricesService {
             SELECT m2.id
               FROM approval_matrices m2
               INNER JOIN payment_types pt ON pt.id = m2.payment_type_id
-              WHERE pt.maker_role_id IN (
-                      SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
+              WHERE EXISTS (
+                      SELECT 1 FROM user_roles ur
+                      WHERE ur.user_id = :uid
+                        AND (ur.role_id = ANY(pt.maker_role_ids) OR ur.role_id = pt.maker_role_id)
                     )
                  OR pt.checker_role_id IN (
                       SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
@@ -160,7 +159,6 @@ export class ApprovalMatricesService {
       .createQueryBuilder('m')
       .select('m.id', 'id')
       .orderBy('m.name', 'ASC')
-      .addOrderBy('m.version', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
     applyFilters(idsQb);
@@ -187,7 +185,6 @@ export class ApprovalMatricesService {
       .leftJoinAndSelect('step.approverRole', 'approverRole')
       .where('m.id IN (:...ids)', { ids })
       .orderBy('m.name', 'ASC')
-      .addOrderBy('m.version', 'DESC')
       .addOrderBy('band.sortOrder', 'ASC')
       .addOrderBy('step.stepOrder', 'ASC')
       .getMany();
@@ -219,12 +216,7 @@ export class ApprovalMatricesService {
   }
 
   async update(id: string, dto: UpdateApprovalMatrixDto, actorId: string): Promise<ApprovalMatrix> {
-    const existing = await this.findOne(id);
-    if (existing.status === 'PUBLISHED') {
-      throw new BadRequestException(
-        'Published matrices cannot be edited. Create a new version instead.',
-      );
-    }
+    await this.findOne(id);
     if (dto.bands) this.validateBands(dto.bands);
 
     return this.dataSource.transaction(async (em) => {
@@ -236,10 +228,10 @@ export class ApprovalMatricesService {
         description: dto.description ?? matrix.description,
         paymentTypeId: dto.paymentTypeId ?? matrix.paymentTypeId,
         currencyId: dto.currencyId ?? matrix.currencyId,
-        version: dto.version ?? matrix.version,
         effectiveFrom: dto.effectiveFrom ?? matrix.effectiveFrom,
         effectiveTo: dto.effectiveTo ?? matrix.effectiveTo,
         isActive: dto.isActive ?? matrix.isActive,
+        ttMode: dto.ttMode ?? matrix.ttMode,
         updatedBy: actorId,
       });
       await em.save(matrix);
@@ -276,30 +268,8 @@ export class ApprovalMatricesService {
     });
   }
 
-  async publish(id: string, actorId: string): Promise<ApprovalMatrix> {
-    const matrix = await this.findOne(id);
-    if (matrix.status === 'PUBLISHED') return matrix;
-    if (matrix.status === 'SUPERSEDED') {
-      throw new BadRequestException('Superseded matrices cannot be republished');
-    }
-    if (!matrix.bands || matrix.bands.length === 0) {
-      throw new BadRequestException('Cannot publish a matrix with no bands');
-    }
-    matrix.status = 'PUBLISHED';
-    matrix.publishedAt = new Date();
-    matrix.publishedBy = actorId;
-    matrix.updatedBy = actorId;
-    await this.repo.save(matrix);
-    return this.findOne(id);
-  }
-
   async remove(id: string, actorId: string): Promise<void> {
     const matrix = await this.findOne(id);
-    if (matrix.status === 'PUBLISHED') {
-      throw new BadRequestException(
-        'Published matrices cannot be deleted. Supersede them with a new version instead.',
-      );
-    }
     matrix.updatedBy = actorId;
     await this.repo.save(matrix);
     await this.repo.softRemove(matrix);

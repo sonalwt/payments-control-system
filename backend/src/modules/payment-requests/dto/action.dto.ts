@@ -1,11 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsDateString,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
   Length,
   Min,
 } from 'class-validator';
@@ -46,32 +44,35 @@ export class CancelDto {
   reason!: string;
 }
 
-/** §4.3 — Maker releases an approved request to the bank portal. */
-export class ReleaseDto {
-  @ApiProperty()
-  @IsUUID()
-  sourceAccountId!: string;
-}
-
-/** §4.4 — Maker captures bank reference + value date to move to PAID. */
-export class MarkPaidDto {
-  @ApiProperty({ example: 'WIRE12345' })
+/**
+ * Treasury maker submits the bank reference + SWIFT/MT103 copy received from
+ * the bank, forwarding the request to the treasury checker.
+ */
+export class TreasurySubmitDto {
+  @ApiProperty({ example: 'FT26154ABCD' })
   @IsString()
   @IsNotEmpty()
   @Length(1, 100)
-  bankReference!: string;
+  referenceNumber!: string;
 
-  @ApiProperty({ example: '2026-06-01' })
-  @IsDateString()
-  valueDate!: string;
-}
-
-export class UploadProofDto {
   @ApiProperty({ example: '/uploads/mt103.pdf' })
   @IsString()
   @IsNotEmpty()
   @Length(1, 500)
-  proofOfPaymentUrl!: string;
+  swiftCopyUrl!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  comments?: string;
+}
+
+/** Treasury checker / authoriser sign-off — optional note only. */
+export class TreasuryDecisionDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  comments?: string;
 }
 
 export class AttachDocumentDto {

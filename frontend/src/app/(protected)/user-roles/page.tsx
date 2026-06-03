@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -38,7 +39,9 @@ const roleSchema = z.object({
 type RoleFormData = z.infer<typeof roleSchema>;
 
 export default function UserRolesPage(): React.ReactElement {
-  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const searchParams = useSearchParams();
+  const userIdParam = searchParams.get('userId') ?? '';
+  const [selectedUserId, setSelectedUserId] = useState<string>(userIdParam);
   const [assignOpen, setAssignOpen] = useState(false);
   const [createRoleOpen, setCreateRoleOpen] = useState(false);
   const [deleting, setDeleting] = useState<UserRole | null>(null);
@@ -55,12 +58,16 @@ export default function UserRolesPage(): React.ReactElement {
     queryFn: () => api.get<Role[]>('/roles'),
   });
 
-  // Auto-select first user once loaded
+  // Prefer the user named in the URL (?userId=…), e.g. when arriving from the
+  // "Manage roles" link; otherwise auto-select the first user once loaded.
   useEffect(() => {
-    if (!selectedUserId && users && users.data.length > 0) {
+    if (!users || users.data.length === 0) return;
+    if (userIdParam && users.data.some((u) => u.id === userIdParam)) {
+      setSelectedUserId(userIdParam);
+    } else if (!selectedUserId) {
       setSelectedUserId(users.data[0]!.id);
     }
-  }, [users, selectedUserId]);
+  }, [users, selectedUserId, userIdParam]);
 
   const { data: assignments, isLoading } = useQuery({
     queryKey: ['user-roles', selectedUserId],

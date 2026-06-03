@@ -69,11 +69,11 @@ BEGIN
     ] LOOP
         SELECT id INTO v_pt_id FROM payment_types WHERE code = v_pt_code;
 
-        INSERT INTO approval_matrices (name, description, payment_type_id, currency_id, status, published_at)
+        INSERT INTO approval_matrices (name, description, payment_type_id, currency_id)
         VALUES (
             (SELECT name FROM payment_types WHERE id = v_pt_id) || ' - Authority Matrix',
             'Per policy section 5.1 (Trade Payments). Same 4-band chain across all bands.',
-            v_pt_id, v_currency_usd, 'PUBLISHED', now()
+            v_pt_id, v_currency_usd
         )
         RETURNING id INTO v_matrix_id;
 

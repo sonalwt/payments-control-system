@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Eye, Lock, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Paginated, PaymentType } from '@/types/domain';
+import type { Paginated, PaymentType, Role } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +22,20 @@ import { PaymentTypeForm, type PaymentTypeFormData } from './payment-type-form';
 
 const KEY = 'payment-types';
 
-function PaymentTypeDetails({ pt }: { pt: PaymentType }): React.ReactElement {
+/** Resolve a payment type's maker role IDs to a comma-separated label. */
+function makerRolesText(pt: PaymentType, roleNameById: Map<string, string>): string {
+  const ids =
+    pt.makerRoleIds && pt.makerRoleIds.length
+      ? pt.makerRoleIds
+      : pt.makerRoleId
+        ? [pt.makerRoleId]
+        : [];
+  const names = ids.map((id) => roleNameById.get(id)).filter(Boolean) as string[];
+  if (names.length) return names.join(', ');
+  return pt.makerRole?.name ?? '—';
+}
+
+function PaymentTypeDetails({ pt, makerLabel }: { pt: PaymentType; makerLabel: string }): React.ReactElement {
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2 text-sm">
       <div className="grid grid-cols-2 gap-3">
@@ -42,6 +55,10 @@ function PaymentTypeDetails({ pt }: { pt: PaymentType }): React.ReactElement {
           <p>{pt.paymentCategory?.name ?? '—'}</p>
         </div>
         <div>
+          <p className="text-xs text-muted-foreground">Legal entity</p>
+          <p>{pt.legalEntity?.name ?? '—'}</p>
+        </div>
+        <div>
           <p className="text-xs text-muted-foreground">Direction</p>
           <span
             className={
@@ -54,8 +71,8 @@ function PaymentTypeDetails({ pt }: { pt: PaymentType }): React.ReactElement {
           </span>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Payment request creator (Maker)</p>
-          <p>{pt.makerRole?.name ?? '—'}</p>
+          <p className="text-xs text-muted-foreground">Payment request creator roles (Maker)</p>
+          <p>{makerLabel}</p>
         </div>
         <div>
           <p className="text-xs text-muted-foreground">Payment request checker</p>
@@ -89,29 +106,6 @@ function PaymentTypeDetails({ pt }: { pt: PaymentType }): React.ReactElement {
           </span>
         </div>
       </div>
-
-      <div>
-        <p className="text-xs text-muted-foreground mb-1">Document policy</p>
-        {pt.documentPolicy.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No documents configured.</p>
-        ) : (
-          <ul className="divide-y rounded-md border">
-            {pt.documentPolicy.map((d) => (
-              <li key={d.code} className="flex items-center justify-between px-3 py-2 text-sm">
-                <div>
-                  <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.code}</code>
-                  <span className="ml-2">{d.label}</span>
-                </div>
-                {d.required ? (
-                  <span className="text-xs font-medium text-destructive">Required</span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">Optional</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
     </div>
   );
 }
@@ -136,6 +130,15 @@ export default function PaymentTypesPage(): React.ReactElement {
     queryKey: [KEY, params],
     queryFn: () => api.get<Paginated<PaymentType>>(`/payment-types?${params}`),
   });
+
+  const { data: roles } = useQuery({
+    queryKey: ['roles-all'],
+    queryFn: () => api.get<Role[]>('/roles'),
+  });
+  const roleNameById = useMemo(
+    () => new Map((roles ?? []).map((r) => [r.id, r.name])),
+    [roles],
+  );
 
   const createMut = useMutation({
     mutationFn: (i: PaymentTypeFormData) => api.post<PaymentType>('/payment-types', i),
@@ -180,11 +183,11 @@ export default function PaymentTypesPage(): React.ReactElement {
             <TableRow>
               <TableHead>Code</TableHead>
               <TableHead>Name</TableHead>
+              <TableHead>Legal Entity</TableHead>
               <TableHead>Direction</TableHead>
               <TableHead>Maker</TableHead>
               <TableHead>Checker</TableHead>
               <TableHead>Workflow</TableHead>
-              <TableHead>Docs</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-36 text-right">Actions</TableHead>
             </TableRow>
@@ -203,6 +206,7 @@ export default function PaymentTypesPage(): React.ReactElement {
                     {pt.isSystem && <Lock className="h-3 w-3 text-muted-foreground" />}
                   </span>
                 </TableCell>
+                <TableCell className="text-sm">{pt.legalEntity?.name ?? '—'}</TableCell>
                 <TableCell>
                   <span
                     className={
@@ -214,7 +218,7 @@ export default function PaymentTypesPage(): React.ReactElement {
                     {pt.direction}
                   </span>
                 </TableCell>
-                <TableCell className="text-sm">{pt.makerRole?.name ?? '—'}</TableCell>
+                <TableCell className="text-sm">{makerRolesText(pt, roleNameById)}</TableCell>
                 <TableCell className="text-sm">{pt.checkerRole?.name ?? '—'}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   <div className="flex flex-wrap gap-1">
@@ -224,9 +228,6 @@ export default function PaymentTypesPage(): React.ReactElement {
                     {pt.mobileInitiationOnly && <span className="rounded bg-muted px-1.5 py-0.5">mobile-only</span>}
                     {!pt.allowsCrossCurrency && <span className="rounded bg-muted px-1.5 py-0.5">single-ccy</span>}
                   </div>
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {pt.documentPolicy.length === 0 ? '—' : `${pt.documentPolicy.filter((d) => d.required).length} required / ${pt.documentPolicy.length} total`}
                 </TableCell>
                 <TableCell>
                   <span
@@ -266,7 +267,7 @@ export default function PaymentTypesPage(): React.ReactElement {
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader><DialogTitle>Payment type details</DialogTitle></DialogHeader>
-          {viewing && <PaymentTypeDetails pt={viewing} />}
+          {viewing && <PaymentTypeDetails pt={viewing} makerLabel={makerRolesText(viewing, roleNameById)} />}
         </DialogContent>
       </Dialog>
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>

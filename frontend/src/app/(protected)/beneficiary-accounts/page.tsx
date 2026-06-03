@@ -7,6 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, Search, ShieldAlert, Upload, XCircle } from 'lucide-react';
 import { api } from '@/lib/api';
+import { formatDateTime } from '@/lib/datetime';
 import type {
   Bank,
   BeneficiaryAccount,
@@ -637,7 +638,7 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
                     {inCoolingOff && (
                       <div className="text-xs text-amber-700 mt-1 inline-flex items-center gap-1">
                         <AlertTriangle className="h-3 w-3" />
-                        cooling-off until {new Date(b.coolingOffUntil!).toLocaleString()}
+                        cooling-off until {formatDateTime(b.coolingOffUntil)}
                       </div>
                     )}
                   </TableCell>

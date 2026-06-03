@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { todayInDubai } from '@/lib/datetime';
 import type {
   ApprovalMatrix,
   Currency,
@@ -30,7 +31,10 @@ const stepSchema = z.object({
 
 const bandSchema = z.object({
   minAmount: z.coerce.number().min(0),
-  maxAmount: z.union([z.coerce.number().min(0), z.literal('')]).optional(),
+  // A blank Max means "and above" (open-ended). z.literal('') is tried FIRST
+  // because z.coerce.number() would otherwise coerce '' → 0, turning an
+  // open-ended band into [0, 0] and failing the max > min check.
+  maxAmount: z.union([z.literal(''), z.coerce.number().min(0)]).optional(),
   steps: z.array(stepSchema).min(1, 'At least one step required'),
 });
 
@@ -39,7 +43,7 @@ export const approvalMatrixSchema = z.object({
   description: z.string().optional().or(z.literal('')),
   paymentTypeId: z.string().uuid('Select a payment type'),
   currencyId: z.string().uuid('Select a currency'),
-  version: z.coerce.number().int().min(1).optional(),
+  ttMode: z.enum(['ONLINE_TT', 'OFFLINE_TT'], { message: 'Select a TT mode' }),
   effectiveFrom: z.string().min(1, 'Required'),
   effectiveTo: z.string().optional().or(z.literal('')),
   isActive: z.boolean().optional(),
@@ -197,8 +201,8 @@ export function ApprovalMatrixForm({
       description: defaultValues?.description ?? '',
       paymentTypeId: defaultValues?.paymentTypeId ?? '',
       currencyId: defaultValues?.currencyId ?? '',
-      version: defaultValues?.version ?? 1,
-      effectiveFrom: defaultValues?.effectiveFrom ?? new Date().toISOString().slice(0, 10),
+      ttMode: defaultValues?.ttMode ?? 'ONLINE_TT',
+      effectiveFrom: defaultValues?.effectiveFrom ?? todayInDubai(),
       effectiveTo: defaultValues?.effectiveTo ?? '',
       isActive: defaultValues?.isActive ?? true,
       bands: defaultValues?.bands?.map((b) => ({
@@ -239,16 +243,10 @@ export function ApprovalMatrixForm({
 
   return (
     <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="name">Name <span className="text-destructive">*</span></Label>
-          <Input id="name" placeholder="Trade Payments — USD" {...register('name')} />
-          {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="version">Version</Label>
-          <Input id="version" type="number" min={1} {...register('version')} />
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="name">Name <span className="text-destructive">*</span></Label>
+        <Input id="name" placeholder="Trade Payments — USD" {...register('name')} />
+        {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
       </div>
       <div className="space-y-2">
         <Label htmlFor="description">Description</Label>
@@ -275,6 +273,22 @@ export function ApprovalMatrixForm({
           />
           {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
         </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="ttMode">Treasury mode (TT) <span className="text-destructive">*</span></Label>
+        <Select
+          id="ttMode"
+          placeholder="Select TT mode"
+          options={[
+            { label: 'Online TT', value: 'ONLINE_TT' },
+            { label: 'Offline TT', value: 'OFFLINE_TT' },
+          ]}
+          {...register('ttMode')}
+        />
+        <p className="text-xs text-muted-foreground">
+          Determines which Treasury Team maker executes the payment after final approval.
+        </p>
+        {errors.ttMode && <p className="text-xs text-destructive">{errors.ttMode.message}</p>}
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">

@@ -20,10 +20,9 @@ import {
   AttachDocumentDto,
   ApproveDto,
   CancelDto,
-  MarkPaidDto,
   RejectDto,
-  ReleaseDto,
-  UploadProofDto,
+  TreasuryDecisionDto,
+  TreasurySubmitDto,
   WithdrawDto,
 } from './dto/action.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -41,7 +40,8 @@ import { PaginationQueryDto } from '../../common/dto/pagination.dto';
  *   - All endpoints require JWT authentication (JwtAuthGuard).
  *   - No hardcoded role codes are used except for cancel (SUPER_ADMIN).
  *   - approve / reject — service checks step assignment (USER or ROLE type).
- *   - release / mark-paid / upload-proof — service calls assertCanMake().
+ *   - treasury/* — service checks the actor holds the treasury stage role
+ *     (maker role resolved from the request's TT mode).
  *   - cancel — SUPER_ADMIN only (platform-admin escalation).
  *   - findAll() visibility is role-agnostic; the service filters by
  *     created_by and current pending step assignment.
@@ -65,8 +65,11 @@ export class PaymentRequestsController {
     @Query()
     query: PaginationQueryDto & {
       status?: string;
-      legalEntityId?: string;
       paymentTypeId?: string;
+      activityPeriod?: 'today' | 'month' | string;
+      dateFrom?: string;
+      dateTo?: string;
+      awaitingAction?: string;
     },
     @CurrentUser() viewer: AuthenticatedUser,
   ) {
@@ -132,31 +135,42 @@ export class PaymentRequestsController {
     return this.service.withdraw(id, dto, user.id);
   }
 
-  @Post(':id/release')
-  release(
+  // -------- Treasury Team execution (post final-approval) ----------
+
+  @Post(':id/treasury/submit')
+  treasurySubmit(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: ReleaseDto,
+    @Body() dto: TreasurySubmitDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.service.release(id, dto, user.id);
+    return this.service.treasurySubmit(id, dto, user.id);
   }
 
-  @Post(':id/mark-paid')
-  markPaid(
+  @Post(':id/treasury/check')
+  treasuryCheck(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: MarkPaidDto,
+    @Body() dto: TreasuryDecisionDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.service.markPaid(id, dto, user.id);
+    return this.service.treasuryCheck(id, dto, user.id);
   }
 
-  @Post(':id/upload-proof')
-  uploadProof(
+  @Post(':id/treasury/complete')
+  treasuryComplete(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: UploadProofDto,
+    @Body() dto: TreasuryDecisionDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.service.uploadProof(id, dto, user.id);
+    return this.service.treasuryComplete(id, dto, user.id);
+  }
+
+  @Post(':id/treasury/reject')
+  treasuryReject(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: RejectDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.treasuryReject(id, dto, user.id);
   }
 
   // -------- Document management (DRAFT only) -----------------------
