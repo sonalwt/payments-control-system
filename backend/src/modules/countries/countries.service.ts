@@ -6,17 +6,20 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Country } from './country.entity';
+import { Currency } from '../currencies/currency.entity';
 import { CreateCountryDto } from './dto/create-country.dto';
 import { UpdateCountryDto } from './dto/update-country.dto';
 import {
   PaginatedResult,
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { ImportResult, parseImportFile } from '../../common/helpers/parse-import-file';
 
 @Injectable()
 export class CountriesService {
   constructor(
     @InjectRepository(Country) private readonly repo: Repository<Country>,
+    @InjectRepository(Currency) private readonly currencyRepo: Repository<Currency>,
   ) {}
 
   async create(dto: CreateCountryDto, actorId: string): Promise<Country> {
@@ -94,5 +97,32 @@ export class CountriesService {
     country.updatedBy = actorId;
     await this.repo.save(country);
     await this.repo.softRemove(country);
+  }
+
+  async bulkImport(file: Express.Multer.File, actorId: string): Promise<ImportResult> {
+    const rows = parseImportFile(file);
+    const currencies = await this.currencyRepo.find({ select: ['id', 'code'] });
+    const currencyMap = new Map(currencies.filter(c => c.code).map((c) => [c.code!.toUpperCase(), c.id]));
+    const result: ImportResult = { created: 0, skipped: 0, errors: [] };
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const countryName = row['country_name'];
+      if (!countryName) { result.errors.push({ row: i + 2, message: 'country_name is required' }); result.skipped++; continue; }
+      const countryShortName = row['country_short_name'];
+      if (!countryShortName) { result.errors.push({ row: i + 2, message: 'country_short_name is required' }); result.skipped++; continue; }
+      const code = (row['code'] ?? '').toUpperCase();
+      if (!code) { result.errors.push({ row: i + 2, message: 'code is required' }); result.skipped++; continue; }
+      const currencyCode = (row['currency_code'] ?? '').toUpperCase();
+      const currencyId = currencyMap.get(currencyCode);
+      if (!currencyId) { result.errors.push({ row: i + 2, message: `Currency code "${currencyCode}" not found` }); result.skipped++; continue; }
+      try {
+        await this.create({ countryName, countryShortName, code, currencyId, isActive: row['is_active'] !== 'false', isSanctioned: row['is_sanctioned'] === 'true' }, actorId);
+        result.created++;
+      } catch (e: unknown) {
+        result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });
+        result.skipped++;
+      }
+    }
+    return result;
   }
 }

@@ -8,6 +8,7 @@ import { api, friendlyError } from '@/lib/api';
 import { formatDateTime } from '@/lib/datetime';
 import type { Paginated, User } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
+import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 import { Input } from '@/components/ui/input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -91,10 +92,19 @@ export default function UsersPage(): React.ReactElement {
         title="Users"
         description="Application users and their role assignments."
         actions={
-          <Button onClick={openDialog} size="sm">
-            <Plus className="mr-2 h-4 w-4" />
-            Add User
-          </Button>
+          <div className="flex items-center gap-2">
+            <ImportCsvDialog
+              entityName="Users"
+              endpoint="/users/import"
+              sampleHeaders={['email', 'full_name', 'password', 'employee_code', 'is_active']}
+              sampleRows={[['john.smith@company.com', 'John Smith', 'Temp@1234', 'EMP001', 'true']]}
+              onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
+            />
+            <Button onClick={openDialog} size="sm">
+              <Plus className="mr-2 h-4 w-4" />
+              Add User
+            </Button>
+          </div>
         }
       />
 

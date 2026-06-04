@@ -13,6 +13,7 @@ import { UsersQueryDto } from './dto/users-query.dto';
 import {
   PaginatedResult,
 } from '../../common/dto/pagination.dto';
+import { ImportResult, parseImportFile } from '../../common/helpers/parse-import-file';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -142,6 +143,26 @@ export class UsersService {
       .addSelect('u.passwordHash')
       .where('u.id = :id', { id })
       .getOne();
+  }
+
+  async bulkImport(file: Express.Multer.File, actorId: string): Promise<ImportResult> {
+    const rows = parseImportFile(file);
+    const result: ImportResult = { created: 0, skipped: 0, errors: [] };
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const email = row['email'], fullName = row['full_name'], password = row['password'];
+      if (!email) { result.errors.push({ row: i + 2, message: 'email is required' }); result.skipped++; continue; }
+      if (!fullName) { result.errors.push({ row: i + 2, message: 'full_name is required' }); result.skipped++; continue; }
+      if (!password) { result.errors.push({ row: i + 2, message: 'password is required' }); result.skipped++; continue; }
+      try {
+        await this.create({ email, fullName, password, employeeCode: row['employee_code'] || undefined, isActive: row['is_active'] !== 'false' }, actorId);
+        result.created++;
+      } catch (e: unknown) {
+        result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });
+        result.skipped++;
+      }
+    }
+    return result;
   }
 
   /** Hash and set a new password for the given user (no current-password check). */

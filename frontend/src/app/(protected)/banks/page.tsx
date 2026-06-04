@@ -23,6 +23,7 @@ import {
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
+import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 
 const KEY = 'banks';
 
@@ -170,15 +171,24 @@ export default function BanksPage(): React.ReactElement {
         title="Banks"
         description="Master list of banks (Super Admin only)."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> New bank</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader><DialogTitle>Create bank</DialogTitle></DialogHeader>
-              <BankForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            <ImportCsvDialog
+              entityName="Banks"
+              endpoint="/banks/import"
+              sampleHeaders={['name', 'short_name', 'country_code', 'swift_bic', 'is_active']}
+              sampleRows={[['HDFC Bank', 'HDFC', 'IN', 'HDFCINBB', 'true'], ['Barclays', 'BARC', 'GB', 'BARCGB22', 'true']]}
+              onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
+            />
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button><Plus className="mr-2 h-4 w-4" /> New bank</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Create bank</DialogTitle></DialogHeader>
+                <BankForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </DialogContent>
+            </Dialog>
+          </div>
         }
       />
       <Card>

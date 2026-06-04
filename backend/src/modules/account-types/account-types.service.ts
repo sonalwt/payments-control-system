@@ -8,6 +8,7 @@ import {
   PaginatedResult,
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { parseImportFile, ImportResult } from '../../common/helpers/parse-import-file';
 
 @Injectable()
 export class AccountTypesService {
@@ -66,5 +67,24 @@ export class AccountTypesService {
     at.updatedBy = actorId;
     await this.repo.save(at);
     await this.repo.softRemove(at);
+  }
+
+  async bulkImport(file: Express.Multer.File, actorId: string): Promise<ImportResult> {
+    const rows = parseImportFile(file);
+    const result: ImportResult = { created: 0, skipped: 0, errors: [] };
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const name = row['name'];
+      if (!name) { result.errors.push({ row: i + 2, message: 'name is required' }); result.skipped++; continue; }
+      const isActive = row['is_active'] !== 'false';
+      try {
+        await this.create({ name, isActive }, actorId);
+        result.created++;
+      } catch (e: unknown) {
+        result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });
+        result.skipped++;
+      }
+    }
+    return result;
   }
 }

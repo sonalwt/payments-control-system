@@ -22,6 +22,7 @@ import {
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
+import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 
 const KEY = 'account-types';
 
@@ -110,15 +111,24 @@ export default function AccountTypesPage(): React.ReactElement {
         title="Account Types"
         description="Master list of bank account types (Super Admin only)."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> New account type</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader><DialogTitle>Add account type</DialogTitle></DialogHeader>
-              <AccountTypeForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            <ImportCsvDialog
+              entityName="Account Types"
+              endpoint="/account-types/import"
+              sampleHeaders={['name', 'is_active']}
+              sampleRows={[['Current Account', 'true'], ['Savings Account', 'true'], ['Fixed Deposit', 'true']]}
+              onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
+            />
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button><Plus className="mr-2 h-4 w-4" /> New account type</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Add account type</DialogTitle></DialogHeader>
+                <AccountTypeForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </DialogContent>
+            </Dialog>
+          </div>
         }
       />
       <Card>

@@ -23,6 +23,7 @@ import { Card } from '@/components/ui/card';
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
+import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 
 const schema = z.object({
   countryName: z.string().min(2).max(120),
@@ -161,13 +162,22 @@ export default function CountriesPage(): React.ReactElement {
         title="Countries"
         description="Master list of countries with their default currency (Super Admin only)."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild><Button><Plus className="mr-2 h-4 w-4" /> New country</Button></DialogTrigger>
-            <DialogContent>
-              <DialogHeader><DialogTitle>Create country</DialogTitle></DialogHeader>
-              <CountryForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            <ImportCsvDialog
+              entityName="Countries"
+              endpoint="/countries/import"
+              sampleHeaders={['country_name', 'country_short_name', 'code', 'currency_code', 'is_active', 'is_sanctioned']}
+              sampleRows={[['United Kingdom', 'UK', 'GB', 'GBP', 'true', 'false'], ['Germany', 'DE', 'DE', 'EUR', 'true', 'false']]}
+              onSuccess={() => void qc.invalidateQueries({ queryKey: ['countries'] })}
+            />
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild><Button><Plus className="mr-2 h-4 w-4" /> New country</Button></DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Create country</DialogTitle></DialogHeader>
+                <CountryForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </DialogContent>
+            </Dialog>
+          </div>
         }
       />
       <Card>

@@ -22,6 +22,7 @@ import {
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
+import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 
 const KEY = 'payment-categories';
 
@@ -110,15 +111,24 @@ export default function PaymentCategoriesPage(): React.ReactElement {
         title="Payment Categories"
         description="Master list of payment categories (Super Admin only)."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> New category</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader><DialogTitle>Add payment category</DialogTitle></DialogHeader>
-              <PaymentCategoryForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            <ImportCsvDialog
+              entityName="Payment Categories"
+              endpoint="/payment-categories/import"
+              sampleHeaders={['name', 'is_active']}
+              sampleRows={[['Vendor Payments', 'true'], ['Payroll', 'true'], ['Utility Bills', 'true']]}
+              onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
+            />
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button><Plus className="mr-2 h-4 w-4" /> New category</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Add payment category</DialogTitle></DialogHeader>
+                <PaymentCategoryForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </DialogContent>
+            </Dialog>
+          </div>
         }
       />
       <Card>

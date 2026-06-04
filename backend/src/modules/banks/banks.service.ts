@@ -2,17 +2,20 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Bank } from './bank.entity';
+import { Country } from '../countries/country.entity';
 import { CreateBankDto } from './dto/create-bank.dto';
 import { UpdateBankDto } from './dto/update-bank.dto';
 import {
   PaginatedResult,
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { ImportResult, parseImportFile } from '../../common/helpers/parse-import-file';
 
 @Injectable()
 export class BanksService {
   constructor(
     @InjectRepository(Bank) private readonly repo: Repository<Bank>,
+    @InjectRepository(Country) private readonly countryRepo: Repository<Country>,
   ) {}
 
   async create(
@@ -100,5 +103,28 @@ export class BanksService {
     bank.updatedBy = actorId;
     await this.repo.save(bank);
     await this.repo.softRemove(bank);
+  }
+
+  async bulkImport(file: Express.Multer.File, actorId: string): Promise<ImportResult> {
+    const rows = parseImportFile(file);
+    const countries = await this.countryRepo.find({ select: ['id', 'code'] });
+    const countryMap = new Map(countries.map((c) => [c.code.toUpperCase(), c.id]));
+    const result: ImportResult = { created: 0, skipped: 0, errors: [] };
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const name = row['name'];
+      if (!name) { result.errors.push({ row: i + 2, message: 'name is required' }); result.skipped++; continue; }
+      const countryCode = (row['country_code'] ?? '').toUpperCase();
+      const countryId = countryMap.get(countryCode);
+      if (!countryId) { result.errors.push({ row: i + 2, message: `Country code "${countryCode}" not found` }); result.skipped++; continue; }
+      try {
+        await this.create({ name, shortName: row['short_name'] || undefined, countryId, swiftBic: row['swift_bic'] || undefined, isActive: row['is_active'] !== 'false' }, actorId);
+        result.created++;
+      } catch (e: unknown) {
+        result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });
+        result.skipped++;
+      }
+    }
+    return result;
   }
 }

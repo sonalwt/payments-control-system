@@ -9,6 +9,7 @@ import { Repository } from 'typeorm';
 import { Role } from './role.entity';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+import { parseImportFile, ImportResult } from '../../common/helpers/parse-import-file';
 
 @Injectable()
 export class RolesService {
@@ -53,5 +54,25 @@ export class RolesService {
       throw new BadRequestException('System roles cannot be deleted');
     }
     await this.repo.softRemove(role);
+  }
+
+  async bulkImport(file: Express.Multer.File): Promise<ImportResult> {
+    const rows = parseImportFile(file);
+    const result: ImportResult = { created: 0, skipped: 0, errors: [] };
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const code = row['code'];
+      const name = row['name'];
+      if (!code) { result.errors.push({ row: i + 2, message: 'code is required' }); result.skipped++; continue; }
+      if (!name) { result.errors.push({ row: i + 2, message: 'name is required' }); result.skipped++; continue; }
+      try {
+        await this.create({ code, name, description: row['description'] || undefined });
+        result.created++;
+      } catch (e: unknown) {
+        result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });
+        result.skipped++;
+      }
+    }
+    return result;
   }
 }

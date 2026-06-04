@@ -27,6 +27,7 @@ import { Card } from '@/components/ui/card';
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
+import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 import { LegalEntityForm, type LegalEntityFormData } from './legal-entity-form';
 
 const KEY = 'legal-entities';
@@ -89,22 +90,31 @@ export default function LegalEntitiesPage(): React.ReactElement {
         title="Legal Entities"
         description="Master list of legal entities (Super Admin only)."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" /> New legal entity
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create legal entity</DialogTitle>
-              </DialogHeader>
-              <LegalEntityForm
-                submitting={createMutation.isPending}
-                onSubmit={(d) => createMutation.mutate(d)}
-              />
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            <ImportCsvDialog
+              entityName="Legal Entities"
+              endpoint="/legal-entities/import"
+              sampleHeaders={['name', 'code', 'country_code', 'is_active']}
+              sampleRows={[['Acme Corp UK', 'ACME_UK', 'GB', 'true'], ['Acme Corp US', 'ACME_US', 'US', 'true']]}
+              onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
+            />
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" /> New legal entity
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create legal entity</DialogTitle>
+                </DialogHeader>
+                <LegalEntityForm
+                  submitting={createMutation.isPending}
+                  onSubmit={(d) => createMutation.mutate(d)}
+                />
+              </DialogContent>
+            </Dialog>
+          </div>
         }
       />
 
