@@ -69,6 +69,16 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // KYC Team verify/approve beneficiary change requests on this page.
+    // (SUPER_ADMIN reaches the same page under the Masters group.)
+    label: 'KYC',
+    icon: ShieldCheck,
+    roles: [RoleCode.KYC_TEAM],
+    items: [
+      { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: Wallet2 },
+    ],
+  },
+  {
     label: 'Administration',
     icon: ShieldCheck,
     roles: [RoleCode.SUPER_ADMIN],

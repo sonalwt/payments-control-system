@@ -1,12 +1,12 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { AlertTriangle, CheckCircle2, Loader2, Plus, Search, ShieldAlert, Upload, XCircle } from 'lucide-react';
-import { api } from '@/lib/api';
+import { AlertTriangle, CheckCircle2, Eye, FileText, Loader2, Plus, Search, ShieldAlert, Upload, XCircle } from 'lucide-react';
+import { api, resolveFileUrl } from '@/lib/api';
 import { formatDateTime } from '@/lib/datetime';
 import type {
   Bank,
@@ -466,6 +466,182 @@ function RejectDialog({
 }
 
 // ---------------------------------------------------------------------
+// Cooling-off countdown (§6.3) — live "time left" badge shown on a newly
+// created/modified beneficiary until its cooling-off window elapses.
+// ---------------------------------------------------------------------
+
+function formatRemaining(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function CoolingOffCountdown({ until }: { until: string | Date }): React.ReactElement | null {
+  const target = useMemo(() => new Date(until).getTime(), [until]);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (target <= Date.now()) return;
+    const timer = setInterval(() => {
+      const n = Date.now();
+      setNow(n);
+      if (n >= target) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [target]);
+
+  const remaining = target - now;
+  if (remaining <= 0) return null;
+
+  return (
+    <div
+      className="text-xs text-amber-700 mt-1 inline-flex items-center gap-1"
+      title={`Becomes payable on ${formatDateTime(until)}`}
+    >
+      <AlertTriangle className="h-3 w-3" />
+      In cooling-off · {formatRemaining(remaining)} left
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// View — full beneficiary account details (read-only)
+// ---------------------------------------------------------------------
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }): React.ReactElement {
+  return (
+    <div className="grid grid-cols-3 gap-2 py-1.5 border-b border-border/50 last:border-0">
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="col-span-2 text-sm break-words">{children ?? '—'}</dd>
+    </div>
+  );
+}
+
+function BeneficiaryDetailDialog({
+  account, open, onOpenChange,
+}: {
+  account: BeneficiaryAccount | null;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}): React.ReactElement {
+  const b = account;
+  const inCoolingOff = !!b?.coolingOffUntil && new Date(b.coolingOffUntil).getTime() > Date.now();
+
+  // Supporting documents live on the change request(s) that created/modified
+  // this account, not on the account row itself — fetch them here.
+  const { data: relatedCrs, isLoading: docsLoading, error: docsError } = useQuery({
+    queryKey: [CR_KEY, 'for-account', b?.id],
+    enabled: open && !!b?.id,
+    queryFn: () => api.get<Paginated<BeneficiaryAccountChangeRequest>>(
+      `/beneficiary-accounts/change-requests/list?page=1&limit=50&beneficiaryAccountId=${b!.id}`,
+    ),
+  });
+  const documents = (relatedCrs?.data ?? []).flatMap((cr) =>
+    (cr.documents ?? []).map((d) => ({ ...d, changeType: cr.changeType, requestedAt: cr.requestedAt })),
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="inline-flex items-center gap-2">
+            {b?.accountHolderName ?? 'Beneficiary account'}
+            {b?.country?.isSanctioned && <ShieldAlert className="h-4 w-4 text-amber-600" />}
+          </DialogTitle>
+          <p className="text-xs text-muted-foreground">Beneficiary account details (read-only).</p>
+        </DialogHeader>
+        {b && (
+          <dl className="max-h-[70vh] overflow-y-auto pr-2">
+            <DetailRow label="Account holder">{b.accountHolderName}</DetailRow>
+            <DetailRow label="Owner">
+              {b.counterparty?.legalName ?? b.employee?.fullName ?? '—'}
+              <span className="ml-1 text-xs text-muted-foreground">
+                ({b.counterpartyId ? 'Counterparty' : b.employeeId ? 'Employee' : 'Unassigned'})
+              </span>
+            </DetailRow>
+            <DetailRow label="Account number"><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{b.accountNumber}</code></DetailRow>
+            <DetailRow label="Bank">{b.bank?.name ?? b.bankId}</DetailRow>
+            <DetailRow label="Branch">{b.branchName}</DetailRow>
+            <DetailRow label="SWIFT / BIC">{b.swiftBic}</DetailRow>
+            <DetailRow label="IBAN">{b.iban}</DetailRow>
+            <DetailRow label="Currency">{b.currency?.code ?? b.currencyId}</DetailRow>
+            <DetailRow label="Country">
+              {b.country?.countryName ?? b.country?.code ?? b.countryId}
+              {b.country?.isSanctioned && <span className="ml-1 text-xs font-medium text-amber-700">(sanctioned)</span>}
+            </DetailRow>
+            <DetailRow label="Direction">
+              <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{b.accountDirection}</span>
+            </DetailRow>
+            <DetailRow label="Status">
+              <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${BENE_STATUS_STYLES[b.status]}`}>
+                {b.status}
+              </span>
+            </DetailRow>
+            <DetailRow label="Cooling-off">
+              {b.coolingOffUntil
+                ? inCoolingOff
+                  ? <span className="text-amber-700">In cooling-off until {formatDateTime(b.coolingOffUntil)}</span>
+                  : <span>Elapsed ({formatDateTime(b.coolingOffUntil)}) — payable</span>
+                : 'None — payable'}
+            </DetailRow>
+            <DetailRow label="Created">{formatDateTime(b.createdAt)}</DetailRow>
+            <DetailRow label="Last updated">{formatDateTime(b.updatedAt)}</DetailRow>
+            <DetailRow label="ID"><code className="text-xs text-muted-foreground">{b.id}</code></DetailRow>
+
+            <div className="pt-4">
+              <p className="mb-2 text-sm font-semibold">Supporting documents</p>
+              {docsLoading ? (
+                <p className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading documents…
+                </p>
+              ) : docsError ? (
+                <p className="text-xs text-destructive">Couldn’t load documents. {docsError instanceof Error ? docsError.message : ''}</p>
+              ) : documents.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No supporting documents on file. (Documents are captured on the beneficiary’s
+                  add/modify change request; directly seeded accounts have none.)
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {documents.map((d, i) => (
+                    <li key={`${d.fileUrl}-${i}`} className="flex items-center justify-between gap-3 rounded-md border p-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{d.label}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {d.fileName} · {d.changeType}
+                          </p>
+                        </div>
+                      </div>
+                      <a
+                        href={resolveFileUrl(d.fileUrl)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="shrink-0 text-xs font-medium text-primary underline"
+                      >
+                        Open
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </dl>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------
 
@@ -475,6 +651,7 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
   const [crPage, setCrPage] = useState(1);
   const [crStatus, setCrStatus] = useState<string>('');
   const [addOpen, setAddOpen] = useState(false);
+  const [viewing, setViewing] = useState<BeneficiaryAccount | null>(null);
   const [verifying, setVerifying] = useState<BeneficiaryAccountChangeRequest | null>(null);
   const [approving, setApproving] = useState<BeneficiaryAccountChangeRequest | null>(null);
   const [rejecting, setRejecting] = useState<BeneficiaryAccountChangeRequest | null>(null);
@@ -492,12 +669,12 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
     return u.toString();
   }, [crPage, crStatus]);
 
-  const { data: benes, isLoading: bLoading } = useQuery({
+  const { data: benes, isLoading: bLoading, error: bError } = useQuery({
     queryKey: [BENE_KEY, beneParams],
     queryFn: () => api.get<Paginated<BeneficiaryAccount>>(`/beneficiary-accounts?${beneParams}`),
   });
 
-  const { data: crs, isLoading: crLoading } = useQuery({
+  const { data: crs, isLoading: crLoading, error: crError } = useQuery({
     queryKey: [CR_KEY, crParams],
     queryFn: () => api.get<Paginated<BeneficiaryAccountChangeRequest>>(`/beneficiary-accounts/change-requests/list?${crParams}`),
   });
@@ -607,11 +784,19 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
               <TableHead>Currency</TableHead>
               <TableHead>Direction</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {bLoading ? (
-              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : bError ? (
+              <TableRow><TableCell colSpan={8} className="py-12 text-center text-destructive">
+                <span className="inline-flex items-center gap-1.5">
+                  <AlertTriangle className="h-4 w-4" />
+                  Couldn’t load beneficiary accounts. {bError instanceof Error ? bError.message : 'Please try again.'}
+                </span>
+              </TableCell></TableRow>
             ) : benes && benes.data.length > 0 ? benes.data.map((b) => {
               const sanctioned = b.country?.isSanctioned;
               const inCoolingOff = b.coolingOffUntil && new Date(b.coolingOffUntil).getTime() > Date.now();
@@ -635,17 +820,19 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
                     <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${BENE_STATUS_STYLES[b.status]}`}>
                       {b.status}
                     </span>
-                    {inCoolingOff && (
-                      <div className="text-xs text-amber-700 mt-1 inline-flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" />
-                        cooling-off until {formatDateTime(b.coolingOffUntil)}
-                      </div>
+                    {inCoolingOff && b.coolingOffUntil && (
+                      <CoolingOffCountdown until={b.coolingOffUntil} />
                     )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button size="sm" variant="outline" onClick={() => setViewing(b)}>
+                      <Eye className="mr-1 h-4 w-4" /> View
+                    </Button>
                   </TableCell>
                 </TableRow>
               );
             }) : (
-              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No beneficiary accounts yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="py-12 text-center text-muted-foreground">No beneficiary accounts yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -685,6 +872,13 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
           <TableBody>
             {crLoading ? (
               <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : crError ? (
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-destructive">
+                <span className="inline-flex items-center gap-1.5">
+                  <AlertTriangle className="h-4 w-4" />
+                  Couldn’t load change requests. {crError instanceof Error ? crError.message : 'Please try again.'}
+                </span>
+              </TableCell></TableRow>
             ) : crs && crs.data.length > 0 ? crs.data.map((cr) => {
               const data = (cr.proposedData ?? {}) as Record<string, string>;
               return (
@@ -732,6 +926,11 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
         {crs && <DataTablePagination page={crs.page} totalPages={crs.totalPages} total={crs.total} limit={crs.limit} onPageChange={setCrPage} />}
       </Card>
 
+      <BeneficiaryDetailDialog
+        account={viewing}
+        open={!!viewing}
+        onOpenChange={(o) => !o && setViewing(null)}
+      />
       <VerifyDialog
         open={!!verifying}
         onOpenChange={(o) => !o && setVerifying(null)}
