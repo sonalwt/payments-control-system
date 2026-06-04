@@ -36,8 +36,7 @@ import { AuditModule } from './modules/audit/audit.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, jwtConfig, s3Config],
-      load: [appConfig, databaseConfig, jwtConfig, mailConfig],
+      load: [appConfig, databaseConfig, jwtConfig, s3Config, mailConfig],
       cache: true,
     }),
     LoggerModule.forRoot({
