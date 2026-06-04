@@ -7,6 +7,7 @@ import { PaymentRequestsController } from './payment-requests.controller';
 import { PaymentRequestsService } from './payment-requests.service';
 import { BeneficiaryAccountsModule } from '../beneficiary-accounts/beneficiary-accounts.module';
 import { ApprovalMatricesModule } from '../approval-matrices/approval-matrices.module';
+import { UploadsModule } from '../uploads/uploads.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { ApprovalMatricesModule } from '../approval-matrices/approval-matrices.m
     ]),
     BeneficiaryAccountsModule,
     ApprovalMatricesModule,
+    UploadsModule,
   ],
   controllers: [PaymentRequestsController],
   providers: [PaymentRequestsService],
