@@ -41,6 +41,7 @@ import {
   PaginatedResult,
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { S3Service } from '../uploads/s3.service';
 
 @Injectable()
 export class PaymentRequestsService {
@@ -51,6 +52,7 @@ export class PaymentRequestsService {
     private readonly docRepo: Repository<PaymentRequestDocument>,
     private readonly beneficiaryService: BeneficiaryAccountsService,
     private readonly dataSource: DataSource,
+    private readonly s3: S3Service,
   ) {}
 
   // ===================================================================
@@ -957,6 +959,22 @@ export class PaymentRequestsService {
     }
     const doc = await this.docRepo.findOne({ where: { id: documentId, paymentRequestId: pr.id } });
     if (!doc) throw new NotFoundException('Document not found.');
+
+    // Delete the file from S3 (only for full S3 URLs; local /uploads/ paths are skipped)
+    if (doc.fileUrl.startsWith('http://') || doc.fileUrl.startsWith('https://')) {
+      try {
+        const { pathname } = new URL(doc.fileUrl);
+        // Works for both virtual-hosted AWS URLs (/uploads/file.pdf)
+        // and path-style MinIO URLs (/bucket/uploads/file.pdf)
+        const uploadsIdx = pathname.indexOf('/uploads/');
+        if (uploadsIdx !== -1) {
+          await this.s3.deleteFile(pathname.slice(uploadsIdx + 1));
+        }
+      } catch {
+        // Non-fatal — DB record is still removed even if S3 deletion fails
+      }
+    }
+
     await this.docRepo.remove(doc);
   }
 
