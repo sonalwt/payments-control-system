@@ -98,7 +98,7 @@ export default function UsersPage(): React.ReactElement {
               endpoint="/users/import"
               sampleHeaders={['email', 'full_name', 'password', 'employee_code', 'is_active']}
               sampleRows={[['john.smith@company.com', 'John Smith', 'Temp@1234', 'EMP001', 'true']]}
-              onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
+              onSuccess={() => void queryClient.invalidateQueries({ queryKey: ['users'] })}
             />
             <Button onClick={openDialog} size="sm">
               <Plus className="mr-2 h-4 w-4" />
