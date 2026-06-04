@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { Eye, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { formatDate } from '@/lib/datetime';
 import type {
   IncomingReceipt,
   IncomingReceiptStatus,
@@ -177,7 +178,7 @@ export default function IncomingReceiptsPage(): React.ReactElement {
                   <StatusBadge status={r.status} />
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {new Date(r.createdAt).toLocaleDateString()}
+                  {formatDate(r.createdAt)}
                 </TableCell>
                 <TableCell className="text-right">
                   <Link href={`/incoming-receipts/${r.id}`}>

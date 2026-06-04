@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
 import { api, friendlyError } from '@/lib/api';
+import { formatDateTime } from '@/lib/datetime';
 import type { Paginated, User } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Input } from '@/components/ui/input';
@@ -142,7 +143,7 @@ export default function UsersPage(): React.ReactElement {
                   )}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}
+                  {formatDateTime(u.lastLoginAt)}
                 </TableCell>
                 <TableCell className="text-right">
                   <Button asChild variant="outline" size="sm">

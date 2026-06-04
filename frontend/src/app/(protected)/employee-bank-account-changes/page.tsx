@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Eye, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
+import { formatDate } from '@/lib/datetime';
 import type {
   EbacChangeType,
   EbacStatus,
@@ -321,7 +322,7 @@ export default function EmployeeBankAccountChangesPage() {
                 <TableCell className="text-sm text-muted-foreground">{c.requestedBy}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{c.verifiedBy ?? '—'}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {new Date(c.createdAt).toLocaleDateString()}
+                  {formatDate(c.createdAt)}
                 </TableCell>
                 <TableCell className="text-right">
                   <Link href={`/employee-bank-account-changes/${c.id}`} onClick={(e) => e.stopPropagation()}>

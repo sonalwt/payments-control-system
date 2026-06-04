@@ -146,7 +146,7 @@ export class BeneficiaryAccountsService {
   }
 
   async listChangeRequests(
-    query: PaginationQueryDto & { status?: string },
+    query: PaginationQueryDto & { status?: string; beneficiaryAccountId?: string },
   ): Promise<PaginatedResult<BeneficiaryAccountChangeRequest>> {
     const { page = 1, limit = 20 } = query;
     const qb = this.crRepo
@@ -155,11 +155,14 @@ export class BeneficiaryAccountsService {
       .leftJoinAndSelect('cr.requestedByUser', 'requestedByUser')
       .leftJoinAndSelect('cr.verifiedByUser', 'verifiedByUser')
       .leftJoinAndSelect('cr.approvedByUser', 'approvedByUser')
-      .orderBy('cr.requested_at', 'DESC')
+      .orderBy('cr.requestedAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
     if (query.status) {
       qb.andWhere('cr.status = :status', { status: query.status });
+    }
+    if (query.beneficiaryAccountId) {
+      qb.andWhere('cr.beneficiary_account_id = :baId', { baId: query.beneficiaryAccountId });
     }
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };

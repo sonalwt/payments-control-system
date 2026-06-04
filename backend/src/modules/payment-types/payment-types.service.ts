@@ -13,6 +13,7 @@ import {
   PaginatedResult,
 } from '../../common/dto/pagination.dto';
 import { PaymentTypesQueryDto } from './dto/payment-types-query.dto';
+import { dubaiToday } from '../../common/utils/datetime';
 
 @Injectable()
 export class PaymentTypesService {
@@ -35,17 +36,19 @@ export class PaymentTypesService {
       isConfidential: dto.isConfidential ?? false,
       mobileInitiationOnly: dto.mobileInitiationOnly ?? false,
       allowsCrossCurrency: dto.allowsCrossCurrency ?? true,
-      documentPolicy: dto.documentPolicy ?? [],
       fieldConfig: dto.fieldConfig ?? [],
       paymentCategoryId: dto.paymentCategoryId ?? null,
-      makerRoleId: dto.makerRoleId ?? null,
+      legalEntityId: dto.legalEntityId,
+      makerRoleIds: dto.makerRoleIds ?? (dto.makerRoleId ? [dto.makerRoleId] : []),
+      // Keep the legacy single "primary" maker role in sync with the first entry.
+      makerRoleId: dto.makerRoleIds?.[0] ?? dto.makerRoleId ?? null,
       checkerRoleId: dto.checkerRoleId ?? null,
       makerUserId: dto.makerUserId ?? null,
       checkerUserId: dto.checkerUserId ?? null,
       isSystem: false,
       isActive: dto.isActive ?? true,
       version: 1,
-      effectiveFrom: new Date().toISOString().slice(0, 10),
+      effectiveFrom: dubaiToday(),
       createdBy: actorId,
       updatedBy: actorId,
     });
@@ -60,6 +63,7 @@ export class PaymentTypesService {
     const qb = this.repo
       .createQueryBuilder('pt')
       .leftJoinAndSelect('pt.paymentCategory', 'paymentCategory')
+      .leftJoinAndSelect('pt.legalEntity', 'legalEntity')
       .leftJoinAndSelect('pt.makerRole', 'makerRole')
       .leftJoinAndSelect('pt.checkerRole', 'checkerRole')
       .leftJoinAndSelect('pt.makerUser', 'makerUser')
@@ -80,11 +84,10 @@ export class PaymentTypesService {
       qb.andWhere(
         `(
            pt.maker_user_id = :uid
-           OR (
-             pt.maker_role_id IS NOT NULL
-             AND pt.maker_role_id IN (
-               SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = :uid
-             )
+           OR EXISTS (
+             SELECT 1 FROM user_roles ur
+             WHERE ur.user_id = :uid
+               AND (ur.role_id = ANY(pt.maker_role_ids) OR ur.role_id = pt.maker_role_id)
            )
          )`,
         { uid: currentUserId },
@@ -97,7 +100,7 @@ export class PaymentTypesService {
   async findOne(id: string): Promise<PaymentType> {
     const pt = await this.repo.findOne({
       where: { id },
-      relations: ['paymentCategory', 'makerRole', 'checkerRole', 'makerUser', 'checkerUser'],
+      relations: ['paymentCategory', 'legalEntity', 'makerRole', 'checkerRole', 'makerUser', 'checkerUser'],
     });
     if (!pt) throw new NotFoundException(`Payment type ${id} not found`);
     return pt;
@@ -115,6 +118,14 @@ export class PaymentTypesService {
       }
     }
     Object.assign(pt, dto, { updatedBy: actorId });
+    // Keep maker_role_ids and the denormalised primary maker_role_id consistent.
+    if (dto.makerRoleIds !== undefined) {
+      pt.makerRoleIds = dto.makerRoleIds;
+      pt.makerRoleId = dto.makerRoleIds[0] ?? null;
+    } else if (dto.makerRoleId !== undefined) {
+      pt.makerRoleId = dto.makerRoleId;
+      pt.makerRoleIds = dto.makerRoleId ? [dto.makerRoleId] : [];
+    }
     return this.repo.save(pt);
   }
 

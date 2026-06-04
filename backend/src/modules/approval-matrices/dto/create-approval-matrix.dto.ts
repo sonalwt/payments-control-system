@@ -6,7 +6,6 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
-  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -80,11 +79,12 @@ export class CreateApprovalMatrixDto {
   @IsUUID()
   currencyId!: string;
 
-  @ApiPropertyOptional({ default: 1 })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  version?: number;
+  @ApiProperty({
+    enum: ['ONLINE_TT', 'OFFLINE_TT'],
+    description: 'Treasury Team that executes the payment after final approval',
+  })
+  @IsEnum(['ONLINE_TT', 'OFFLINE_TT'])
+  ttMode!: 'ONLINE_TT' | 'OFFLINE_TT';
 
   @ApiProperty({ example: '2026-01-01' })
   @IsDateString()

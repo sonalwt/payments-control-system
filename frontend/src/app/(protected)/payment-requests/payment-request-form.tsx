@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
 import { CheckCircle2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/hooks/use-auth';
 import type {
@@ -13,9 +13,9 @@ import type {
   BeneficiaryAccount,
   Counterparty,
   Currency,
-  LegalEntity,
   Paginated,
   PaymentType,
+  Role,
 } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,7 +34,6 @@ const documentSchema = z.object({
 
 export const paymentRequestSchema = z.object({
   paymentTypeId: z.string().uuid('Select a payment type'),
-  legalEntityId: z.string().uuid('Select a legal entity'),
   counterpartyId: z.string().uuid().optional().or(z.literal('')),
   beneficiaryAccountId: z.string().uuid().optional().or(z.literal('')),
   sourceAccountId: z.string().uuid().optional().or(z.literal('')),
@@ -55,15 +54,41 @@ type UploadStatus = 'idle' | 'uploading' | 'done' | 'error';
 interface DocUploadState { status: UploadStatus; error: string }
 
 export function PaymentRequestForm({
-  onSubmit, submitting,
+  onSubmit, submitting, defaultValues, submitLabel = 'Save as draft', showDocuments = true,
 }: {
   onSubmit: (d: PaymentRequestFormData) => void;
   submitting?: boolean;
+  defaultValues?: Partial<PaymentRequestFormData>;
+  submitLabel?: string;
+  showDocuments?: boolean;
 }): React.ReactElement {
-  const { register, control, handleSubmit, watch, setValue, formState: { errors } } = useForm<PaymentRequestFormData>({
-    resolver: zodResolver(paymentRequestSchema),
-    defaultValues: { documents: [] },
+  // §4.1 — when the documents section is shown (create flow), at least one
+  // supporting document is mandatory. The edit flow hides documents, so it
+  // keeps the base (optional) schema.
+  const formSchema = useMemo(
+    () =>
+      showDocuments
+        ? paymentRequestSchema.refine((d) => (d.documents?.length ?? 0) >= 1, {
+            message: 'Attach at least one document.',
+            path: ['documents'],
+          })
+        : paymentRequestSchema,
+    [showDocuments],
+  );
+
+  const { register, control, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<PaymentRequestFormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { documents: [], ...defaultValues },
   });
+
+  // Hydrate the form when default values arrive asynchronously (edit mode).
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    if (!hydrated && defaultValues) {
+      reset({ documents: [], ...defaultValues });
+      setHydrated(true);
+    }
+  }, [defaultValues, hydrated, reset]);
 
   const [docUploadStates, setDocUploadStates] = useState<DocUploadState[]>([]);
   const fileInputRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -102,9 +127,9 @@ export function PaymentRequestForm({
     queryKey: ['payment-types-for-request'],
     queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?page=1&limit=200'),
   });
-  const { data: legalEntities } = useQuery({
-    queryKey: ['legal-entities-all'],
-    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
+  const { data: roles } = useQuery({
+    queryKey: ['roles-all'],
+    queryFn: () => api.get<Role[]>('/roles'),
   });
   const { data: counterparties } = useQuery({
     queryKey: ['counterparties-all'],
@@ -132,8 +157,20 @@ export function PaymentRequestForm({
     enabled: !!counterpartyId,
   });
 
+  // Role IDs the current user holds (user.roles are role codes; maker roles
+  // on a payment type are stored as role IDs).
+  const heldRoleIds = new Set(
+    (roles ?? []).filter((r) => user?.roles?.includes(r.code)).map((r) => r.id),
+  );
+  // A payment type is creatable if the user holds any of its maker roles
+  // (multi-select makerRoleIds, or the legacy single makerRole).
   const paymentTypeOptions = (paymentTypes?.data ?? [])
-    .filter((p) => p.isActive && p.makerRole?.code && user?.roles?.includes(p.makerRole.code))
+    .filter((p) => {
+      if (!p.isActive) return false;
+      const ids = p.makerRoleIds?.length ? p.makerRoleIds : p.makerRoleId ? [p.makerRoleId] : [];
+      if (ids.some((id) => heldRoleIds.has(id))) return true;
+      return !!p.makerRole?.code && !!user?.roles?.includes(p.makerRole.code);
+    })
     .map((p) => ({ label: `${p.code} — ${p.name}`, value: p.id }));
 
   const selectedBeneficiary = (beneficiaries?.data ?? []).find((b) => b.id === beneficiaryAccountId);
@@ -157,13 +194,6 @@ export function PaymentRequestForm({
           options={paymentTypeOptions}
           {...register('paymentTypeId')} />
         {errors.paymentTypeId && <p className="text-xs text-destructive">{errors.paymentTypeId.message}</p>}
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
-        <Select id="legalEntityId" placeholder="Select"
-          options={(legalEntities?.data ?? []).filter((le) => le.isActive).map((le) => ({ label: `${le.code} — ${le.name}`, value: le.id }))}
-          {...register('legalEntityId')} />
-        {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -244,9 +274,10 @@ export function PaymentRequestForm({
         </div>
       </div>
 
+      {showDocuments && (
       <div className="rounded-md border p-3 space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-sm font-medium">Documents</p>
+          <p className="text-sm font-medium">Documents <span className="text-destructive">*</span></p>
           <Button
             type="button" size="sm" variant="outline"
             onClick={() => {
@@ -257,7 +288,10 @@ export function PaymentRequestForm({
             <Plus className="mr-1 h-3 w-3" /> Add document
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">§4.1 — attach the documents required by the selected payment type (invoice, PO, GRN, etc.).</p>
+        <p className="text-xs text-muted-foreground">§4.1 — attach the documents required by the selected payment type (invoice, PO, GRN, etc.). At least one document is required.</p>
+        {errors.documents?.message && (
+          <p className="text-xs text-destructive">{errors.documents.message}</p>
+        )}
         {fields.length === 0 ? (
           <p className="text-xs text-muted-foreground">No documents attached yet.</p>
         ) : (
@@ -332,9 +366,10 @@ export function PaymentRequestForm({
           </div>
         )}
       </div>
+      )}
 
       <DialogFooter>
-        <Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save as draft'}</Button>
+        <Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</Button>
       </DialogFooter>
     </form>
   );

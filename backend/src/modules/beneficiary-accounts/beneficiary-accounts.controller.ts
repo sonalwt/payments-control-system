@@ -63,13 +63,15 @@ export class BeneficiaryAccountsController {
   // -------------------------------------------------------------------
 
   @Get('change-requests/list')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.CHECKER, RoleCode.APPROVER_1, RoleCode.APPROVER_2)
-  listChangeRequests(@Query() query: PaginationQueryDto & { status?: string }) {
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.KYC_TEAM)
+  listChangeRequests(
+    @Query() query: PaginationQueryDto & { status?: string; beneficiaryAccountId?: string },
+  ) {
     return this.service.listChangeRequests(query);
   }
 
   @Get('change-requests/:id')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.CHECKER, RoleCode.APPROVER_1, RoleCode.APPROVER_2)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.KYC_TEAM)
   findChangeRequest(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.findChangeRequest(id);
   }
@@ -84,7 +86,7 @@ export class BeneficiaryAccountsController {
   }
 
   @Post('change-requests/:id/verify')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.CHECKER)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.KYC_TEAM)
   verifyChangeRequest(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: VerifyChangeRequestDto,
@@ -94,7 +96,7 @@ export class BeneficiaryAccountsController {
   }
 
   @Post('change-requests/:id/approve')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.APPROVER_2)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.KYC_TEAM)
   approveChangeRequest(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ApproveChangeRequestDto,
@@ -104,7 +106,7 @@ export class BeneficiaryAccountsController {
   }
 
   @Post('change-requests/:id/reject')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.CHECKER, RoleCode.APPROVER_2)
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.KYC_TEAM)
   rejectChangeRequest(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: RejectChangeRequestDto,

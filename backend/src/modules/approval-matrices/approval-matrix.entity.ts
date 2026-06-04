@@ -10,7 +10,8 @@ import { PaymentType } from '../payment-types/payment-type.entity';
 import { Currency } from '../currencies/currency.entity';
 import { ApprovalMatrixBand } from './approval-matrix-band.entity';
 
-export type ApprovalMatrixStatus = 'DRAFT' | 'PUBLISHED' | 'SUPERSEDED';
+/** Treasury-Team execution mode — selects which TT maker team handles the payment. */
+export type TtMode = 'ONLINE_TT' | 'OFFLINE_TT';
 
 @Entity({ name: 'approval_matrices' })
 export class ApprovalMatrix extends BaseEntity {
@@ -34,26 +35,18 @@ export class ApprovalMatrix extends BaseEntity {
   @JoinColumn({ name: 'currency_id' })
   currency?: Currency;
 
-  @Column({ type: 'int', default: 1 })
-  version!: number;
-
-  @Column({ type: 'varchar', length: 15, default: 'DRAFT' })
-  status!: ApprovalMatrixStatus;
-
   @Column({ name: 'effective_from', type: 'date' })
   effectiveFrom!: string;
 
   @Column({ name: 'effective_to', type: 'date', nullable: true })
   effectiveTo?: string | null;
 
-  @Column({ name: 'published_at', type: 'timestamptz', nullable: true })
-  publishedAt?: Date | null;
-
-  @Column({ name: 'published_by', type: 'uuid', nullable: true })
-  publishedBy?: string | null;
-
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive!: boolean;
+
+  /** Which Treasury Team executes the payment after final approval. */
+  @Column({ name: 'tt_mode', type: 'varchar', length: 20 })
+  ttMode!: TtMode;
 
   @OneToMany(() => ApprovalMatrixBand, (b) => b.matrix, { cascade: true })
   bands?: ApprovalMatrixBand[];

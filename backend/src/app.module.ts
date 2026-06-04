@@ -1,12 +1,16 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LoggerModule } from 'nestjs-pino';
+
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
 import s3Config from './config/s3.config';
+import mailConfig from './config/mail.config';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -26,12 +30,17 @@ import { ApprovalMatricesModule } from './modules/approval-matrices/approval-mat
 import { BeneficiaryAccountsModule } from './modules/beneficiary-accounts/beneficiary-accounts.module';
 import { PaymentRequestsModule } from './modules/payment-requests/payment-requests.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
+import { AuditModule } from './modules/audit/audit.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+<<<<<<< HEAD
       load: [appConfig, databaseConfig, jwtConfig, s3Config],
+=======
+      load: [appConfig, databaseConfig, jwtConfig, mailConfig],
+>>>>>>> fc0077629c1c736a3e3e44e6c7b62db370cad02e
       cache: true,
     }),
     LoggerModule.forRoot({
@@ -66,6 +75,8 @@ import { UploadsModule } from './modules/uploads/uploads.module';
     BeneficiaryAccountsModule,
     PaymentRequestsModule,
     UploadsModule,
+    AuditModule,
   ],
+  providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })
 export class AppModule {}

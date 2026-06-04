@@ -18,8 +18,8 @@ import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-
  * service applies the ?mine filter for non-admin / non-counterparty
  * users so they only see matrices they participate in.
  *
- * Mutating endpoints (POST / PUT / DELETE / publish) remain SUPER_ADMIN
- * only — only the admin can author or publish authority matrices.
+ * Mutating endpoints (POST / PUT / DELETE) remain SUPER_ADMIN only —
+ * only the admin can author authority matrices.
  */
 @ApiTags('Approval Matrices')
 @ApiBearerAuth()
@@ -52,12 +52,6 @@ export class ApprovalMatricesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.update(id, dto, user.id);
-  }
-
-  @Post(':id/publish')
-  @Roles(RoleCode.SUPER_ADMIN)
-  publish(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.service.publish(id, user.id);
   }
 
   @Delete(':id')

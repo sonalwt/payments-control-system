@@ -147,13 +147,24 @@ CREATE TABLE IF NOT EXISTS payment_requests (
 
     -- §1.5 matrix snapshot pinned at submit
     matrix_id               UUID,
-    matrix_version          INTEGER,
     current_step_order      INTEGER,
 
     -- §4.4 post-approval execution metadata
     bank_reference          VARCHAR(100),
     value_date              DATE,
     proof_of_payment_url    VARCHAR(500),
+
+    -- Treasury Team execution (post final-approval)
+    tt_mode                   VARCHAR(20),
+    treasury_reference_number VARCHAR(100),
+    swift_copy_url            VARCHAR(500),
+    treasury_maker_by         UUID REFERENCES users(id) ON DELETE SET NULL,
+    treasury_maker_at         TIMESTAMPTZ,
+    treasury_checker_by       UUID REFERENCES users(id) ON DELETE SET NULL,
+    treasury_checker_at       TIMESTAMPTZ,
+    treasury_authoriser_by    UUID REFERENCES users(id) ON DELETE SET NULL,
+    treasury_authoriser_at    TIMESTAMPTZ,
+    completed_at              TIMESTAMPTZ,
 
     -- §6.5 sanctioned-country screening result frozen at submit
     sanction_warning        BOOLEAN NOT NULL DEFAULT FALSE,
@@ -175,8 +186,8 @@ CREATE TABLE IF NOT EXISTS payment_requests (
     updated_by              UUID,
     CONSTRAINT chk_pr_amount_positive CHECK (amount > 0),
     CONSTRAINT chk_pr_status CHECK (status IN (
-        'DRAFT','PENDING_APPROVAL','APPROVED',
-        'AWAITING_PAYMENT_CONFIRMATION','PAID',
+        'DRAFT','PENDING_APPROVAL',
+        'TREASURY_MAKER','TREASURY_CHECKER','TREASURY_AUTHORISER','COMPLETED',
         'REJECTED','WITHDRAWN','CANCELLED'
     ))
 );
