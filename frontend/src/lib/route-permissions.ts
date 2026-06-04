@@ -71,8 +71,9 @@ const RULES: RouteRule[] = [
   { prefix: '/reimbursements', roles: [RoleCode.SUPER_ADMIN] },
   { prefix: '/fnf-settlements', roles: [RoleCode.SUPER_ADMIN] },
 
-  // Beneficiary master
-  { prefix: '/beneficiary-accounts', roles: OPERATIONAL_READ },
+  // Beneficiary master — operational read roles plus the KYC Team, who
+  // verify/approve beneficiary change requests on this page.
+  { prefix: '/beneficiary-accounts', roles: [...OPERATIONAL_READ, RoleCode.KYC_TEAM] },
 
   // Statement upload & reconciliation
   { prefix: '/statement-uploads', roles: [RoleCode.SUPER_ADMIN] },
