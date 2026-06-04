@@ -18,6 +18,7 @@ import {
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
+import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 import { EmployeeForm, type EmployeeFormData } from './employee-form';
 
 const KEY = 'employees';
@@ -125,15 +126,24 @@ export default function EmployeesPage(): React.ReactElement {
         title="Employees"
         description="Master list of employees (Super Admin only)."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> New employee</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-2xl">
-              <DialogHeader><DialogTitle>Create employee</DialogTitle></DialogHeader>
-              <EmployeeForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            <ImportCsvDialog
+              entityName="Employees"
+              endpoint="/employees/import"
+              sampleHeaders={['employee_code', 'full_name', 'work_email', 'country_code', 'start_date', 'mobile_number', 'compensation_band', 'is_active']}
+              sampleRows={[['EMP001', 'John Smith', 'john.smith@company.com', 'GB', '2024-01-15', '+44 7700 900000', 'BAND-A', 'true']]}
+              onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
+            />
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button><Plus className="mr-2 h-4 w-4" /> New employee</Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-2xl">
+                <DialogHeader><DialogTitle>Create employee</DialogTitle></DialogHeader>
+                <EmployeeForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </DialogContent>
+            </Dialog>
+          </div>
         }
       />
       <Card>

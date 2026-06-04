@@ -6,17 +6,20 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Employee } from './employee.entity';
+import { Country } from '../countries/country.entity';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import {
   PaginatedResult,
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { ImportResult, parseImportFile } from '../../common/helpers/parse-import-file';
 
 @Injectable()
 export class EmployeesService {
   constructor(
     @InjectRepository(Employee) private readonly repo: Repository<Employee>,
+    @InjectRepository(Country) private readonly countryRepo: Repository<Country>,
   ) {}
 
   async create(dto: CreateEmployeeDto, actorId: string): Promise<Employee> {
@@ -108,5 +111,37 @@ export class EmployeesService {
     emp.updatedBy = actorId;
     await this.repo.save(emp);
     await this.repo.softRemove(emp);
+  }
+
+  async bulkImport(file: Express.Multer.File, actorId: string): Promise<ImportResult> {
+    const rows = parseImportFile(file);
+    const countries = await this.countryRepo.find({ select: ['id', 'code'] });
+    const countryMap = new Map(countries.map((c) => [c.code.toUpperCase(), c.id]));
+    const result: ImportResult = { created: 0, skipped: 0, errors: [] };
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const employeeCode = row['employee_code'], fullName = row['full_name'], workEmail = row['work_email'];
+      if (!employeeCode) { result.errors.push({ row: i + 2, message: 'employee_code is required' }); result.skipped++; continue; }
+      if (!fullName) { result.errors.push({ row: i + 2, message: 'full_name is required' }); result.skipped++; continue; }
+      if (!workEmail) { result.errors.push({ row: i + 2, message: 'work_email is required' }); result.skipped++; continue; }
+      const countryCode = (row['country_code'] ?? '').toUpperCase();
+      const countryOfEmploymentId = countryMap.get(countryCode);
+      if (!countryOfEmploymentId) { result.errors.push({ row: i + 2, message: `Country code "${countryCode}" not found` }); result.skipped++; continue; }
+      try {
+        await this.create({
+          employeeCode, fullName, workEmail, countryOfEmploymentId,
+          startDate: row['start_date'] || undefined, endDate: row['end_date'] || undefined,
+          nationalId: row['national_id'] || undefined, taxIdentifier: row['tax_identifier'] || undefined,
+          dateOfBirth: row['date_of_birth'] || undefined, mobileNumber: row['mobile_number'] || undefined,
+          address: row['address'] || undefined, compensationBand: row['compensation_band'] || undefined,
+          isActive: row['is_active'] !== 'false',
+        }, actorId);
+        result.created++;
+      } catch (e: unknown) {
+        result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });
+        result.skipped++;
+      }
+    }
+    return result;
   }
 }
