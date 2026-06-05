@@ -589,7 +589,15 @@ function treasurySteps(pr: PaymentRequest): TtStepView[] {
     { order: 2, role: 'CHECKER', label: 'Treasury Checker', user: pr.treasuryCheckerByUser, at: pr.treasuryCheckerAt, activeStatus: 'TREASURY_CHECKER', doneBadge: 'CHECKED' },
     { order: 3, role: 'AUTHORISER', label: 'Treasury Authoriser', user: pr.treasuryAuthoriserByUser, at: pr.treasuryAuthoriserAt, activeStatus: 'TREASURY_AUTHORISER', doneBadge: 'COMPLETED' },
   ] as const;
-  const rejectedIdx = pr.status === 'REJECTED' ? stages.findIndex((s) => !s.at) : -1;
+  // A REJECTED status only belongs to the treasury chain when the rejection
+  // happened *during* the treasury flow. If any approval-chain step was
+  // rejected, the request never reached treasury, so no treasury stage is the
+  // culprit — leave them all PENDING instead of blaming the maker.
+  const approvalChainRejected = pr.approvals?.some((a) => a.decision === 'REJECTED') ?? false;
+  const rejectedIdx =
+    pr.status === 'REJECTED' && !approvalChainRejected
+      ? stages.findIndex((s) => !s.at)
+      : -1;
   return stages.map((s, i) => {
     const done = !!s.at;
     const active = pr.status === s.activeStatus;
