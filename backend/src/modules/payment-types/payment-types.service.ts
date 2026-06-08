@@ -100,16 +100,17 @@ export class PaymentTypesService {
   }
 
   /**
-   * Payment types an employee may raise themselves (employee_self_service),
-   * active and currently in effect. Scoped to the employee's legal entity
-   * when known; otherwise all self-service types are returned.
+   * Payment types an employee may select when raising a request (e.g. a
+   * reimbursement). Returns ALL active, in-effect payment types — scoped to
+   * the employee's legal entity when known — excluding confidential
+   * (chairman-style) types, which must never be employee-initiated.
    */
-  async findEmployeeSelfService(legalEntityId?: string | null): Promise<PaymentType[]> {
+  async findEmployeeSelectable(legalEntityId?: string | null): Promise<PaymentType[]> {
     const today = dubaiToday();
     const qb = this.repo
       .createQueryBuilder('pt')
-      .where('pt.employee_self_service = true')
-      .andWhere('pt.is_active = true')
+      .where('pt.is_active = true')
+      .andWhere('pt.is_confidential = false')
       .andWhere('pt.effective_from <= :today', { today })
       .andWhere('(pt.effective_to IS NULL OR pt.effective_to >= :today)', { today })
       .orderBy('pt.name', 'ASC');

@@ -68,10 +68,10 @@ export class EmployeePortalController {
     return { url, fileName: file.originalname };
   }
 
-  /** Payment types this employee is allowed to raise themselves. */
+  /** Payment types this employee can select when raising a request. */
   @Get('payment-types')
   listPaymentTypes(@CurrentEmployee() emp: AuthenticatedEmployee) {
-    return this.paymentTypes.findEmployeeSelfService(emp.legalEntityId);
+    return this.paymentTypes.findEmployeeSelectable(emp.legalEntityId);
   }
 
   /** The employee's own payable beneficiary accounts. */

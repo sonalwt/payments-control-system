@@ -1,9 +1,15 @@
 'use client';
 
 import Link from 'next/link';
+import { Plus } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { EmployeeShell } from '@/components/employee/employee-shell';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/shared/page-header';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table';
 import { useNotify } from '@/hooks/use-notify';
 import {
   employeeApi,
@@ -67,70 +73,60 @@ function RequestsList(): React.ReactElement {
   const rows = data?.data ?? [];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">My reimbursement requests</h1>
-        <Button asChild size="sm">
-          <Link href="/employee/new">New request</Link>
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : rows.length === 0 ? (
-        <div className="rounded-md border bg-background p-8 text-center text-sm text-muted-foreground">
-          You haven’t raised any reimbursement requests yet.
-        </div>
-      ) : (
-        <div className="overflow-hidden rounded-md border bg-background">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2">Request</th>
-                <th className="px-4 py-2">Type</th>
-                <th className="px-4 py-2 text-right">Amount</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-b last:border-0">
-                  <td className="px-4 py-2 font-medium">{r.requestNumber}</td>
-                  <td className="px-4 py-2">{r.paymentType?.name ?? '—'}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {r.currency?.code ?? ''} {r.amount}
-                  </td>
-                  <td className="px-4 py-2">
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td className="px-4 py-2 text-right">
+    <div>
+      <PageHeader
+        title="My Reimbursements"
+        description="Raise reimbursement requests and track their approval status."
+        actions={
+          <Button asChild>
+            <Link href="/employee/new"><Plus className="mr-2 h-4 w-4" /> New request</Link>
+          </Button>
+        }
+      />
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Request</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead className="text-right">Amount</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-56 text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading ? (
+              <TableRow><TableCell colSpan={5} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : rows.length === 0 ? (
+              <TableRow><TableCell colSpan={5} className="py-12 text-center text-muted-foreground">You haven’t raised any reimbursement requests yet.</TableCell></TableRow>
+            ) : rows.map((r) => (
+              <TableRow key={r.id}>
+                <TableCell className="font-medium">{r.requestNumber}</TableCell>
+                <TableCell>{r.paymentType?.name ?? '—'}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.currency?.code ?? ''} {r.amount}</TableCell>
+                <TableCell><StatusBadge status={r.status} /></TableCell>
+                <TableCell className="text-right">
+                  <div className="inline-flex items-center gap-1 whitespace-nowrap">
+                    <Button asChild size="sm" variant="ghost">
+                      <Link href={`/employee/requests/${r.id}`}>View</Link>
+                    </Button>
                     {r.status === 'DRAFT' && (
-                      <Button
-                        size="sm"
-                        disabled={submit.isPending}
-                        onClick={() => submit.mutate(r.id)}
-                      >
+                      <Button size="sm" disabled={submit.isPending} onClick={() => submit.mutate(r.id)}>
                         Submit
                       </Button>
                     )}
                     {(r.status === 'DRAFT' || r.status === 'PENDING_APPROVAL') && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={withdraw.isPending}
-                        onClick={() => withdraw.mutate(r.id)}
-                      >
+                      <Button size="sm" variant="ghost" disabled={withdraw.isPending} onClick={() => withdraw.mutate(r.id)}>
                         Withdraw
                       </Button>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
     </div>
   );
 }

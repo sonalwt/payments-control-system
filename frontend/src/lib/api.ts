@@ -130,9 +130,9 @@ export function friendlyError(err: unknown): string {
 
   // Approval matrix errors
   if (lower.includes('no published approval matrix'))
-    return `No approval matrix is configured for this payment type. Ask your administrator to create and publish one under Masters → Approval Matrices.`;
+    return `No approval matrix is configured for this payment type. Ask your administrator to create and publish one under Payment Types & Approvals.`;
   if (lower.includes('no band') && lower.includes('matrix') && lower.includes('covers'))
-    return 'The payment amount falls outside the bands defined in the approval matrix. Ask your administrator to update the matrix bands under Masters → Approval Matrices.';
+    return 'The payment amount falls outside the bands defined in the approval matrix. Ask your administrator to update the matrix bands under Payment Types & Approvals.';
   // Matrix band-shape validation raised while *saving* a matrix — show the
   // real cause rather than the payment-amount message below.
   if (lower.includes('maxamount') && lower.includes('minamount'))
@@ -191,7 +191,7 @@ export function friendlyError(err: unknown): string {
   if (lower.includes('entity') && lower.includes('not found'))
     return 'The record you are trying to access no longer exists. It may have been deleted.';
   if (lower.includes('no approval') || lower.includes('approval matrix'))
-    return 'No approval matrix is configured for this payment type. Ask your administrator to set one up under Masters → Approval Matrices.';
+    return 'No approval matrix is configured for this payment type. Ask your administrator to set one up under Payment Types & Approvals.';
   if (lower.includes('payment amount') && (lower.includes('band') || lower.includes('range')))
     return 'The payment amount is outside the configured approval bands. Ask your administrator to update the matrix.';
   if (lower.includes('status') && lower.includes('draft'))

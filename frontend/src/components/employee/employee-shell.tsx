@@ -1,15 +1,16 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
 import { getEmployeeToken, setEmployeeToken } from '@/lib/employee-api';
+import { EmployeeSidebar } from './employee-sidebar';
 
 /**
- * Wraps the authenticated employee pages: redirects to the employee login if
- * there is no employee token, and renders a minimal header with sign-out.
- * Deliberately independent of the staff AppShell / AuthProvider.
+ * Wraps the authenticated employee pages with the same chrome as the staff
+ * AppShell — a left sidebar plus a main content area — so the employee portal
+ * matches the normal portal's look. Redirects to the employee login when there
+ * is no employee token. Deliberately independent of the staff AuthProvider
+ * (employees are a separate auth realm).
  */
 export function EmployeeShell({ children }: { children: React.ReactNode }): React.ReactElement | null {
   const router = useRouter();
@@ -31,18 +32,14 @@ export function EmployeeShell({ children }: { children: React.ReactNode }): Reac
   if (!ready) return null;
 
   return (
-    <div className="min-h-screen bg-muted/20">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
-          <Link href="/employee" className="font-semibold">
-            My Reimbursements
-          </Link>
-          <Button variant="ghost" size="sm" onClick={signOut}>
-            Sign out
-          </Button>
-        </div>
-      </header>
-      <main className="mx-auto max-w-3xl px-4 py-6">{children}</main>
+    <div className="flex h-screen">
+      <EmployeeSidebar onSignOut={signOut} />
+      <main className="flex flex-1 flex-col overflow-hidden">
+        <header className="border-b bg-background px-6 py-4">
+          <h1 className="text-sm font-medium text-muted-foreground">Employee Portal</h1>
+        </header>
+        <div className="flex-1 overflow-auto bg-muted/30 p-6">{children}</div>
+      </main>
     </div>
   );
 }
