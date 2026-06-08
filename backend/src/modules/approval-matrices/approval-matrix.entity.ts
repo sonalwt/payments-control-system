@@ -8,6 +8,7 @@ import {
 import { BaseEntity } from '../../common/entities/base.entity';
 import { PaymentType } from '../payment-types/payment-type.entity';
 import { Currency } from '../currencies/currency.entity';
+import { Role } from '../roles/role.entity';
 import { ApprovalMatrixBand } from './approval-matrix-band.entity';
 
 /** Treasury-Team execution mode — selects which TT maker team handles the payment. */
@@ -47,6 +48,32 @@ export class ApprovalMatrix extends BaseEntity {
   /** Which Treasury Team executes the payment after final approval. */
   @Column({ name: 'tt_mode', type: 'varchar', length: 20 })
   ttMode!: TtMode;
+
+  // ── Treasury-stage roles ───────────────────────────────────────────
+  // The role that acts at each Treasury Team stage. Frozen onto the
+  // payment request when the matrix is snapshotted. NULL on legacy
+  // matrices, where the treasury stages fall back to the global
+  // TREASURY_* roles.
+  @Column({ name: 'treasury_maker_role_id', type: 'uuid', nullable: true })
+  treasuryMakerRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'treasury_maker_role_id' })
+  treasuryMakerRole?: Role | null;
+
+  @Column({ name: 'treasury_checker_role_id', type: 'uuid', nullable: true })
+  treasuryCheckerRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'treasury_checker_role_id' })
+  treasuryCheckerRole?: Role | null;
+
+  @Column({ name: 'treasury_authoriser_role_id', type: 'uuid', nullable: true })
+  treasuryAuthoriserRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'treasury_authoriser_role_id' })
+  treasuryAuthoriserRole?: Role | null;
 
   @OneToMany(() => ApprovalMatrixBand, (b) => b.matrix, { cascade: true })
   bands?: ApprovalMatrixBand[];

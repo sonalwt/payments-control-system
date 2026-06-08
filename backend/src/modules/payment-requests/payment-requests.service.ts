@@ -23,11 +23,14 @@ import {
   ApproveDto,
   CancelDto,
   RejectDto,
+  TreasuryCompleteDto,
   TreasuryDecisionDto,
   TreasurySubmitDto,
   WithdrawDto,
 } from './dto/action.dto';
 import { BeneficiaryAccountsService } from '../beneficiary-accounts/beneficiary-accounts.service';
+import { BeneficiaryAccount } from '../beneficiary-accounts/beneficiary-account.entity';
+import { CreateEmployeeReimbursementDto } from './dto/create-employee-reimbursement.dto';
 import { ApprovalMatrix } from '../approval-matrices/approval-matrix.entity';
 import { ApprovalMatrixBand } from '../approval-matrices/approval-matrix-band.entity';
 import { ApprovalMatrixStep } from '../approval-matrices/approval-matrix-step.entity';
@@ -37,6 +40,7 @@ import { Country } from '../countries/country.entity';
 import { UserRole } from '../users/user-role.entity';
 import { PaymentType } from '../payment-types/payment-type.entity';
 import { User } from '../users/user.entity';
+import { Role } from '../roles/role.entity';
 import {
   PaginatedResult,
   PaginationQueryDto,
@@ -103,6 +107,138 @@ export class PaymentRequestsService {
 
       return this.loadOne(saved.id, em.getRepository(PaymentRequest));
     });
+  }
+
+  // ===================================================================
+  // Employee self-service (passwordless portal)
+  // ===================================================================
+  // These mirror the maker CRUD/lifecycle but the principal is an EMPLOYEE,
+  // not a user: there is no maker-role check, attribution is recorded in
+  // raised_by_employee_id (created_by/updated_by stay null), and the payment
+  // type must be flagged employee_self_service. Once submitted the request is
+  // an ordinary PaymentRequest and flows through the unchanged matrix.
+
+  async createForEmployee(
+    dto: CreateEmployeeReimbursementDto,
+    employeeId: string,
+  ): Promise<PaymentRequest> {
+    return this.dataSource.transaction(async (em) => {
+      const paymentType = await em.findOne(PaymentType, {
+        where: { id: dto.paymentTypeId },
+        select: ['id', 'employeeSelfService', 'isActive', 'effectiveFrom', 'effectiveTo'],
+      });
+      if (!paymentType || !paymentType.employeeSelfService || !paymentType.isActive) {
+        throw new ForbiddenException('This payment type is not available for self-service.');
+      }
+      const today = dubaiToday();
+      if (
+        paymentType.effectiveFrom > today ||
+        (paymentType.effectiveTo && paymentType.effectiveTo < today)
+      ) {
+        throw new ForbiddenException('This payment type is not currently in effect.');
+      }
+
+      // A chosen beneficiary account must be the employee's own.
+      if (dto.beneficiaryAccountId) {
+        const bene = await em.findOne(BeneficiaryAccount, {
+          where: { id: dto.beneficiaryAccountId },
+        });
+        if (!bene || bene.employeeId !== employeeId) {
+          throw new ForbiddenException('Beneficiary account does not belong to you.');
+        }
+      }
+
+      const requestNumber = await this.nextRequestNumber(em);
+      const pr = em.create(PaymentRequest, {
+        requestNumber,
+        paymentTypeId: dto.paymentTypeId,
+        counterpartyId: null,
+        employeeId,
+        raisedByEmployeeId: employeeId,
+        beneficiaryAccountId: dto.beneficiaryAccountId ?? null,
+        sourceAccountId: null,
+        currencyId: dto.currencyId,
+        amount: dto.amount,
+        purposeDescription: dto.purposeDescription ?? null,
+        status: 'DRAFT' as PaymentRequestStatus,
+        // created_by/updated_by reference a user; an employee-raised request
+        // records origin in raised_by_employee_id instead.
+        createdBy: null,
+        updatedBy: null,
+      });
+      const saved = await em.save(pr);
+
+      if (dto.documents?.length) {
+        for (const d of dto.documents) {
+          await em.save(
+            em.create(PaymentRequestDocument, {
+              paymentRequestId: saved.id,
+              documentCode: d.documentCode,
+              documentLabel: d.documentLabel ?? null,
+              fileName: d.fileName,
+              fileUrl: d.fileUrl,
+              fileSizeBytes: d.fileSizeBytes ?? null,
+              mimeType: d.mimeType ?? null,
+              uploadedBy: null,
+            }),
+          );
+        }
+      }
+
+      return this.loadOne(saved.id, em.getRepository(PaymentRequest));
+    });
+  }
+
+  /** Employee submits their own DRAFT into the existing approval matrix. */
+  async submitForEmployee(id: string, employeeId: string): Promise<PaymentRequest> {
+    await this.assertOwnedByEmployee(id, employeeId);
+    return this.submit(id, null);
+  }
+
+  async findAllForEmployee(
+    employeeId: string,
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResult<PaymentRequest>> {
+    const { page = 1, limit = 20 } = query;
+    const [data, total] = await this.repo
+      .createQueryBuilder('pr')
+      .leftJoinAndSelect('pr.paymentType', 'paymentType')
+      .leftJoinAndSelect('pr.currency', 'currency')
+      .where('pr.raised_by_employee_id = :eid', { eid: employeeId })
+      .orderBy('pr.created_at', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async findOneForEmployee(id: string, employeeId: string): Promise<PaymentRequest> {
+    await this.assertOwnedByEmployee(id, employeeId);
+    return this.loadOne(id, this.repo);
+  }
+
+  async withdrawForEmployee(
+    id: string,
+    employeeId: string,
+    dto: WithdrawDto,
+  ): Promise<PaymentRequest> {
+    const pr = await this.assertOwnedByEmployee(id, employeeId);
+    if (pr.status !== 'DRAFT' && pr.status !== 'PENDING_APPROVAL') {
+      throw new BadRequestException(`Cannot withdraw in status ${pr.status}`);
+    }
+    pr.status = 'WITHDRAWN';
+    pr.currentStepOrder = null;
+    pr.withdrawnReason = dto.reason ?? null;
+    return this.repo.save(pr);
+  }
+
+  /** Loads a request and asserts the employee raised it, else 404 (no leak). */
+  private async assertOwnedByEmployee(id: string, employeeId: string): Promise<PaymentRequest> {
+    const pr = await this.repo.findOne({ where: { id } });
+    if (!pr || pr.raisedByEmployeeId !== employeeId) {
+      throw new NotFoundException(`Payment request ${id} not found`);
+    }
+    return pr;
   }
 
   async findAll(
@@ -197,19 +333,32 @@ export class PaymentRequestsService {
       //     split by the request's TT mode), plus any treasury stage they have
       //     already actioned. Treasury actors are NOT part of the approval
       //     chain, so without this they would never see their queue.
+      // (3a) Matrix-pinned treasury roles: when the request snapshotted a role
+      //      for a stage, only holders of THAT role see it at that stage.
+      orClauses.push(`(
+        (pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_maker_role_id))
+        OR (pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_checker_role_id))
+        OR (pr.status = 'TREASURY_AUTHORISER' AND pr.treasury_authoriser_role_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_authoriser_role_id))
+      )`);
+
+      // (3b) Legacy / unpinned stages — global TREASURY_* roles. Gated to rows
+      //      with no pinned stage role so the two schemes don't overlap.
       const tRoles = viewer.roles ?? [];
       if (tRoles.includes('TREASURY_MAKER_ONLINE')) {
         // Online maker also covers legacy rows with no tt_mode (→ online).
-        orClauses.push(`(pr.status = 'TREASURY_MAKER' AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
+        orClauses.push(`(pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
       }
       if (tRoles.includes('TREASURY_MAKER_OFFLINE')) {
-        orClauses.push(`(pr.status = 'TREASURY_MAKER' AND pr.tt_mode = 'OFFLINE_TT')`);
+        orClauses.push(`(pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode = 'OFFLINE_TT')`);
       }
       if (tRoles.includes('TREASURY_CHECKER')) {
-        orClauses.push(`(pr.status = 'TREASURY_CHECKER')`);
+        orClauses.push(`(pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NULL)`);
       }
       if (tRoles.includes('TREASURY_AUTHORISER')) {
-        orClauses.push(`(pr.status = 'TREASURY_AUTHORISER')`);
+        orClauses.push(`(pr.status = 'TREASURY_AUTHORISER' AND pr.treasury_authoriser_role_id IS NULL)`);
       }
       orClauses.push(
         `(pr.treasury_maker_by = :viewerId OR pr.treasury_checker_by = :viewerId OR pr.treasury_authoriser_by = :viewerId)`,
@@ -242,13 +391,22 @@ export class PaymentRequestsService {
               AND praA.approver_user_id = :viewerId
           ))`);
         }
+        // Matrix-pinned stage roles awaiting this viewer.
+        aw.push(`(
+          (pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_maker_role_id))
+          OR (pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_checker_role_id))
+          OR (pr.status = 'TREASURY_AUTHORISER' AND pr.treasury_authoriser_role_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_authoriser_role_id))
+        )`);
         const r = viewer.roles ?? [];
         if (r.includes('TREASURY_MAKER_ONLINE'))
-          aw.push(`(pr.status = 'TREASURY_MAKER' AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
+          aw.push(`(pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
         if (r.includes('TREASURY_MAKER_OFFLINE'))
-          aw.push(`(pr.status = 'TREASURY_MAKER' AND pr.tt_mode = 'OFFLINE_TT')`);
-        if (r.includes('TREASURY_CHECKER')) aw.push(`(pr.status = 'TREASURY_CHECKER')`);
-        if (r.includes('TREASURY_AUTHORISER')) aw.push(`(pr.status = 'TREASURY_AUTHORISER')`);
+          aw.push(`(pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode = 'OFFLINE_TT')`);
+        if (r.includes('TREASURY_CHECKER')) aw.push(`(pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NULL)`);
+        if (r.includes('TREASURY_AUTHORISER')) aw.push(`(pr.status = 'TREASURY_AUTHORISER' AND pr.treasury_authoriser_role_id IS NULL)`);
         qb.andWhere(`(${aw.join(' OR ')})`, awParams);
       }
     }
@@ -354,7 +512,9 @@ export class PaymentRequestsService {
    * - Sets sanction_warning if the beneficiary's country is sanctioned.
    * - Freezes counterparty + beneficiary snapshots.
    */
-  async submit(id: string, actorId: string): Promise<PaymentRequest> {
+  // actorId is the acting user, or null when an employee submits their own
+  // self-service request (employees are not users; see submitForEmployee).
+  async submit(id: string, actorId: string | null): Promise<PaymentRequest> {
     return this.dataSource.transaction(async (em) => {
       const pr = await em.findOne(PaymentRequest, {
         where: { id },
@@ -409,8 +569,38 @@ export class PaymentRequestsService {
       //   approve() then walks the chain unchanged.
       const paymentType = await em.findOne(PaymentType, {
         where: { id: pr.paymentTypeId },
-        select: ['id', 'checkerUserId', 'checkerRoleId'],
+        select: ['id', 'checkerUserId', 'checkerRoleId', 'isConfidential'],
       });
+
+      // Confidential (chairman-style) payment types bypass the approval matrix
+      // entirely: no checker, no approval chain. The request is forwarded
+      // straight to the Treasury Authoriser, who captures the bank reference +
+      // SWIFT/MT103 copy and marks the payment completed in one step. The
+      // authoriser role is taken from the matrix configured for this payment
+      // type + currency (a confidential matrix carries only that role);
+      // snapshotted so only its holders can act. NULL → global
+      // TREASURY_AUTHORISER role.
+      if (paymentType?.isConfidential) {
+        const matrix = await em
+          .createQueryBuilder(ApprovalMatrix, 'm')
+          .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
+          .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
+          .andWhere('m.is_active = true')
+          .andWhere('m.deleted_at IS NULL')
+          .orderBy('m.created_at', 'DESC')
+          .getOne();
+
+        pr.status = 'TREASURY_AUTHORISER';
+        pr.submittedAt = new Date();
+        pr.approvedAt = new Date();
+        pr.currentStepOrder = null;
+        pr.matrixId = matrix?.id ?? null;
+        pr.ttMode = null;
+        pr.treasuryAuthoriserRoleId = matrix?.treasuryAuthoriserRoleId ?? null;
+        pr.updatedBy = actorId;
+        await em.save(pr);
+        return this.loadOne(pr.id, em.getRepository(PaymentRequest));
+      }
 
       const hasChecker =
         !!paymentType?.checkerUserId || !!paymentType?.checkerRoleId;
@@ -480,6 +670,9 @@ export class PaymentRequestsService {
 
         pr.matrixId = matrix.id;
         pr.ttMode = matrix.ttMode;
+        pr.treasuryMakerRoleId = matrix.treasuryMakerRoleId ?? null;
+        pr.treasuryCheckerRoleId = matrix.treasuryCheckerRoleId ?? null;
+        pr.treasuryAuthoriserRoleId = matrix.treasuryAuthoriserRoleId ?? null;
         pr.currentStepOrder = 1;
         await em.save(pr);
 
@@ -610,6 +803,9 @@ export class PaymentRequestsService {
 
         pr.matrixId = matrix.id;
         pr.ttMode = matrix.ttMode;
+        pr.treasuryMakerRoleId = matrix.treasuryMakerRoleId ?? null;
+        pr.treasuryCheckerRoleId = matrix.treasuryCheckerRoleId ?? null;
+        pr.treasuryAuthoriserRoleId = matrix.treasuryAuthoriserRoleId ?? null;
 
         if (!stepsToSeed.length) {
           // All remaining matrix steps were duplicates of the checker — the
@@ -792,11 +988,17 @@ export class PaymentRequestsService {
       if (pr.status !== 'TREASURY_MAKER') {
         throw new BadRequestException(`Cannot submit treasury info in status ${pr.status}`);
       }
-      const makerRole =
-        pr.ttMode === 'OFFLINE_TT'
-          ? RoleCode.TREASURY_MAKER_OFFLINE
-          : RoleCode.TREASURY_MAKER_ONLINE;
-      await this.assertHasRole(em, actorId, makerRole);
+      // Prefer the role pinned on the matrix snapshot; fall back to the
+      // global online/offline maker role for legacy requests.
+      if (pr.treasuryMakerRoleId) {
+        await this.assertHoldsRoleId(em, actorId, pr.treasuryMakerRoleId);
+      } else {
+        const makerRole =
+          pr.ttMode === 'OFFLINE_TT'
+            ? RoleCode.TREASURY_MAKER_OFFLINE
+            : RoleCode.TREASURY_MAKER_ONLINE;
+        await this.assertHasRole(em, actorId, makerRole);
+      }
 
       pr.treasuryReferenceNumber = dto.referenceNumber;
       pr.swiftCopyUrl = dto.swiftCopyUrl;
@@ -822,7 +1024,11 @@ export class PaymentRequestsService {
       if (pr.status !== 'TREASURY_CHECKER') {
         throw new BadRequestException(`Cannot check in status ${pr.status}`);
       }
-      await this.assertHasRole(em, actorId, RoleCode.TREASURY_CHECKER);
+      if (pr.treasuryCheckerRoleId) {
+        await this.assertHoldsRoleId(em, actorId, pr.treasuryCheckerRoleId);
+      } else {
+        await this.assertHasRole(em, actorId, RoleCode.TREASURY_CHECKER);
+      }
 
       pr.treasuryCheckerBy = actorId;
       pr.treasuryCheckerAt = new Date();
@@ -837,7 +1043,7 @@ export class PaymentRequestsService {
   /** Treasury authoriser marks the payment completed (terminal). */
   async treasuryComplete(
     id: string,
-    _dto: TreasuryDecisionDto,
+    dto: TreasuryCompleteDto,
     actorId: string,
   ): Promise<PaymentRequest> {
     return this.dataSource.transaction(async (em) => {
@@ -846,7 +1052,27 @@ export class PaymentRequestsService {
       if (pr.status !== 'TREASURY_AUTHORISER') {
         throw new BadRequestException(`Cannot complete in status ${pr.status}`);
       }
-      await this.assertHasRole(em, actorId, RoleCode.TREASURY_AUTHORISER);
+      if (pr.treasuryAuthoriserRoleId) {
+        await this.assertHoldsRoleId(em, actorId, pr.treasuryAuthoriserRoleId);
+      } else {
+        await this.assertHasRole(em, actorId, RoleCode.TREASURY_AUTHORISER);
+      }
+
+      // Confidential (chairman-style) payments skip the treasury maker stage,
+      // so the authoriser supplies the bank reference + SWIFT/MT103 copy here.
+      const paymentType = await em.findOne(PaymentType, {
+        where: { id: pr.paymentTypeId },
+        select: ['id', 'isConfidential'],
+      });
+      if (paymentType?.isConfidential) {
+        if (!dto.referenceNumber || !dto.swiftCopyUrl) {
+          throw new BadRequestException(
+            'Reference number and SWIFT/MT103 copy are required to complete a confidential payment.',
+          );
+        }
+        pr.treasuryReferenceNumber = dto.referenceNumber;
+        pr.swiftCopyUrl = dto.swiftCopyUrl;
+      }
 
       // §2.5 — debit the source account's remaining balance on completion
       // (preserved from the retired mark-paid flow) when one is set.
@@ -882,6 +1108,17 @@ export class PaymentRequestsService {
       const pr = await em.findOne(PaymentRequest, { where: { id } });
       if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
 
+      // Resolve the role allowed to act on the current treasury stage. A role
+      // pinned on the matrix snapshot takes precedence; otherwise fall back to
+      // the global TREASURY_* role for the stage (legacy requests).
+      const stageRoleId: string | null =
+        pr.status === 'TREASURY_MAKER'
+          ? pr.treasuryMakerRoleId ?? null
+          : pr.status === 'TREASURY_CHECKER'
+            ? pr.treasuryCheckerRoleId ?? null
+            : pr.status === 'TREASURY_AUTHORISER'
+              ? pr.treasuryAuthoriserRoleId ?? null
+              : null;
       const stageRole: RoleCode | null =
         pr.status === 'TREASURY_MAKER'
           ? pr.ttMode === 'OFFLINE_TT'
@@ -895,7 +1132,11 @@ export class PaymentRequestsService {
       if (!stageRole) {
         throw new BadRequestException(`Cannot reject in status ${pr.status}`);
       }
-      await this.assertHasRole(em, actorId, stageRole);
+      if (stageRoleId) {
+        await this.assertHoldsRoleId(em, actorId, stageRoleId);
+      } else {
+        await this.assertHasRole(em, actorId, stageRole);
+      }
 
       pr.status = 'REJECTED';
       pr.rejectionReason = dto.comments;
@@ -1018,6 +1259,41 @@ export class PaymentRequestsService {
     );
   }
 
+  /**
+   * Assert the actor holds a specific role by its ID (platform-admin /
+   * SUPER_ADMIN bypass). Used when a treasury stage is pinned to a role
+   * selected on the approval matrix and snapshotted onto the request.
+   */
+  private async assertHoldsRoleId(
+    em: EntityManager,
+    actorId: string,
+    roleId: string,
+  ): Promise<void> {
+    const userRow = await em
+      .getRepository(User)
+      .findOne({ where: { id: actorId }, select: ['id', 'isPlatformAdmin'] });
+    if (userRow?.isPlatformAdmin) return;
+
+    const has = await em
+      .getRepository(UserRole)
+      .createQueryBuilder('ur')
+      .innerJoin('ur.role', 'r')
+      .where('ur.user_id = :uid', { uid: actorId })
+      .andWhere('(ur.role_id = :roleId OR r.code = :superAdmin)', {
+        roleId,
+        superAdmin: RoleCode.SUPER_ADMIN,
+      })
+      .getCount();
+    if (has > 0) return;
+
+    const role = await em
+      .getRepository(Role)
+      .findOne({ where: { id: roleId }, select: ['id', 'name'] });
+    throw new ForbiddenException(
+      `You do not hold the required role (${role?.name ?? roleId}) to act on this treasury stage.`,
+    );
+  }
+
   private async assertCanMake(actorId: string, paymentTypeId: string): Promise<void> {
     const ptRepo = this.dataSource.getRepository(PaymentType);
     const pt = await ptRepo.findOne({
@@ -1083,6 +1359,9 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('pr.treasuryMakerByUser', 'treasuryMakerByUser')
       .leftJoinAndSelect('pr.treasuryCheckerByUser', 'treasuryCheckerByUser')
       .leftJoinAndSelect('pr.treasuryAuthoriserByUser', 'treasuryAuthoriserByUser')
+      .leftJoinAndSelect('pr.treasuryMakerRole', 'treasuryMakerRole')
+      .leftJoinAndSelect('pr.treasuryCheckerRole', 'treasuryCheckerRole')
+      .leftJoinAndSelect('pr.treasuryAuthoriserRole', 'treasuryAuthoriserRole')
       .leftJoinAndSelect('pr.documents', 'document')
       .where('pr.id = :id', { id })
       .orderBy('approval.stepOrder', 'ASC')

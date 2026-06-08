@@ -14,7 +14,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-class AttachDocumentDto {
+export class AttachDocumentDto {
   @ApiProperty({ example: 'INVOICE' })
   @IsString()
   @Length(2, 50)

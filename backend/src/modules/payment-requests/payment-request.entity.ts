@@ -17,6 +17,7 @@ import { BeneficiaryAccount } from '../beneficiary-accounts/beneficiary-account.
 import { PaymentRequestApproval } from './payment-request-approval.entity';
 import { PaymentRequestDocument } from './payment-request-document.entity';
 import { User } from '../users/user.entity';
+import { Role } from '../roles/role.entity';
 
 /** SoW §3 — canonical payment request status machine. */
 export type PaymentRequestStatus =
@@ -78,6 +79,18 @@ export class PaymentRequest extends BaseEntity {
   @ManyToOne(() => Employee, { onDelete: 'RESTRICT', nullable: true })
   @JoinColumn({ name: 'employee_id' })
   employee?: Employee | null;
+
+  /**
+   * Set when an employee raised this request via the self-service portal.
+   * `created_by` references a user, so it stays null for employee-raised
+   * requests and the origin is recorded here instead.
+   */
+  @Column({ name: 'raised_by_employee_id', type: 'uuid', nullable: true })
+  raisedByEmployeeId?: string | null;
+
+  @ManyToOne(() => Employee, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'raised_by_employee_id' })
+  raisedByEmployee?: Employee | null;
 
   /** §6 — destination account from the verified master. */
   @Column({ name: 'beneficiary_account_id', type: 'uuid', nullable: true })
@@ -142,6 +155,30 @@ export class PaymentRequest extends BaseEntity {
   /** Snapshotted from the approval matrix when the matrix is frozen. */
   @Column({ name: 'tt_mode', type: 'varchar', length: 20, nullable: true })
   ttMode?: TtMode | null;
+
+  // Role pinned to each treasury stage, snapshotted from the approval
+  // matrix at freeze time. When set, only holders of that role may act on
+  // the stage; when NULL the stage falls back to the global TREASURY_* role.
+  @Column({ name: 'treasury_maker_role_id', type: 'uuid', nullable: true })
+  treasuryMakerRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_maker_role_id' })
+  treasuryMakerRole?: Role | null;
+
+  @Column({ name: 'treasury_checker_role_id', type: 'uuid', nullable: true })
+  treasuryCheckerRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_checker_role_id' })
+  treasuryCheckerRole?: Role | null;
+
+  @Column({ name: 'treasury_authoriser_role_id', type: 'uuid', nullable: true })
+  treasuryAuthoriserRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_authoriser_role_id' })
+  treasuryAuthoriserRole?: Role | null;
 
   /** Reference number captured by the TT maker from the bank. */
   @Column({ name: 'treasury_reference_number', type: 'varchar', length: 100, nullable: true })

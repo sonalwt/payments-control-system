@@ -29,8 +29,12 @@ import { CounterpartiesModule } from './modules/counterparties/counterparties.mo
 import { ApprovalMatricesModule } from './modules/approval-matrices/approval-matrices.module';
 import { BeneficiaryAccountsModule } from './modules/beneficiary-accounts/beneficiary-accounts.module';
 import { PaymentRequestsModule } from './modules/payment-requests/payment-requests.module';
+import { IncomingReceiptsModule } from './modules/incoming-receipts/incoming-receipts.module';
+import { ReconciliationModule } from './modules/reconciliation/reconciliation.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { EmployeeAuthModule } from './modules/employee-auth/employee-auth.module';
+import { EmployeePortalModule } from './modules/employee-portal/employee-portal.module';
 
 @Module({
   imports: [
@@ -70,8 +74,12 @@ import { AuditModule } from './modules/audit/audit.module';
     ApprovalMatricesModule,
     BeneficiaryAccountsModule,
     PaymentRequestsModule,
+    IncomingReceiptsModule,
+    ReconciliationModule,
     UploadsModule,
     AuditModule,
+    EmployeeAuthModule,
+    EmployeePortalModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })

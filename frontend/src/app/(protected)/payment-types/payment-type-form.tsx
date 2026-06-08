@@ -98,6 +98,12 @@ export function PaymentTypeForm({
 
   const makerRoleIds = watch('makerRoleIds') ?? [];
 
+  // "Requires approval chain" and "Confidential (chairman-style)" are mutually
+  // exclusive: a confidential type bypasses the approval matrix and goes
+  // straight to the Treasury Authoriser. Selecting one clears the other.
+  const requiresApprovalChain = watch('requiresApprovalChain') ?? false;
+  const isConfidential = watch('isConfidential') ?? false;
+
   const isSystem = defaultValues?.isSystem ?? false;
 
   const submit = handleSubmit((d) =>
@@ -211,7 +217,16 @@ export function PaymentTypeForm({
         <p className="text-sm font-medium">Workflow behaviour</p>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('requiresApprovalChain')} />
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-border"
+              checked={requiresApprovalChain}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setValue('requiresApprovalChain', on, { shouldDirty: true });
+                if (on) setValue('isConfidential', false, { shouldDirty: true });
+              }}
+            />
             <span>Requires approval chain</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -219,7 +234,16 @@ export function PaymentTypeForm({
             <span>Batch-based (e.g. payroll)</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('isConfidential')} />
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-border"
+              checked={isConfidential}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setValue('isConfidential', on, { shouldDirty: true });
+                if (on) setValue('requiresApprovalChain', false, { shouldDirty: true });
+              }}
+            />
             <span>Confidential (chairman-style)</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -235,6 +259,13 @@ export function PaymentTypeForm({
             <span>Active</span>
           </label>
         </div>
+        {isConfidential && (
+          <p className="text-xs text-muted-foreground">
+            Confidential payments skip the approval matrix and go directly to the Treasury
+            Authoriser, who captures the reference number + SWIFT/MT103 copy and marks the
+            payment completed.
+          </p>
+        )}
       </div>
 
       <DialogFooter>

@@ -75,6 +75,31 @@ export class TreasuryDecisionDto {
   comments?: string;
 }
 
+/**
+ * Treasury authoriser completion. For confidential (chairman-style) payments
+ * there is no treasury maker stage, so the authoriser captures the bank
+ * reference + SWIFT/MT103 copy here while marking the payment completed.
+ * Both are optional for the standard flow (already captured by the maker).
+ */
+export class TreasuryCompleteDto {
+  @ApiPropertyOptional({ example: 'FT26154ABCD' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  referenceNumber?: string;
+
+  @ApiPropertyOptional({ example: '/uploads/mt103.pdf' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 500)
+  swiftCopyUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  comments?: string;
+}
+
 export class AttachDocumentDto {
   @ApiProperty({ example: 'INVOICE' })
   @IsString()

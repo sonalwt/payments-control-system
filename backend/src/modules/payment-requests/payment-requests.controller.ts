@@ -21,6 +21,7 @@ import {
   ApproveDto,
   CancelDto,
   RejectDto,
+  TreasuryCompleteDto,
   TreasuryDecisionDto,
   TreasurySubmitDto,
   WithdrawDto,
@@ -158,7 +159,7 @@ export class PaymentRequestsController {
   @Post(':id/treasury/complete')
   treasuryComplete(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: TreasuryDecisionDto,
+    @Body() dto: TreasuryCompleteDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.treasuryComplete(id, dto, user.id);

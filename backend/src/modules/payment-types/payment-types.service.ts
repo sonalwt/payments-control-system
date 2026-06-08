@@ -31,7 +31,9 @@ export class PaymentTypesService {
       name: dto.name,
       description: dto.description ?? null,
       direction: dto.direction,
-      requiresApprovalChain: dto.requiresApprovalChain ?? true,
+      // A confidential (chairman-style) type bypasses the approval matrix, so
+      // it can never also "require an approval chain" (DB enforces the same).
+      requiresApprovalChain: dto.isConfidential ? false : (dto.requiresApprovalChain ?? true),
       isBatchBased: dto.isBatchBased ?? false,
       isConfidential: dto.isConfidential ?? false,
       mobileInitiationOnly: dto.mobileInitiationOnly ?? false,
@@ -97,6 +99,26 @@ export class PaymentTypesService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
+  /**
+   * Payment types an employee may raise themselves (employee_self_service),
+   * active and currently in effect. Scoped to the employee's legal entity
+   * when known; otherwise all self-service types are returned.
+   */
+  async findEmployeeSelfService(legalEntityId?: string | null): Promise<PaymentType[]> {
+    const today = dubaiToday();
+    const qb = this.repo
+      .createQueryBuilder('pt')
+      .where('pt.employee_self_service = true')
+      .andWhere('pt.is_active = true')
+      .andWhere('pt.effective_from <= :today', { today })
+      .andWhere('(pt.effective_to IS NULL OR pt.effective_to >= :today)', { today })
+      .orderBy('pt.name', 'ASC');
+    if (legalEntityId) {
+      qb.andWhere('pt.legal_entity_id = :le', { le: legalEntityId });
+    }
+    return qb.getMany();
+  }
+
   async findOne(id: string): Promise<PaymentType> {
     const pt = await this.repo.findOne({
       where: { id },
@@ -118,6 +140,12 @@ export class PaymentTypesService {
       }
     }
     Object.assign(pt, dto, { updatedBy: actorId });
+    // Confidential and approval-chain are mutually exclusive (DB enforces this).
+    // Whenever confidential is on, force the approval-chain flag off so the
+    // raw CHECK constraint never trips.
+    if (pt.isConfidential) {
+      pt.requiresApprovalChain = false;
+    }
     // Keep maker_role_ids and the denormalised primary maker_role_id consistent.
     if (dto.makerRoleIds !== undefined) {
       pt.makerRoleIds = dto.makerRoleIds;
