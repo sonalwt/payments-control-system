@@ -13,6 +13,11 @@ export class Employee extends BaseEntity {
   @Column({ name: 'work_email', type: 'citext' })
   workEmail!: string;
 
+  /** Employing legal entity. Nullable on the master; used to scope which
+   *  self-service payment types an employee may raise. */
+  @Column({ name: 'legal_entity_id', type: 'uuid', nullable: true })
+  legalEntityId?: string | null;
+
   @Column({ name: 'country_of_employment_id', type: 'uuid' })
   countryOfEmploymentId!: string;
 

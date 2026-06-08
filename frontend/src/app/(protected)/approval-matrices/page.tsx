@@ -35,6 +35,9 @@ function MatrixDetails({ m }: { m: ApprovalMatrix }): React.ReactElement {
         <div><span className="text-muted-foreground">TT mode:</span> {m.ttMode === 'OFFLINE_TT' ? 'Offline TT' : 'Online TT'}</div>
         <div><span className="text-muted-foreground">Effective from:</span> {m.effectiveFrom}</div>
         <div><span className="text-muted-foreground">Effective to:</span> {m.effectiveTo ?? '—'}</div>
+        <div><span className="text-muted-foreground">Treasury Maker:</span> {m.treasuryMakerRole?.name ?? '—'}</div>
+        <div><span className="text-muted-foreground">Treasury Checker:</span> {m.treasuryCheckerRole?.name ?? '—'}</div>
+        <div><span className="text-muted-foreground">Treasury Authoriser:</span> {m.treasuryAuthoriserRole?.name ?? '—'}</div>
       </div>
       {m.description && <div className="text-sm"><span className="text-muted-foreground">Description: </span>{m.description}</div>}
 

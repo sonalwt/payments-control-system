@@ -83,6 +83,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [treasurySubmitOpen, setTreasurySubmitOpen] = useState(false);
+  const [treasuryCompleteOpen, setTreasuryCompleteOpen] = useState(false);
   const [treasuryRejectOpen, setTreasuryRejectOpen] = useState(false);
 
   // Document editing state (used when status = DRAFT)
@@ -138,8 +139,10 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onError: (e: Error) => notify.error('Check failed', e),
   });
   const treasuryCompleteMut = useMutation({
-    mutationFn: () => mut('treasury/complete', {}),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); notify.success('Payment completed'); },
+    // Confidential payments capture the reference + SWIFT/MT103 here; the
+    // standard flow already has them from the maker stage and sends nothing.
+    mutationFn: (d?: TreasurySubmitData) => mut('treasury/complete', d ?? {}),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setTreasuryCompleteOpen(false); notify.success('Payment completed'); },
     onError: (e: Error) => notify.error('Complete failed', e),
   });
   const treasuryRejectMut = useMutation({
@@ -195,6 +198,10 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   }
 
   const isMine = pr.createdBy === user?.id;
+  // Confidential (chairman-style) payments bypass the approval matrix and the
+  // treasury maker/checker stages — the authoriser captures the reference +
+  // SWIFT/MT103 copy when completing.
+  const isConfidential = pr.paymentType?.isConfidential ?? false;
   // Role codes like INITIATOR / CHECKER / APPROVER_1 / APPROVER_2 do not exist
   // in the database. Actual codes are OPS_TEAM, ACCOUNTS_TEAM, APPROVER, etc.
   // The backend enforces all permissions; the frontend uses isMine + canActOnStep.
@@ -204,10 +211,19 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   // Treasury-stage gating. SUPER_ADMIN may act on any stage (mirrors the
   // backend bypass). The maker role depends on the request's TT mode.
   const isSuperAdmin = userRoles.includes('SUPER_ADMIN');
+  // When the matrix pinned a role to a treasury stage (snapshotted onto the
+  // request), gate on that role; otherwise fall back to the global TREASURY_*
+  // roles. The backend enforces this regardless — these are display hints.
   const makerRoleNeeded = pr.ttMode === 'OFFLINE_TT' ? 'TREASURY_MAKER_OFFLINE' : 'TREASURY_MAKER_ONLINE';
-  const canTreasuryMaker = isSuperAdmin || userRoles.includes(makerRoleNeeded);
-  const canTreasuryChecker = isSuperAdmin || userRoles.includes('TREASURY_CHECKER');
-  const canTreasuryAuthoriser = isSuperAdmin || userRoles.includes('TREASURY_AUTHORISER');
+  const canTreasuryMaker = isSuperAdmin || (pr.treasuryMakerRole
+    ? userRoles.includes(pr.treasuryMakerRole.code)
+    : userRoles.includes(makerRoleNeeded));
+  const canTreasuryChecker = isSuperAdmin || (pr.treasuryCheckerRole
+    ? userRoles.includes(pr.treasuryCheckerRole.code)
+    : userRoles.includes('TREASURY_CHECKER'));
+  const canTreasuryAuthoriser = isSuperAdmin || (pr.treasuryAuthoriserRole
+    ? userRoles.includes(pr.treasuryAuthoriserRole.code)
+    : userRoles.includes('TREASURY_AUTHORISER'));
 
   // Active step authorisation hint: for ROLE-steps any holder can act; for
   // USER-steps only the assigned user. The backend re-checks regardless.
@@ -298,7 +314,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
             )}
             {pr.status === 'TREASURY_AUTHORISER' && canTreasuryAuthoriser && (
               <>
-                <Button size="sm" onClick={() => treasuryCompleteMut.mutate()} disabled={treasuryCompleteMut.isPending}>
+                <Button
+                  size="sm"
+                  onClick={() => (isConfidential ? setTreasuryCompleteOpen(true) : treasuryCompleteMut.mutate(undefined))}
+                  disabled={treasuryCompleteMut.isPending}
+                >
                   <CheckCircle2 className="mr-1 h-4 w-4" /> Mark completed
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setTreasuryRejectOpen(true)}>
@@ -357,7 +377,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         <Card className="order-3 col-span-3">
           <CardHeader><CardTitle>Approval chain</CardTitle></CardHeader>
           <CardContent className="text-sm">
-            {!pr.approvals?.length ? (
+            {isConfidential ? (
+              <p className="text-muted-foreground">
+                Confidential (chairman-style) payment — no approval chain. Routed directly to the Treasury Authoriser.
+              </p>
+            ) : !pr.approvals?.length ? (
               <p className="text-muted-foreground">Chain is generated on submit.</p>
             ) : (
               <ol className="space-y-2">
@@ -401,19 +425,19 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         </Card>
 
         {/* Treasury Team chain */}
-        {pr.ttMode && (
+        {(pr.ttMode || isConfidential) && (
           <Card className="order-4 col-span-3">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 Treasury Team chain
                 <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-border">
-                  {pr.ttMode === 'OFFLINE_TT' ? 'Offline TT' : 'Online TT'}
+                  {isConfidential ? 'Confidential' : pr.ttMode === 'OFFLINE_TT' ? 'Offline TT' : 'Online TT'}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent className="text-sm">
               <ol className="space-y-2">
-                {treasurySteps(pr).map((step) => {
+                {treasurySteps(pr, isConfidential).map((step) => {
                   const ringStyle =
                     step.state === 'DONE' ? 'bg-emerald-50 ring-emerald-200' :
                     step.state === 'REJECTED' ? 'bg-rose-50 ring-rose-200' :
@@ -431,6 +455,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
                         </div>
                         <span className="text-xs">{step.badge}</span>
                       </div>
+                      {step.roleName && (
+                        <div className="mt-1 text-xs text-muted-foreground">Role: {step.roleName}</div>
+                      )}
                       {step.actor && step.at && (
                         <div className="mt-1 text-xs text-muted-foreground">
                           {step.actor} · {formatDateTime(step.at)}
@@ -550,6 +577,13 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       <TreasurySubmitDialog open={treasurySubmitOpen} onOpenChange={setTreasurySubmitOpen}
         submitting={treasurySubmitMut.isPending}
         onSubmit={(d) => treasurySubmitMut.mutate(d)} />
+      <TreasurySubmitDialog open={treasuryCompleteOpen} onOpenChange={setTreasuryCompleteOpen}
+        title="Complete confidential payment"
+        description="Capture the bank reference number and attach the SWIFT / MT103 copy, then mark the payment completed."
+        submitLabel="Mark completed"
+        submittingLabel="Completing…"
+        submitting={treasuryCompleteMut.isPending}
+        onSubmit={(d) => treasuryCompleteMut.mutate(d)} />
       <RejectDialog open={treasuryRejectOpen} onOpenChange={setTreasuryRejectOpen}
         submitting={treasuryRejectMut.isPending}
         onSubmit={(d) => treasuryRejectMut.mutate(d)} />
@@ -575,6 +609,8 @@ type TtStepView = {
   actor: string | null;
   at: string | null;
   detail: string | null;
+  /** Role pinned to this stage by the approval matrix, if any. */
+  roleName: string | null;
 };
 
 /**
@@ -583,7 +619,31 @@ type TtStepView = {
  * reject marks the first not-yet-completed stage as REJECTED. The same person
  * may legitimately appear on more than one stage.
  */
-function treasurySteps(pr: PaymentRequest): TtStepView[] {
+function treasurySteps(pr: PaymentRequest, isConfidential = false): TtStepView[] {
+  // Confidential (chairman-style) payments have a single treasury stage: the
+  // authoriser, who captures the reference + SWIFT/MT103 and completes.
+  if (isConfidential) {
+    const done = !!pr.treasuryAuthoriserAt;
+    const active = pr.status === 'TREASURY_AUTHORISER';
+    const rejected = pr.status === 'REJECTED' && !done;
+    const state: TtStepView['state'] = done ? 'DONE' : rejected ? 'REJECTED' : active ? 'ACTIVE' : 'PENDING';
+    let detail: string | null = null;
+    if (pr.treasuryReferenceNumber) detail = `Reference: ${pr.treasuryReferenceNumber}`;
+    if (rejected && pr.rejectionReason) detail = pr.rejectionReason;
+    return [
+      {
+        order: 1,
+        role: 'AUTHORISER',
+        label: 'Treasury Authoriser',
+        badge: done ? 'COMPLETED' : rejected ? 'REJECTED' : active ? 'PENDING' : '—',
+        state,
+        actor: pr.treasuryAuthoriserByUser?.fullName ?? null,
+        at: pr.treasuryAuthoriserAt ?? null,
+        detail,
+        roleName: pr.treasuryAuthoriserRole?.name ?? null,
+      },
+    ];
+  }
   const stages = [
     { order: 1, role: 'MAKER', label: 'Treasury Maker', user: pr.treasuryMakerByUser, at: pr.treasuryMakerAt, activeStatus: 'TREASURY_MAKER', doneBadge: 'SUBMITTED' },
     { order: 2, role: 'CHECKER', label: 'Treasury Checker', user: pr.treasuryCheckerByUser, at: pr.treasuryCheckerAt, activeStatus: 'TREASURY_CHECKER', doneBadge: 'CHECKED' },
@@ -607,6 +667,10 @@ function treasurySteps(pr: PaymentRequest): TtStepView[] {
     let detail: string | null = null;
     if (s.order === 1 && pr.treasuryReferenceNumber) detail = `Reference: ${pr.treasuryReferenceNumber}`;
     if (rejected && pr.rejectionReason) detail = pr.rejectionReason;
+    const roleName =
+      s.role === 'MAKER' ? pr.treasuryMakerRole?.name
+      : s.role === 'CHECKER' ? pr.treasuryCheckerRole?.name
+      : pr.treasuryAuthoriserRole?.name;
     return {
       order: s.order,
       role: s.role,
@@ -616,6 +680,7 @@ function treasurySteps(pr: PaymentRequest): TtStepView[] {
       actor: s.user?.fullName ?? null,
       at: s.at ?? null,
       detail,
+      roleName: roleName ?? null,
     };
   });
 }
@@ -690,11 +755,19 @@ function RejectDialog({
 
 function TreasurySubmitDialog({
   open, onOpenChange, onSubmit, submitting,
+  title = 'Submit treasury info',
+  description = 'Capture the bank reference number and attach the SWIFT / MT103 copy received from the bank.',
+  submitLabel = 'Submit',
+  submittingLabel = 'Submitting…',
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onSubmit: (d: TreasurySubmitData) => void;
   submitting?: boolean;
+  title?: string;
+  description?: string;
+  submitLabel?: string;
+  submittingLabel?: string;
 }) {
   const notify = useNotify();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -729,8 +802,8 @@ function TreasurySubmitDialog({
     <Dialog open={open} onOpenChange={(o) => { if (!o) resetAll(); onOpenChange(o); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Submit treasury info</DialogTitle>
-          <p className="text-xs text-muted-foreground">Capture the bank reference number and attach the SWIFT / MT103 copy received from the bank.</p>
+          <DialogTitle>{title}</DialogTitle>
+          <p className="text-xs text-muted-foreground">{description}</p>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
@@ -753,7 +826,7 @@ function TreasurySubmitDialog({
           </div>
           <DialogFooter>
             <Button type="submit" disabled={submitting || uploadState === 'uploading'}>
-              {submitting ? 'Submitting…' : 'Submit'}
+              {submitting ? submittingLabel : submitLabel}
             </Button>
           </DialogFooter>
         </form>

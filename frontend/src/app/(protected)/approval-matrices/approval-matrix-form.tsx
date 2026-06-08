@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useForm, useFieldArray, Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -12,6 +13,7 @@ import type {
   Currency,
   Paginated,
   PaymentType,
+  Role,
   User,
 } from '@/types/domain';
 import { Button } from '@/components/ui/button';
@@ -38,17 +40,42 @@ const bandSchema = z.object({
   steps: z.array(stepSchema).min(1, 'At least one step required'),
 });
 
-export const approvalMatrixSchema = z.object({
-  name: z.string().min(2).max(150),
-  description: z.string().optional().or(z.literal('')),
-  paymentTypeId: z.string().uuid('Select a payment type'),
-  currencyId: z.string().uuid('Select a currency'),
-  ttMode: z.enum(['ONLINE_TT', 'OFFLINE_TT'], { message: 'Select a TT mode' }),
-  effectiveFrom: z.string().min(1, 'Required'),
-  effectiveTo: z.string().optional().or(z.literal('')),
-  isActive: z.boolean().optional(),
-  bands: z.array(bandSchema).min(1, 'At least one band required'),
-});
+export const approvalMatrixSchema = z
+  .object({
+    name: z.string().min(2).max(150),
+    description: z.string().optional().or(z.literal('')),
+    paymentTypeId: z.string().uuid('Select a payment type'),
+    currencyId: z.string().uuid('Select a currency'),
+    ttMode: z.enum(['ONLINE_TT', 'OFFLINE_TT'], { message: 'Select a TT mode' }),
+    // Treasury-stage roles. Required set depends on the payment type:
+    // confidential → authoriser only; otherwise → maker + checker + authoriser
+    // (enforced in superRefine via confidentialFlag).
+    treasuryMakerRoleId: z.string().uuid().optional().or(z.literal('')),
+    treasuryCheckerRoleId: z.string().uuid().optional().or(z.literal('')),
+    treasuryAuthoriserRoleId: z.string().uuid().optional().or(z.literal('')),
+    effectiveFrom: z.string().min(1, 'Required'),
+    effectiveTo: z.string().optional().or(z.literal('')),
+    isActive: z.boolean().optional(),
+    // Optional: confidential matrices carry no bands.
+    bands: z.array(bandSchema).optional().default([]),
+    // UI-only mirror of "selected payment type is confidential". Not sent to
+    // the API — stripped in handleFormSubmit.
+    confidentialFlag: z.boolean().optional(),
+  })
+  .superRefine((d, ctx) => {
+    if (d.confidentialFlag) {
+      if (!d.treasuryAuthoriserRoleId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['treasuryAuthoriserRoleId'], message: 'Select a treasury authoriser role' });
+      }
+    } else {
+      if (!d.bands || d.bands.length < 1) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bands'], message: 'At least one band is required' });
+      }
+      if (!d.treasuryMakerRoleId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['treasuryMakerRoleId'], message: 'Select a treasury maker role' });
+      if (!d.treasuryCheckerRoleId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['treasuryCheckerRoleId'], message: 'Select a treasury checker role' });
+      if (!d.treasuryAuthoriserRoleId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['treasuryAuthoriserRoleId'], message: 'Select a treasury authoriser role' });
+    }
+  });
 export type ApprovalMatrixFormData = z.infer<typeof approvalMatrixSchema>;
 
 interface Props {
@@ -179,6 +206,11 @@ export function ApprovalMatrixForm({
     queryKey: ['users-with-approver-role'],
     queryFn: () => api.get<Paginated<User>>('/users?page=1&limit=200&roleCode=APPROVER'),
   });
+  const { data: roles } = useQuery({
+    queryKey: ['roles-all'],
+    queryFn: () => api.get<Role[]>('/roles'),
+  });
+  const roleOptions = (roles ?? []).map((r) => ({ label: r.name, value: r.id }));
   const paymentTypeOptions = (paymentTypes?.data ?? [])
     .filter((p) => p.isActive)
     .map((p) => ({ label: p.name, value: p.id }));
@@ -192,6 +224,9 @@ export function ApprovalMatrixForm({
   const {
     register,
     control,
+    watch,
+    setValue,
+    getValues,
     handleSubmit,
     formState: { errors },
   } = useForm<ApprovalMatrixFormData>({
@@ -202,6 +237,9 @@ export function ApprovalMatrixForm({
       paymentTypeId: defaultValues?.paymentTypeId ?? '',
       currencyId: defaultValues?.currencyId ?? '',
       ttMode: defaultValues?.ttMode ?? 'ONLINE_TT',
+      treasuryMakerRoleId: defaultValues?.treasuryMakerRoleId ?? '',
+      treasuryCheckerRoleId: defaultValues?.treasuryCheckerRoleId ?? '',
+      treasuryAuthoriserRoleId: defaultValues?.treasuryAuthoriserRoleId ?? '',
       effectiveFrom: defaultValues?.effectiveFrom ?? todayInDubai(),
       effectiveTo: defaultValues?.effectiveTo ?? '',
       isActive: defaultValues?.isActive ?? true,
@@ -222,12 +260,37 @@ export function ApprovalMatrixForm({
 
   const bandArr = useFieldArray({ control, name: 'bands' });
 
+  // A confidential (chairman-style) payment type bypasses the approval matrix:
+  // its "matrix" only pins the Treasury Authoriser role. When such a type is
+  // selected we hide bands + maker/checker and require only the authoriser.
+  const selectedPaymentTypeId = watch('paymentTypeId');
+  const isConfidentialType = (paymentTypes?.data ?? []).some(
+    (p) => p.id === selectedPaymentTypeId && p.isConfidential,
+  );
+
+  // Keep the validation flag in sync, and clear/seed the now-irrelevant fields
+  // so a hidden empty band can't fail validation.
+  useEffect(() => {
+    setValue('confidentialFlag', isConfidentialType);
+    if (isConfidentialType) {
+      setValue('bands', []);
+      setValue('treasuryMakerRoleId', '');
+      setValue('treasuryCheckerRoleId', '');
+    } else if ((getValues('bands') ?? []).length === 0) {
+      setValue('bands', [{ minAmount: 0, maxAmount: '', steps: [{ approverUserId: '', isOptional: false }] }]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConfidentialType]);
+
   function handleFormSubmit(d: ApprovalMatrixFormData) {
     const normalized = {
       ...d,
       effectiveTo: d.effectiveTo === '' ? undefined : d.effectiveTo,
       description: d.description === '' ? undefined : d.description,
-      bands: d.bands.map((b) => ({
+      treasuryMakerRoleId: d.treasuryMakerRoleId || undefined,
+      treasuryCheckerRoleId: d.treasuryCheckerRoleId || undefined,
+      treasuryAuthoriserRoleId: d.treasuryAuthoriserRoleId || undefined,
+      bands: (d.bands ?? []).map((b) => ({
         minAmount: Number(b.minAmount),
         maxAmount: b.maxAmount === '' || b.maxAmount == null ? null : Number(b.maxAmount),
         // Every step is now USER-type; the user is required by the schema.
@@ -238,6 +301,8 @@ export function ApprovalMatrixForm({
         })),
       })),
     };
+    // UI-only helper — never sent to the API.
+    delete (normalized as { confidentialFlag?: boolean }).confidentialFlag;
     return onSubmit(normalized as ApprovalMatrixFormData);
   }
 
@@ -274,6 +339,7 @@ export function ApprovalMatrixForm({
           {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
         </div>
       </div>
+      {!isConfidentialType && (
       <div className="space-y-2">
         <Label htmlFor="ttMode">Treasury mode (TT) <span className="text-destructive">*</span></Label>
         <Select
@@ -290,6 +356,72 @@ export function ApprovalMatrixForm({
         </p>
         {errors.ttMode && <p className="text-xs text-destructive">{errors.ttMode.message}</p>}
       </div>
+      )}
+
+      {isConfidentialType ? (
+        <div className="rounded-md border p-3 space-y-3">
+          <div>
+            <p className="text-sm font-medium">Treasury Authoriser</p>
+            <p className="text-xs text-muted-foreground">
+              Confidential payments bypass the approval matrix and route directly to the Treasury
+              Authoriser. Select the role that completes them (captures the reference number +
+              SWIFT/MT103 and marks completed). Only its holders can act.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="treasuryAuthoriserRoleId">Treasury Authoriser <span className="text-destructive">*</span></Label>
+            <Select
+              id="treasuryAuthoriserRoleId"
+              placeholder="Select role"
+              options={roleOptions}
+              {...register('treasuryAuthoriserRoleId')}
+            />
+            {errors.treasuryAuthoriserRoleId && <p className="text-xs text-destructive">{errors.treasuryAuthoriserRoleId.message}</p>}
+          </div>
+        </div>
+      ) : (
+      <div className="rounded-md border p-3 space-y-3">
+        <div>
+          <p className="text-sm font-medium">Treasury stage roles</p>
+          <p className="text-xs text-muted-foreground">
+            After final approval the payment moves through the Treasury Team. Select the role that
+            acts at each stage. Only holders of the chosen role can act on that stage.
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="space-y-2">
+            <Label htmlFor="treasuryMakerRoleId">Treasury Maker <span className="text-destructive">*</span></Label>
+            <Select
+              id="treasuryMakerRoleId"
+              placeholder="Select role"
+              options={roleOptions}
+              {...register('treasuryMakerRoleId')}
+            />
+            {errors.treasuryMakerRoleId && <p className="text-xs text-destructive">{errors.treasuryMakerRoleId.message}</p>}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="treasuryCheckerRoleId">Treasury Checker <span className="text-destructive">*</span></Label>
+            <Select
+              id="treasuryCheckerRoleId"
+              placeholder="Select role"
+              options={roleOptions}
+              {...register('treasuryCheckerRoleId')}
+            />
+            {errors.treasuryCheckerRoleId && <p className="text-xs text-destructive">{errors.treasuryCheckerRoleId.message}</p>}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="treasuryAuthoriserRoleId">Treasury Authoriser <span className="text-destructive">*</span></Label>
+            <Select
+              id="treasuryAuthoriserRoleId"
+              placeholder="Select role"
+              options={roleOptions}
+              {...register('treasuryAuthoriserRoleId')}
+            />
+            {errors.treasuryAuthoriserRoleId && <p className="text-xs text-destructive">{errors.treasuryAuthoriserRoleId.message}</p>}
+          </div>
+        </div>
+      </div>
+      )}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="effectiveFrom">Effective from <span className="text-destructive">*</span></Label>
@@ -302,6 +434,7 @@ export function ApprovalMatrixForm({
         </div>
       </div>
 
+      {!isConfidentialType && (
       <div className="rounded-md border p-3 space-y-3">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium">Bands & approval chain</p>
@@ -331,6 +464,7 @@ export function ApprovalMatrixForm({
           </div>
         )}
       </div>
+      )}
 
       <div className="flex items-center gap-2">
         <input

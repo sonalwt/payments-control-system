@@ -248,6 +248,13 @@ export interface ApprovalMatrix extends AuditFields {
   isActive: boolean;
   /** Treasury Team that executes the payment after final approval. */
   ttMode: TtMode;
+  /** Role that acts at each Treasury Team stage (required for new matrices). */
+  treasuryMakerRoleId?: string | null;
+  treasuryMakerRole?: Role | null;
+  treasuryCheckerRoleId?: string | null;
+  treasuryCheckerRole?: Role | null;
+  treasuryAuthoriserRoleId?: string | null;
+  treasuryAuthoriserRole?: Role | null;
   bands?: ApprovalMatrixBand[];
   // Legacy alias (older rows / resolved-chain output)
   paymentTypeCode?: string;
@@ -585,6 +592,13 @@ export interface PaymentRequest extends AuditFields {
   proofOfPaymentUrl?: string | null;
   // Treasury Team execution (post final-approval)
   ttMode?: TtMode | null;
+  // Role pinned to each treasury stage (snapshotted from the matrix).
+  treasuryMakerRoleId?: string | null;
+  treasuryMakerRole?: Role | null;
+  treasuryCheckerRoleId?: string | null;
+  treasuryCheckerRole?: Role | null;
+  treasuryAuthoriserRoleId?: string | null;
+  treasuryAuthoriserRole?: Role | null;
   treasuryReferenceNumber?: string | null;
   swiftCopyUrl?: string | null;
   treasuryMakerBy?: string | null;

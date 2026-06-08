@@ -43,6 +43,11 @@ export class PaymentType extends BaseEntity {
   @Column({ name: 'mobile_initiation_only', type: 'boolean', default: false })
   mobileInitiationOnly!: boolean;
 
+  /** When true, employees may raise this type themselves via the
+   *  passwordless employee portal (allow-list, enforced server-side). */
+  @Column({ name: 'employee_self_service', type: 'boolean', default: false })
+  employeeSelfService!: boolean;
+
   @Column({ name: 'allows_cross_currency', type: 'boolean', default: true })
   allowsCrossCurrency!: boolean;
 

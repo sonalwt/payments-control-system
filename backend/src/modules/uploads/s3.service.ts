@@ -1,6 +1,11 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
 import { S3Config } from '../../config/s3.config';
 
 @Injectable()
@@ -47,6 +52,39 @@ export class S3Service {
       return `${this.endpoint}/${this.bucket}/${key}`;
     }
     return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
+  }
+
+  /** Derive the object key from a stored file URL produced by uploadFile(). */
+  keyFromUrl(url: string): string {
+    const marker = `/${this.bucket}/`;
+    const idx = url.indexOf(marker);
+    if (idx !== -1) return url.slice(idx + marker.length);
+    // Virtual-hosted style: https://<bucket>.s3.<region>.amazonaws.com/<key>
+    try {
+      const u = new URL(url);
+      return u.pathname.replace(/^\//, '');
+    } catch {
+      return url;
+    }
+  }
+
+  /** Download a stored object as a Buffer. */
+  async getFile(url: string): Promise<Buffer> {
+    const key = this.keyFromUrl(url);
+    try {
+      const res = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      const body = res.Body as { transformToByteArray?: () => Promise<Uint8Array> };
+      if (!body?.transformToByteArray) {
+        throw new Error('Empty response body');
+      }
+      return Buffer.from(await body.transformToByteArray());
+    } catch (err) {
+      throw new InternalServerErrorException(
+        `Failed to read file from S3: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   async deleteFile(key: string): Promise<void> {
