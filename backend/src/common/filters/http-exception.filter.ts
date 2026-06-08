@@ -72,7 +72,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
         error = (r.error as string) ?? exception.name;
       }
     } else if (exception instanceof QueryFailedError) {
-      const e = exception as QueryFailedError & { code?: string; detail?: string };
+      const e = exception as QueryFailedError & {
+        code?: string;
+        detail?: string;
+        constraint?: string;
+        table?: string;
+      };
       if (e.code === '23505') {
         status = HttpStatus.CONFLICT;
         message = e.detail ?? 'Duplicate value violates unique constraint';
@@ -81,6 +86,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
         status = HttpStatus.CONFLICT;
         message = 'Cannot complete operation: related records exist';
         error = 'ForeignKeyViolation';
+        // The friendly message hides which FK failed; log the real detail so
+        // these (e.g. a referenced record deleted after a request was raised)
+        // are diagnosable. Constraint violations map to 409, not 500, so they
+        // would otherwise never be logged.
+        this.logger.warn(
+          `${request.method} ${request.url} -> 23503 FK violation` +
+            `${e.constraint ? ` (constraint=${e.constraint})` : ''}` +
+            `${e.table ? ` (table=${e.table})` : ''}: ${e.detail ?? 'no detail'}`,
+        );
       } else {
         message = 'Database error';
         error = 'DatabaseError';

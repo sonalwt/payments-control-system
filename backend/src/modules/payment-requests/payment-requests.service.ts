@@ -125,9 +125,12 @@ export class PaymentRequestsService {
     return this.dataSource.transaction(async (em) => {
       const paymentType = await em.findOne(PaymentType, {
         where: { id: dto.paymentTypeId },
-        select: ['id', 'employeeSelfService', 'isActive', 'effectiveFrom', 'effectiveTo'],
+        select: ['id', 'isConfidential', 'isActive', 'effectiveFrom', 'effectiveTo'],
       });
-      if (!paymentType || !paymentType.employeeSelfService || !paymentType.isActive) {
+      // Employees may raise any active, non-confidential type — this mirrors
+      // PaymentTypesService.findEmployeeSelectable, which populates the portal
+      // dropdown. (Confidential/chairman types are never employee-initiated.)
+      if (!paymentType || !paymentType.isActive || paymentType.isConfidential) {
         throw new ForbiddenException('This payment type is not available for self-service.');
       }
       const today = dubaiToday();
@@ -205,7 +208,11 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('pr.paymentType', 'paymentType')
       .leftJoinAndSelect('pr.currency', 'currency')
       .where('pr.raised_by_employee_id = :eid', { eid: employeeId })
-      .orderBy('pr.created_at', 'DESC')
+      // Must be the entity property (createdAt), not the raw column: with
+      // skip/take + joins, TypeORM resolves the order column via property
+      // metadata for its distinct-pagination subquery. 'pr.created_at' matches
+      // no property and crashes with "Cannot read properties of undefined".
+      .orderBy('pr.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();
@@ -638,7 +645,7 @@ export class PaymentRequestsService {
         if (!matrix) {
           throw new BadRequestException(
             'No active approval matrix found for this payment type and currency. ' +
-              'Please create an approval matrix under Masters → Approval Matrices before submitting.',
+              'Please configure an approval matrix for this currency under Payment Types & Approvals before submitting.',
           );
         }
 
@@ -655,7 +662,7 @@ export class PaymentRequestsService {
         if (!band) {
           throw new BadRequestException(
             `The payment amount (${pr.amount}) does not fall within any band defined in the approval matrix. ` +
-              'Please update the matrix bands under Masters → Approval Matrices.',
+              'Please update the matrix bands under Payment Types & Approvals.',
           );
         }
         const matrixSteps = await em.find(ApprovalMatrixStep, {
@@ -758,7 +765,7 @@ export class PaymentRequestsService {
           // No active matrix — block the approval.
           throw new BadRequestException(
             'No active approval matrix found for this payment type and currency. ' +
-            'Please create an approval matrix under Masters → Approval Matrices before approving.',
+            'Please configure an approval matrix for this currency under Payment Types & Approvals before approving.',
           );
         }
 
@@ -776,7 +783,7 @@ export class PaymentRequestsService {
         if (!band) {
           throw new BadRequestException(
             `The payment amount (${pr.amount}) does not fall within any band defined in the approval matrix. ` +
-            'Please update the matrix bands under Masters → Approval Matrices.',
+            'Please update the matrix bands under Payment Types & Approvals.',
           );
         }
         const matrixSteps = await em.find(ApprovalMatrixStep, {

@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { BeneficiaryAccount } from './beneficiary-account.entity';
 import { BeneficiaryAccountChangeRequest } from './beneficiary-account-change-request.entity';
 import {
@@ -207,6 +207,36 @@ export class BeneficiaryAccountsService {
     return this.crRepo.save(cr);
   }
 
+  /**
+   * Validate that every foreign-key referenced in a change request's proposed
+   * data still exists, so approval fails with a clear, actionable message
+   * instead of a raw Postgres FK violation (e.g. when the referenced employee
+   * was deleted/re-seeded after the request was raised). Table names are fixed
+   * constants — no user input is interpolated.
+   */
+  private async assertReferencedRecordsExist(
+    em: EntityManager,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const refs: Array<[string, string, string]> = [
+      ['employeeId', 'employees', 'Employee'],
+      ['counterpartyId', 'counterparties', 'Counterparty'],
+      ['bankId', 'banks', 'Bank'],
+      ['currencyId', 'currencies', 'Currency'],
+      ['countryId', 'countries', 'Country'],
+    ];
+    for (const [field, table, label] of refs) {
+      const id = data[field];
+      if (!id) continue;
+      const rows = await em.query(`SELECT 1 FROM ${table} WHERE id = $1 LIMIT 1`, [id]);
+      if (!rows.length) {
+        throw new BadRequestException(
+          `${label} referenced by this request no longer exists. Please raise a new change request.`,
+        );
+      }
+    }
+  }
+
   async approveChangeRequest(
     id: string,
     dto: ApproveChangeRequestDto,
@@ -244,6 +274,7 @@ export class BeneficiaryAccountsService {
       switch (cr.changeType) {
         case 'ADD': {
           const data = cr.proposedData as Record<string, unknown>;
+          await this.assertReferencedRecordsExist(em, data);
           const newAcc = em.create(BeneficiaryAccount, {
             counterpartyId: (data.counterpartyId as string | null) ?? null,
             employeeId: (data.employeeId as string | null) ?? null,
@@ -274,6 +305,7 @@ export class BeneficiaryAccountsService {
           });
           if (!acc) throw new NotFoundException('Target beneficiary not found');
           const data = cr.proposedData as Record<string, unknown>;
+          await this.assertReferencedRecordsExist(em, data);
           Object.assign(acc, {
             accountHolderName: data.accountHolderName ?? acc.accountHolderName,
             accountNumber: data.accountNumber ?? acc.accountNumber,
