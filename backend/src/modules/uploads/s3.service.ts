@@ -6,7 +6,16 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { S3Config } from '../../config/s3.config';
+
+/** How long a presigned view/download URL stays valid. */
+const PRESIGN_EXPIRES_SECONDS = 300; // 5 minutes
+
+/** Strip characters that could break/inject the Content-Disposition header. */
+function sanitizeFilename(name: string): string {
+  return name.replace(/[\r\n"\\]/g, '').trim() || 'download';
+}
 
 @Injectable()
 export class S3Service {
@@ -65,6 +74,39 @@ export class S3Service {
       return u.pathname.replace(/^\//, '');
     } catch {
       return url;
+    }
+  }
+
+  /**
+   * Issue a short-lived presigned GET URL for a stored file. Keeps the bucket
+   * private: the browser is handed a temporary signed link instead of a public
+   * URL. When `download` is set, S3 returns `Content-Disposition: attachment`
+   * (with the original filename) so the browser saves rather than navigates.
+   */
+  async presignGetUrl(
+    url: string,
+    opts: { download?: boolean; fileName?: string } = {},
+  ): Promise<string> {
+    const key = this.keyFromUrl(url);
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ...(opts.download
+        ? {
+            ResponseContentDisposition: `attachment; filename="${sanitizeFilename(
+              opts.fileName ?? key.split('/').pop() ?? 'download',
+            )}"`,
+          }
+        : {}),
+    });
+    try {
+      return await getSignedUrl(this.client, command, {
+        expiresIn: PRESIGN_EXPIRES_SECONDS,
+      });
+    } catch (err) {
+      throw new InternalServerErrorException(
+        `Failed to presign file URL: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

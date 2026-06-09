@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { EmployeeShell } from '@/components/employee/employee-shell';
-import { employeeApi } from '@/lib/employee-api';
+import { employeeApi, presignEmployeeFileUrl } from '@/lib/employee-api';
 import type { PaymentRequest } from '@/types/domain';
 import { PaymentRequestDetailView } from '@/components/payment-requests/payment-request-detail-view';
 
@@ -38,5 +38,6 @@ function RequestDetail(): React.ReactElement {
   }
 
   // Read-only: no action/document slots → identical UI, view only.
-  return <PaymentRequestDetailView pr={pr} backHref="/employee" />;
+  // Files are presigned through the employee realm (employee token).
+  return <PaymentRequestDetailView pr={pr} backHref="/employee" presign={presignEmployeeFileUrl} />;
 }

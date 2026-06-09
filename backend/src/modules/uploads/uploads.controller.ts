@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Controller,
+  Get,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -28,5 +30,29 @@ export class UploadsController {
     const key = buildUploadKey(file.originalname);
     const url = await this.s3.uploadFile(key, file.buffer, file.mimetype);
     return { url, fileName: file.originalname };
+  }
+
+  /**
+   * Mint a short-lived presigned URL for viewing or downloading a stored file.
+   * Keeps the bucket private — the SPA never touches a public object URL.
+   * `download=1` makes the browser save the file (attachment) instead of
+   * opening it inline.
+   */
+  @Get('presign')
+  async presign(
+    @Query('url') url?: string,
+    @Query('download') download?: string,
+    @Query('fileName') fileName?: string,
+  ): Promise<{ url: string }> {
+    if (!url) throw new BadRequestException('url is required');
+    const key = this.s3.keyFromUrl(url);
+    if (!key.startsWith('uploads/')) {
+      throw new BadRequestException('Invalid file reference');
+    }
+    const signed = await this.s3.presignGetUrl(url, {
+      download: download === '1' || download === 'true',
+      fileName,
+    });
+    return { url: signed };
   }
 }

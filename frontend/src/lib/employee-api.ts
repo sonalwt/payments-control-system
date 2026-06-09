@@ -1,6 +1,6 @@
 'use client';
 
-import { ApiError } from '@/lib/api';
+import { ApiError, type PresignFn } from '@/lib/api';
 
 /**
  * Employee self-service API client. Kept entirely separate from the staff
@@ -55,6 +55,15 @@ export const employeeApi = {
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   upload,
+};
+
+/** Employee-realm presign (uses the employee token + /employee routes). */
+export const presignEmployeeFileUrl: PresignFn = async (fileUrl, opts) => {
+  const params = new URLSearchParams({ url: fileUrl });
+  if (opts?.download) params.set('download', '1');
+  if (opts?.fileName) params.set('fileName', opts.fileName);
+  const res = await employeeApi.get<{ url: string }>(`/employee/uploads/presign?${params.toString()}`);
+  return res.url;
 };
 
 async function upload(file: File): Promise<{ url: string; fileName: string }> {

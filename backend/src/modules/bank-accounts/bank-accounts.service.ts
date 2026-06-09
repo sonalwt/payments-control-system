@@ -2,7 +2,8 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BankAccount } from './bank-account.entity';
-import { CreateBankAccountDto } from './dto/create-bank-account.dto';
+import { BankAccountChargeBand } from './bank-account-charge-band.entity';
+import { ChargeBandDto, CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto';
 import {
   PaginatedResult,
@@ -14,7 +15,39 @@ export class BankAccountsService {
   constructor(
     @InjectRepository(BankAccount)
     private readonly repo: Repository<BankAccount>,
+    @InjectRepository(BankAccountChargeBand)
+    private readonly bandRepo: Repository<BankAccountChargeBand>,
   ) {}
+
+  /**
+   * Validate the charge bands and return them ordered by minAmount with a
+   * dense sortOrder. Rejects overlapping-shape mistakes (max <= min, more than
+   * one open-ended band).
+   */
+  private buildChargeBands(bands?: ChargeBandDto[]): BankAccountChargeBand[] {
+    if (!bands || bands.length === 0) return [];
+    const openEnded = bands.filter((b) => b.maxAmount == null);
+    if (openEnded.length > 1) {
+      throw new BadRequestException('At most one open-ended charge band (no max amount) is allowed');
+    }
+    for (const b of bands) {
+      if (b.maxAmount != null && b.maxAmount <= b.minAmount) {
+        throw new BadRequestException(
+          `Charge band max amount (${b.maxAmount}) must be greater than its min amount (${b.minAmount})`,
+        );
+      }
+    }
+    return [...bands]
+      .sort((a, b) => a.minAmount - b.minAmount)
+      .map((b, i) =>
+        this.bandRepo.create({
+          sortOrder: i,
+          minAmount: b.minAmount,
+          maxAmount: b.maxAmount ?? null,
+          percentage: b.percentage,
+        }),
+      );
+  }
 
   async create(
     dto: CreateBankAccountDto,
@@ -48,6 +81,7 @@ export class BankAccountsService {
       isActive: dto.isActive ?? true,
       isCounterparty,
       counterpartyId: isCounterparty ? dto.counterpartyId : null,
+      chargeBands: this.buildChargeBands(dto.chargeBands),
       createdBy: actorId,
       updatedBy: actorId,
     });
@@ -65,8 +99,10 @@ export class BankAccountsService {
       .leftJoinAndSelect('a.currency', 'currency')
       .leftJoinAndSelect('a.accountTypeMaster', 'accountTypeMaster')
       .leftJoinAndSelect('a.counterparty', 'counterparty')
+      .leftJoinAndSelect('a.chargeBands', 'chargeBands')
       .where('a.isCounterparty = :isCounterparty', { isCounterparty })
       .orderBy('a.bankNickname', 'ASC')
+      .addOrderBy('chargeBands.sortOrder', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
     if (search) {
@@ -82,7 +118,8 @@ export class BankAccountsService {
   async findOne(id: string, isCounterparty = false): Promise<BankAccount> {
     const acc = await this.repo.findOne({
       where: { id, isCounterparty },
-      relations: ['bank', 'currency', 'accountTypeMaster', 'counterparty'],
+      relations: ['bank', 'currency', 'accountTypeMaster', 'counterparty', 'chargeBands'],
+      order: { chargeBands: { sortOrder: 'ASC' } },
     });
     if (!acc) throw new NotFoundException(`Bank account ${id} not found`);
     return acc;
@@ -95,7 +132,14 @@ export class BankAccountsService {
     isCounterparty = false,
   ): Promise<BankAccount> {
     const acc = await this.findOne(id, isCounterparty);
-    Object.assign(acc, dto, { updatedBy: actorId });
+    const { chargeBands, ...rest } = dto;
+    Object.assign(acc, rest, { updatedBy: actorId });
+    // Replace the charge bands wholesale when provided (cascade does not remove
+    // orphans, so drop the old rows first).
+    if (chargeBands !== undefined) {
+      await this.bandRepo.delete({ bankAccountId: id });
+      acc.chargeBands = this.buildChargeBands(chargeBands);
+    }
     return this.repo.save(acc);
   }
 

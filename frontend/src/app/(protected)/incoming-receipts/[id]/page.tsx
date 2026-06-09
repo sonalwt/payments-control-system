@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2, FileText, Pencil, Send } from 'lucide-react';
-import { api, resolveFileUrl } from '@/lib/api';
+import { api } from '@/lib/api';
 import { formatDateTime, todayInDubai } from '@/lib/datetime';
+import { FileActions } from '@/components/shared/file-actions';
 import type {
   BankAccount,
   IncomingReceipt,
@@ -337,17 +338,11 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
             {documents.map((d) => (
               <li key={d.id} className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
-                <a
-                  href={resolveFileUrl(d.fileUrl)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline"
-                >
-                  {d.fileName}
-                </a>
+                <span>{d.fileName}</span>
                 <span className="text-xs text-muted-foreground">
                   ({d.documentLabel ?? d.documentCode})
                 </span>
+                <FileActions className="ml-auto" fileUrl={d.fileUrl} fileName={d.fileName} />
               </li>
             ))}
           </ul>

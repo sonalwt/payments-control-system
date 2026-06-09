@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { AlertTriangle, ArrowLeft, FileText, ShieldAlert } from 'lucide-react';
-import { resolveFileUrl } from '@/lib/api';
 import { formatDateTime } from '@/lib/datetime';
+import type { PresignFn } from '@/lib/api';
 import type { PaymentRequest, PaymentRequestDocument } from '@/types/domain';
+import { FileActions } from '@/components/shared/file-actions';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -118,6 +119,8 @@ interface Props {
   documentActions?: (doc: PaymentRequestDocument) => React.ReactNode;
   /** Add-document UI rendered at the foot of the Documents card (admin only). */
   documentsFooter?: React.ReactNode;
+  /** Realm-specific presign for file view/download (defaults to staff realm). */
+  presign?: PresignFn;
 }
 
 export function PaymentRequestDetailView({
@@ -126,6 +129,7 @@ export function PaymentRequestDetailView({
   actions,
   documentActions,
   documentsFooter,
+  presign,
 }: Props): React.ReactElement {
   const isConfidential = pr.paymentType?.isConfidential ?? false;
   return (
@@ -211,9 +215,7 @@ export function PaymentRequestDetailView({
                     <FileText className="h-4 w-4 text-muted-foreground" />
                     <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.documentCode}</code>
                     <span>{d.documentLabel ?? d.fileName}</span>
-                    <a className="ml-auto text-xs underline text-muted-foreground" href={resolveFileUrl(d.fileUrl)} target="_blank" rel="noreferrer">
-                      Open
-                    </a>
+                    <FileActions className="ml-auto" fileUrl={d.fileUrl} fileName={d.fileName} presign={presign} />
                     {documentActions?.(d)}
                   </li>
                 ))}
@@ -317,10 +319,9 @@ export function PaymentRequestDetailView({
                         <div className="mt-1 text-xs whitespace-pre-wrap">{step.detail}</div>
                       )}
                       {step.order === 1 && pr.swiftCopyUrl && (
-                        <div className="mt-1">
-                          <a className="text-xs underline text-muted-foreground" href={resolveFileUrl(pr.swiftCopyUrl)} target="_blank" rel="noreferrer">
-                            Open SWIFT / MT103 copy
-                          </a>
+                        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <span>SWIFT / MT103 copy</span>
+                          <FileActions fileUrl={pr.swiftCopyUrl} fileName="swift-mt103" presign={presign} />
                         </div>
                       )}
                     </li>

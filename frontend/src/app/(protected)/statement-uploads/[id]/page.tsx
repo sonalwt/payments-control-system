@@ -8,11 +8,12 @@ import {
   ArrowLeft,
   CheckCircle2,
   Download,
+  Eye,
   PlayCircle,
   RefreshCw,
   Unlink,
 } from 'lucide-react';
-import { api, friendlyError, resolveFileUrl } from '@/lib/api';
+import { api, downloadFile, friendlyError, viewFile } from '@/lib/api';
 import { formatDateMedium } from '@/lib/datetime';
 import type {
   StatementLine,
@@ -175,12 +176,16 @@ export default function StatementUploadDetailPage(): React.ReactElement {
               </Button>
             </Link>
             {data?.fileUrl && (
-              <a href={resolveFileUrl(data.fileUrl)} target="_blank" rel="noopener noreferrer">
-                <Button variant="outline" size="sm">
+              <>
+                <Button variant="outline" size="sm" onClick={() => { void viewFile(data.fileUrl); }}>
+                  <Eye className="mr-1 h-4 w-4" />
+                  View
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { void downloadFile(data.fileUrl); }}>
                   <Download className="mr-1 h-4 w-4" />
                   Download
                 </Button>
-              </a>
+              </>
             )}
             {data && ingestionStatus === 'UPLOADED' && (
               <Button

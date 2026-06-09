@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsNotEmpty,
   IsNumber,
@@ -8,8 +9,32 @@ import {
   IsString,
   IsUUID,
   Length,
+  Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
+
+export class ChargeBandDto {
+  @ApiProperty({ example: 0, description: 'Lower bound of the amount band (inclusive)' })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  minAmount!: number;
+
+  @ApiPropertyOptional({ example: 1000, description: 'Upper bound (exclusive). Blank = and above.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  maxAmount?: number | null;
+
+  @ApiProperty({ example: 2, description: 'Charge as a percentage of the amount (0–100)' })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Max(100)
+  percentage!: number;
+}
 
 export class CreateBankAccountDto {
   @ApiProperty({ description: 'Bank master UUID' })
@@ -83,4 +108,11 @@ export class CreateBankAccountDto {
   @IsOptional()
   @IsUUID()
   counterpartyId?: string;
+
+  @ApiPropertyOptional({ type: [ChargeBandDto], description: 'Tiered bank charges by amount band' })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ChargeBandDto)
+  chargeBands?: ChargeBandDto[];
 }
