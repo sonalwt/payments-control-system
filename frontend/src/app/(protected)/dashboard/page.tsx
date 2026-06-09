@@ -284,14 +284,6 @@ function ApproverDashboard() {
   const approved = usePrCount('TREASURY_MAKER');
   const paid = usePrCount('COMPLETED');
 
-  const { data: pendingList } = useQuery({
-    queryKey: ['dashboard-pending-approvals'],
-    queryFn: () =>
-      api.get<Paginated<PaymentRequest>>(
-        '/payment-requests?status=PENDING_APPROVAL&page=1&limit=8',
-      ),
-  });
-
   return (
     <div className="space-y-8">
       <div className="space-y-3">
@@ -301,28 +293,6 @@ function ApproverDashboard() {
           <StatTile label="In Treasury (Total)" value={approved} icon={CheckCircle2} href="/payment-requests?status=TREASURY_MAKER" />
           <StatTile label="Completed (Total)" value={paid} icon={BadgeCheck} href="/payment-requests?status=COMPLETED" />
         </div>
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <SectionHeading>Requests Pending Your Approval</SectionHeading>
-          <Link href="/payment-requests?status=PENDING_APPROVAL">
-            <Button variant="ghost" size="sm" className="h-6 text-xs">View all</Button>
-          </Link>
-        </div>
-        {pendingList && pendingList.data.length > 0 ? (
-          <Card className="p-4">
-            <ul>
-              {pendingList.data.map((pr) => (
-                <PrRow key={pr.id} pr={pr} />
-              ))}
-            </ul>
-          </Card>
-        ) : (
-          <Card className="p-6 text-center text-sm text-muted-foreground">
-            No payment requests are currently pending approval.
-          </Card>
-        )}
       </div>
     </div>
   );

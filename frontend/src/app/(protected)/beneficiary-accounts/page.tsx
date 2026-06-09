@@ -6,8 +6,9 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { AlertTriangle, CheckCircle2, Eye, FileText, Loader2, Plus, Search, ShieldAlert, Upload, XCircle } from 'lucide-react';
-import { api, resolveFileUrl } from '@/lib/api';
+import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/datetime';
+import { FileActions } from '@/components/shared/file-actions';
 import type {
   Bank,
   BeneficiaryAccount,
@@ -618,14 +619,7 @@ function BeneficiaryDetailDialog({
                           </p>
                         </div>
                       </div>
-                      <a
-                        href={resolveFileUrl(d.fileUrl)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="shrink-0 text-xs font-medium text-primary underline"
-                      >
-                        Open
-                      </a>
+                      <FileActions className="shrink-0" fileUrl={d.fileUrl} fileName={d.fileName} />
                     </li>
                   ))}
                 </ul>

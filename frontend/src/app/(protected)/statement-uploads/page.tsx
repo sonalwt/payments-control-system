@@ -4,9 +4,10 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Plus, Trash2, UploadCloud } from 'lucide-react';
-import { api, resolveFileUrl } from '@/lib/api';
+import { api } from '@/lib/api';
 import { formatDateMedium } from '@/lib/datetime';
 import type { BankAccount, LegalEntity, Paginated, StatementUpload } from '@/types/domain';
+import { FileActions } from '@/components/shared/file-actions';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -434,14 +435,7 @@ export default function StatementUploadsPage(): React.ReactElement {
                   </TableCell>
                   <TableCell>
                     {u.fileUrl ? (
-                      <a
-                        href={resolveFileUrl(u.fileUrl)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-primary hover:underline"
-                      >
-                        Open
-                      </a>
+                      <FileActions fileUrl={u.fileUrl} />
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}

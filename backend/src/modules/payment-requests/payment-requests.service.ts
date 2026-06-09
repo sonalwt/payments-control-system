@@ -311,19 +311,29 @@ export class PaymentRequestsService {
       //     treasury stages, so they can track execution / handle rejects).
       orClauses.push('pr.created_by = :viewerId');
 
-      // (2) Approver visibility: any step in the chain assigned to one of the
+      // (2) Approver visibility: a step in the chain assigned to one of the
       //     viewer's roles or their user ID, OR a step the viewer personally
       //     decided. Covers both the live queue (PENDING steps awaiting them)
       //     and history (steps they already actioned). Handles ROLE and USER
       //     step types.
+      //
+      //     A *downstream* approver must NOT see a request whose chain has not
+      //     yet reached their step — e.g. the 2nd matrix approver should not see
+      //     a request still awaiting the 1st. So an assigned-but-not-yet-decided
+      //     step only reveals the request once it is at or past that step (while
+      //     PENDING_APPROVAL). Steps the viewer already decided, and any
+      //     non-PENDING status, always stay visible as history.
+      const stepReached = `pra2.step_order <= COALESCE(pr.current_step_order, pra2.step_order)`;
       if (viewer.roles.length > 0) {
         orClauses.push(`EXISTS (
           SELECT 1 FROM payment_request_approvals pra2
           LEFT JOIN roles rl ON rl.id = pra2.approver_role_id
           WHERE pra2.payment_request_id = pr.id
-            AND (pra2.approver_user_id = :viewerId
-                 OR pra2.decided_by = :viewerId
-                 OR rl.code IN (:...viewerRoles))
+            AND (
+              pra2.decided_by = :viewerId
+              OR ((pra2.approver_user_id = :viewerId OR rl.code IN (:...viewerRoles))
+                  AND (pr.status <> 'PENDING_APPROVAL' OR ${stepReached}))
+            )
         )`);
         params.viewerRoles = viewer.roles;
       } else {
@@ -331,7 +341,11 @@ export class PaymentRequestsService {
         orClauses.push(`EXISTS (
           SELECT 1 FROM payment_request_approvals pra2
           WHERE pra2.payment_request_id = pr.id
-            AND (pra2.approver_user_id = :viewerId OR pra2.decided_by = :viewerId)
+            AND (
+              pra2.decided_by = :viewerId
+              OR (pra2.approver_user_id = :viewerId
+                  AND (pr.status <> 'PENDING_APPROVAL' OR ${stepReached}))
+            )
         )`);
       }
 

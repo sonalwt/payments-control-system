@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, FileText, FileUp } from 'lucide-react';
-import { api, friendlyError, resolveFileUrl } from '@/lib/api';
+import { api, friendlyError } from '@/lib/api';
+import { FileActions } from '@/components/shared/file-actions';
 import type {
   BankAccount,
   Counterparty,
@@ -299,17 +300,11 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
                 {attached.map((d) => (
                   <li key={d.id} className="flex items-center gap-2">
                     <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                    <a
-                      href={resolveFileUrl(d.fileUrl)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      {d.fileName}
-                    </a>
+                    <span>{d.fileName}</span>
                     <span className="text-xs text-muted-foreground">
                       ({d.documentLabel ?? d.documentCode})
                     </span>
+                    <FileActions className="ml-auto" fileUrl={d.fileUrl} fileName={d.fileName} />
                   </li>
                 ))}
               </ul>

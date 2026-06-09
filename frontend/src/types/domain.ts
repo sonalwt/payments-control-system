@@ -370,6 +370,14 @@ export interface PaymentCategory extends AuditFields {
   isActive: boolean;
 }
 
+export interface BankAccountChargeBand {
+  id?: string;
+  sortOrder?: number;
+  minAmount: number;
+  maxAmount?: number | null;
+  percentage: number;
+}
+
 export interface BankAccount extends AuditFields {
   bankId?: string | null;
   bank?: Bank | null;
@@ -384,6 +392,8 @@ export interface BankAccount extends AuditFields {
   remainingBalance: number | string;
   isChairmanDesignated: boolean;
   isActive: boolean;
+  // Tiered bank charges by amount band (e.g. 0–1000 → 2%, 1000+ → 5%).
+  chargeBands?: BankAccountChargeBand[];
   // Account-type master FK + joined master row
   accountTypeId?: string | null;
   accountTypeMaster?: AccountType | null;

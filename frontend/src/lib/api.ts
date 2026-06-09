@@ -231,3 +231,62 @@ export const api = {
     uploadRequest<{ url: string; fileName: string }>('/uploads/file', file),
   postForm: <T>(path: string, formData: FormData) => formRequest<T>(path, formData),
 };
+
+// ── Stored-file viewing & downloading ──────────────────────────────────────
+// Files live in a private S3 bucket. The backend mints a short-lived presigned
+// URL on demand; the SPA never touches a public object URL. The presign call is
+// realm-specific (staff vs. employee), so it is injected as `PresignFn`.
+
+/** Asks the backend for a short-lived presigned URL for a stored file. */
+export type PresignFn = (
+  fileUrl: string,
+  opts?: { download?: boolean; fileName?: string },
+) => Promise<string>;
+
+/** Staff-realm presign (uses the staff token). */
+export const presignFileUrl: PresignFn = async (fileUrl, opts) => {
+  const params = new URLSearchParams({ url: fileUrl });
+  if (opts?.download) params.set('download', '1');
+  if (opts?.fileName) params.set('fileName', opts.fileName);
+  const res = await api.get<{ url: string }>(`/uploads/presign?${params.toString()}`);
+  return res.url;
+};
+
+/**
+ * Open a stored file inline in a new tab. The blank tab is opened synchronously
+ * (inside the click gesture) to avoid popup blockers, then redirected to the
+ * presigned URL once it resolves.
+ */
+export async function viewFile(fileUrl: string, presign: PresignFn = presignFileUrl): Promise<void> {
+  // Open the tab synchronously (inside the click gesture) so it isn't blocked.
+  // Can't pass 'noopener' here — that returns null and we'd lose the handle —
+  // so sever the opener manually to avoid reverse-tabnabbing.
+  const w = window.open('', '_blank');
+  if (w) { try { w.opener = null; } catch { /* ignore */ } }
+  try {
+    const url = await presign(fileUrl);
+    if (w) w.location.href = url;
+    else window.open(url, '_blank', 'noopener');
+  } catch {
+    if (w) w.close();
+  }
+}
+
+/**
+ * Force a direct download of a stored file. The presigned URL carries
+ * `Content-Disposition: attachment` from S3, so navigating to it saves the file
+ * (with its original name) rather than opening it — no blob/CORS needed.
+ */
+export async function downloadFile(
+  fileUrl: string,
+  fileName?: string,
+  presign: PresignFn = presignFileUrl,
+): Promise<void> {
+  const url = await presign(fileUrl, { download: true, fileName });
+  const a = document.createElement('a');
+  a.href = url;
+  if (fileName) a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}

@@ -1,9 +1,10 @@
-import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Currency } from '../currencies/currency.entity';
 import { AccountType } from '../account-types/account-type.entity';
 import { Bank } from '../banks/bank.entity';
 import { Counterparty } from '../counterparties/counterparty.entity';
+import { BankAccountChargeBand } from './bank-account-charge-band.entity';
 
 @Entity({ name: 'bank_accounts' })
 export class BankAccount extends BaseEntity {
@@ -101,4 +102,8 @@ export class BankAccount extends BaseEntity {
   @ManyToOne(() => Counterparty)
   @JoinColumn({ name: 'counterparty_id' })
   counterparty?: Counterparty | null;
+
+  // Tiered bank charges keyed by payment amount (e.g. 0–1000 → 2%, 1000+ → 5%).
+  @OneToMany(() => BankAccountChargeBand, (b) => b.bankAccount, { cascade: true })
+  chargeBands?: BankAccountChargeBand[];
 }

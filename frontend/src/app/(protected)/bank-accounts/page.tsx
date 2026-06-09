@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
@@ -26,6 +26,12 @@ import { ConfirmDelete } from '@/components/shared/confirm-delete';
 
 const KEY = 'bank-accounts';
 
+const chargeBandSchema = z.object({
+  minAmount: z.coerce.number().min(0),
+  maxAmount: z.union([z.literal(''), z.coerce.number().min(0)]).optional(),
+  percentage: z.coerce.number().min(0).max(100),
+});
+
 const schema = z.object({
   bankId: z.string().uuid('Select a bank'),
   bankNickname: z.string().max(100).optional().or(z.literal('')),
@@ -39,6 +45,17 @@ const schema = z.object({
   remainingBalance: z.coerce.number().min(0).optional(),
   isChairmanDesignated: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  chargeBands: z.array(chargeBandSchema).optional().default([]),
+}).superRefine((d, ctx) => {
+  const open = (d.chargeBands ?? []).filter((b) => b.maxAmount === '' || b.maxAmount == null);
+  if (open.length > 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['chargeBands'], message: 'Only one open-ended band (blank max) is allowed' });
+  }
+  (d.chargeBands ?? []).forEach((b, i) => {
+    if (b.maxAmount !== '' && b.maxAmount != null && Number(b.maxAmount) <= Number(b.minAmount)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['chargeBands', i, 'maxAmount'], message: 'Max must be greater than min' });
+    }
+  });
 });
 type FormData = z.infer<typeof schema>;
 
@@ -73,7 +90,7 @@ function BankAccountForm({
     .filter((at) => at.isActive)
     .map((at) => ({ label: at.name, value: at.id }));
 
-  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, control, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       bankId: defaultValues?.bankId ?? '',
@@ -97,8 +114,15 @@ function BankAccountForm({
           : undefined,
       isChairmanDesignated: defaultValues?.isChairmanDesignated ?? false,
       isActive: defaultValues?.isActive ?? true,
+      chargeBands: (defaultValues?.chargeBands ?? []).map((b) => ({
+        minAmount: Number(b.minAmount),
+        maxAmount: b.maxAmount == null ? '' : Number(b.maxAmount),
+        percentage: Number(b.percentage),
+      })),
     },
   });
+
+  const bands = useFieldArray({ control, name: 'chargeBands' });
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -193,6 +217,57 @@ function BankAccountForm({
         />
         <Label htmlFor="isActive">Active</Label>
       </div>
+
+      {/* Bank charge bands — tiered % charge by payment amount. */}
+      <div className="space-y-2 rounded-md border p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <Label className="text-sm">Charge bands</Label>
+            <p className="text-xs text-muted-foreground">
+              Bank charge as a % of the amount, by band. Leave max blank for the top “and above” band.
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => bands.append({ minAmount: 0, maxAmount: '', percentage: 0 })}
+          >
+            <Plus className="mr-1 h-4 w-4" /> Add band
+          </Button>
+        </div>
+        {bands.fields.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No charge bands. Charges default to 0%.</p>
+        ) : (
+          <div className="space-y-2">
+            <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-xs text-muted-foreground">
+              <span>Min amount</span>
+              <span>Max amount (blank = and above)</span>
+              <span>Charge %</span>
+              <span className="w-8" />
+            </div>
+            {bands.fields.map((f, i) => (
+              <div key={f.id} className="grid grid-cols-[1fr_1fr_1fr_auto] items-start gap-2">
+                <Input type="number" step="0.0001" min={0} placeholder="0" {...register(`chargeBands.${i}.minAmount`)} />
+                <Input type="number" step="0.0001" min={0} placeholder="and above" {...register(`chargeBands.${i}.maxAmount`)} />
+                <div>
+                  <Input type="number" step="0.0001" min={0} max={100} placeholder="2" {...register(`chargeBands.${i}.percentage`)} />
+                  {errors.chargeBands?.[i]?.maxAmount && (
+                    <p className="text-xs text-destructive">{errors.chargeBands[i]?.maxAmount?.message}</p>
+                  )}
+                </div>
+                <Button type="button" size="icon" variant="ghost" onClick={() => bands.remove(i)} title="Remove band">
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {errors.chargeBands && typeof errors.chargeBands.message === 'string' && (
+          <p className="text-xs text-destructive">{errors.chargeBands.message}</p>
+        )}
+      </div>
+
       <DialogFooter>
         <Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</Button>
       </DialogFooter>
@@ -214,6 +289,11 @@ function normalize(d: FormData) {
     remainingBalance: d.remainingBalance,
     isChairmanDesignated: d.isChairmanDesignated ?? false,
     isActive: d.isActive ?? true,
+    chargeBands: (d.chargeBands ?? []).map((b) => ({
+      minAmount: Number(b.minAmount),
+      maxAmount: b.maxAmount === '' || b.maxAmount == null ? null : Number(b.maxAmount),
+      percentage: Number(b.percentage),
+    })),
   };
 }
 
@@ -286,6 +366,7 @@ export default function BankAccountsPage(): React.ReactElement {
               <TableHead className="text-right">Opening</TableHead>
               <TableHead className="text-right">Min</TableHead>
               <TableHead className="text-right">Remaining</TableHead>
+              <TableHead>Charges</TableHead>
               <TableHead>Chairman</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-24 text-right">Actions</TableHead>
@@ -293,7 +374,7 @@ export default function BankAccountsPage(): React.ReactElement {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={11} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={12} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((a) => (
               <TableRow key={a.id}>
                 <TableCell>
@@ -315,6 +396,20 @@ export default function BankAccountsPage(): React.ReactElement {
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {a.remainingBalance != null ? Number(a.remainingBalance).toLocaleString() : '—'}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {a.chargeBands && a.chargeBands.length > 0 ? (
+                    <div className="space-y-0.5">
+                      {a.chargeBands.map((b, i) => (
+                        <div key={b.id ?? i} className="whitespace-nowrap tabular-nums">
+                          {Number(b.minAmount).toLocaleString()}
+                          {b.maxAmount == null ? '+' : `–${Number(b.maxAmount).toLocaleString()}`}
+                          {' · '}
+                          <span className="font-medium text-foreground">{Number(b.percentage)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : '—'}
                 </TableCell>
                 <TableCell>
                   {a.isChairmanDesignated ? (
@@ -342,7 +437,7 @@ export default function BankAccountsPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={11} className="py-12 text-center text-muted-foreground">No bank accounts yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={12} className="py-12 text-center text-muted-foreground">No bank accounts yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

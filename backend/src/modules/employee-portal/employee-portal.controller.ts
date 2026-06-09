@@ -68,6 +68,29 @@ export class EmployeePortalController {
     return { url, fileName: file.originalname };
   }
 
+  /**
+   * Presign a stored file for inline view or download, in the employee realm.
+   * Mirrors the staff GET /uploads/presign so the shared detail view works for
+   * employees without exposing a staff token or a public bucket URL.
+   */
+  @Get('uploads/presign')
+  async presignFile(
+    @Query('url') url?: string,
+    @Query('download') download?: string,
+    @Query('fileName') fileName?: string,
+  ): Promise<{ url: string }> {
+    if (!url) throw new BadRequestException('url is required');
+    const key = this.s3.keyFromUrl(url);
+    if (!key.startsWith('uploads/')) {
+      throw new BadRequestException('Invalid file reference');
+    }
+    const signed = await this.s3.presignGetUrl(url, {
+      download: download === '1' || download === 'true',
+      fileName,
+    });
+    return { url: signed };
+  }
+
   /** Payment types this employee can select when raising a request. */
   @Get('payment-types')
   listPaymentTypes(@CurrentEmployee() emp: AuthenticatedEmployee) {
