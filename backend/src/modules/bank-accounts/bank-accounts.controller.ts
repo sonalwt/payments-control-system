@@ -32,6 +32,12 @@ export class BankAccountsController {
     return this.service.findAll(query);
   }
 
+  /** Admin alert: active group-own accounts whose balance is below the minimum. */
+  @Get('below-minimum')
+  belowMinimum() {
+    return this.service.findBelowMinimum();
+  }
+
   @Get(':id')
   @Roles()
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {

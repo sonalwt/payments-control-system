@@ -229,8 +229,36 @@ export const api = {
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: (file: File) =>
     uploadRequest<{ url: string; fileName: string }>('/uploads/file', file),
+  /**
+   * Best-effort, local read of an invoice PDF for cross-checking against the
+   * entered values. Advisory only — the file is not stored by this call.
+   */
+  extractInvoice: (file: File) =>
+    uploadRequest<ExtractedInvoice>('/uploads/extract-invoice', file),
+  /**
+   * Best-effort, local read of a bank remittance / SWIFT / MT103 copy for
+   * cross-checking the entered reference + amount. Advisory only; not stored.
+   */
+  extractRemittance: (file: File) =>
+    uploadRequest<ExtractedRemittance>('/uploads/extract-remittance', file),
   postForm: <T>(path: string, formData: FormData) => formRequest<T>(path, formData),
 };
+
+/** Fields read off an uploaded invoice (warn-only cross-check). */
+export interface ExtractedInvoice {
+  readable: boolean;
+  reason?: string;
+  invoiceNumber: string | null;
+  amount: string | null;
+}
+
+/** Fields read off an uploaded remittance / SWIFT / MT103 copy. */
+export interface ExtractedRemittance {
+  readable: boolean;
+  reason?: string;
+  referenceNumber: string | null;
+  amount: string | null;
+}
 
 // ── Stored-file viewing & downloading ──────────────────────────────────────
 // Files live in a private S3 bucket. The backend mints a short-lived presigned

@@ -4,9 +4,9 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
-import { CheckCircle2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, type ExtractedInvoice } from '@/lib/api';
 import { useAuth } from '@/hooks/use-auth';
 import type {
   BankAccount,
@@ -53,6 +53,33 @@ export type PaymentRequestFormData = z.infer<typeof paymentRequestSchema>;
 type UploadStatus = 'idle' | 'uploading' | 'done' | 'error';
 interface DocUploadState { status: UploadStatus; error: string }
 
+type CompareRow = { label: string; entered: string; extracted: string; status: 'match' | 'mismatch' };
+
+/** Compare auto-read invoice fields against what the user entered (warn-only). */
+function compareInvoice(
+  ext: ExtractedInvoice,
+  entered: { amount?: string; invoiceNumber?: string },
+): CompareRow[] {
+  const rows: CompareRow[] = [];
+  if (ext.amount != null) {
+    const e = (entered.amount ?? '').trim();
+    const enteredNum = Number(e);
+    const extractedNum = Number(ext.amount);
+    const status =
+      e !== '' && Number.isFinite(enteredNum) && Math.abs(enteredNum - extractedNum) < 0.0001
+        ? 'match'
+        : 'mismatch';
+    rows.push({ label: 'Amount', entered: e || '—', extracted: ext.amount, status });
+  }
+  if (ext.invoiceNumber != null) {
+    const norm = (s: string): string => s.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    const e = (entered.invoiceNumber ?? '').trim();
+    const status = e !== '' && norm(e) === norm(ext.invoiceNumber) ? 'match' : 'mismatch';
+    rows.push({ label: 'Invoice no.', entered: e || '—', extracted: ext.invoiceNumber, status });
+  }
+  return rows;
+}
+
 export function PaymentRequestForm({
   onSubmit, submitting, defaultValues, submitLabel = 'Save as draft', showDocuments = true,
 }: {
@@ -91,12 +118,21 @@ export function PaymentRequestForm({
   }, [defaultValues, hydrated, reset]);
 
   const [docUploadStates, setDocUploadStates] = useState<DocUploadState[]>([]);
+  // Warn-only invoice auto-read results, keyed by document index. Advisory:
+  // surfaced as a comparison panel, never blocks submission.
+  const [docExtractions, setDocExtractions] = useState<(ExtractedInvoice | null)[]>([]);
   const fileInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   async function handleDocUpload(idx: number, file: File): Promise<void> {
     setDocUploadStates((prev) => {
       const next = [...prev];
       next[idx] = { status: 'uploading', error: '' };
+      return next;
+    });
+    // Clear any prior auto-read for this slot before re-uploading.
+    setDocExtractions((prev) => {
+      const next = [...prev];
+      next[idx] = null;
       return next;
     });
     try {
@@ -108,6 +144,22 @@ export function PaymentRequestForm({
         next[idx] = { status: 'done', error: '' };
         return next;
       });
+      // Fire-and-forget invoice auto-read (PDFs only). Failures are silent —
+      // this is an optional cross-check, not part of the upload contract.
+      if (file.type === 'application/pdf') {
+        api
+          .extractInvoice(file)
+          .then((extracted) => {
+            setDocExtractions((prev) => {
+              const next = [...prev];
+              next[idx] = extracted;
+              return next;
+            });
+          })
+          .catch(() => {
+            /* ignore — auto-read is best-effort */
+          });
+      }
     } catch (err) {
       setDocUploadStates((prev) => {
         const next = [...prev];
@@ -283,6 +335,7 @@ export function PaymentRequestForm({
             onClick={() => {
               append({ documentCode: '', documentLabel: '', fileName: '', fileUrl: '' });
               setDocUploadStates((prev) => [...prev, { status: 'idle', error: '' }]);
+              setDocExtractions((prev) => [...prev, null]);
             }}
           >
             <Plus className="mr-1 h-3 w-3" /> Add document
@@ -315,6 +368,7 @@ export function PaymentRequestForm({
                       onClick={() => {
                         remove(idx);
                         setDocUploadStates((prev) => prev.filter((_, i) => i !== idx));
+                        setDocExtractions((prev) => prev.filter((_, i) => i !== idx));
                       }}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -360,6 +414,58 @@ export function PaymentRequestForm({
                   {upState.status === 'error' && (
                     <p className="text-xs text-destructive">{upState.error}</p>
                   )}
+
+                  {/* Warn-only invoice auto-read cross-check (PDF invoices). */}
+                  {(() => {
+                    const ext = docExtractions[idx];
+                    const code = watch(`documents.${idx}.documentCode`) ?? '';
+                    if (!ext || !/inv/i.test(code)) return null;
+                    if (!ext.readable) {
+                      return (
+                        <div className="rounded-md border border-muted bg-muted/40 p-2 text-xs text-muted-foreground flex items-start gap-1.5">
+                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>{ext.reason ?? 'Could not auto-read this invoice. Please verify manually.'}</span>
+                        </div>
+                      );
+                    }
+                    const rows = compareInvoice(ext, {
+                      amount: watch('amount'),
+                      invoiceNumber: watch('invoiceNumber'),
+                    });
+                    if (rows.length === 0) {
+                      return (
+                        <div className="rounded-md border border-muted bg-muted/40 p-2 text-xs text-muted-foreground">
+                          Invoice read, but no amount or invoice number could be identified to compare.
+                        </div>
+                      );
+                    }
+                    const anyMismatch = rows.some((r) => r.status === 'mismatch');
+                    return (
+                      <div className={`rounded-md border p-2 text-xs space-y-1 ${anyMismatch ? 'border-amber-400 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}>
+                        <p className="font-medium flex items-center gap-1.5">
+                          {anyMismatch
+                            ? <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                            : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
+                          {anyMismatch ? 'Invoice does not match entered values' : 'Invoice matches entered values'}
+                        </p>
+                        {rows.map((r) => (
+                          <div key={r.label} className="flex items-center justify-between gap-2">
+                            <span className="text-muted-foreground">{r.label}</span>
+                            <span className="flex items-center gap-2">
+                              <span>entered: <b>{r.entered}</b></span>
+                              <span>invoice: <b>{r.extracted}</b></span>
+                              {r.status === 'match'
+                                ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
+                            </span>
+                          </div>
+                        ))}
+                        <p className="text-[11px] text-muted-foreground pt-1">
+                          Auto-read is advisory and may be inaccurate — it does not block submission.
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}

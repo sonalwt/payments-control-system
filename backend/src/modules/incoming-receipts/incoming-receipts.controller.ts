@@ -10,9 +10,13 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { IncomingReceiptsService } from './incoming-receipts.service';
 import {
   CancelReceiptDto,
@@ -47,6 +51,18 @@ export class IncomingReceiptsController {
   @Post()
   create(@Body() dto: CreateIncomingReceiptDto, @CurrentUser() user: AuthenticatedUser) {
     return this.service.create(dto, user.id);
+  }
+
+  @Post('import')
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  importFile(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.bulkImport(file, user.id);
   }
 
   @Get()

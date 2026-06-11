@@ -15,6 +15,7 @@ import {
   Users2,
   ArrowRight,
   Hourglass,
+  AlertTriangle,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { hourInDubai } from '@/lib/datetime';
@@ -29,6 +30,13 @@ import type {
 } from '@/types/domain';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -200,6 +208,79 @@ function NeedsAttention(): React.ReactElement | null {
   );
 }
 
+/**
+ * Admin alert: group-own bank accounts whose remaining balance has dropped
+ * below their configured minimum balance. Shown as a compact "Urgent attention"
+ * banner; clicking it opens a popup with the breaching accounts. Renders nothing
+ * when all accounts are healthy. Admin-only (the endpoint requires SUPER_ADMIN).
+ */
+function LowBalanceAlert(): React.ReactElement | null {
+  const { data } = useQuery({
+    queryKey: ['bank-accounts-below-minimum'],
+    queryFn: () => api.get<BankAccount[]>('/bank-accounts/below-minimum'),
+  });
+  const rows = data ?? [];
+  if (rows.length === 0) return null;
+  const money = (n: number | string): string =>
+    Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-left transition-colors hover:bg-red-100"
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100">
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-red-800">Urgent attention</span>
+            <span className="block text-xs text-red-700">
+              {rows.length} bank account{rows.length > 1 ? 's are' : ' is'} below minimum balance — click to review
+            </span>
+          </span>
+          <span className="shrink-0 rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold text-white">
+            {rows.length}
+          </span>
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-800">
+            <AlertTriangle className="h-5 w-5" />
+            Accounts below minimum balance
+          </DialogTitle>
+        </DialogHeader>
+        <ul className="max-h-[60vh] divide-y overflow-y-auto">
+          {rows.map((a) => {
+            const ccy = a.currency?.code ? `${a.currency.code} ` : '';
+            const bank = a.bankNickname ?? a.bankName ?? 'Account';
+            const shortfall = Number(a.minimumBalance) - Number(a.remainingBalance);
+            return (
+              <li key={a.id} className="flex items-center gap-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{bank} · {a.accountNumber}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Balance {ccy}{money(a.remainingBalance)} · minimum {ccy}{money(a.minimumBalance)}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
+                  short {ccy}{money(shortfall)}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="flex justify-end">
+          <Link href="/bank-accounts">
+            <Button size="sm" variant="outline">Go to Bank Accounts</Button>
+          </Link>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Role-specific sections
 // ---------------------------------------------------------------------------
@@ -227,6 +308,9 @@ function AdminDashboard() {
 
   return (
     <div className="space-y-8">
+      {/* Low-balance admin alert */}
+      <LowBalanceAlert />
+
       {/* Payment Stats */}
       <div className="space-y-3">
         <SectionHeading>Payment Requests</SectionHeading>

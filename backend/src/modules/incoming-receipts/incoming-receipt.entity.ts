@@ -53,6 +53,10 @@ export class IncomingReceipt extends BaseEntity {
   @Column({ name: 'purpose_description', type: 'text', nullable: true })
   purposeDescription?: string | null;
 
+  /** Optional free-text note of the counterparty account the credit comes from. */
+  @Column({ name: 'received_from_account', type: 'varchar', length: 200, nullable: true })
+  receivedFromAccount?: string | null;
+
   @Column({ type: 'varchar', length: 20, default: 'DRAFT' })
   status!: IncomingReceiptStatus;
 

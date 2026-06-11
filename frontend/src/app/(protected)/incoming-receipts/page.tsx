@@ -12,6 +12,7 @@ import type {
   Paginated,
 } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
+import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -83,11 +84,30 @@ export default function IncomingReceiptsPage(): React.ReactElement {
         title="Incoming Receipts"
         description="SOW §7 — inbound credits expected from counterparties; mark received when the bank credit lands."
         actions={
-          <Link href="/incoming-receipts/new">
-            <Button>
-              <Plus className="mr-2 h-4 w-4" /> New Receipt
-            </Button>
-          </Link>
+          <div className="flex gap-2">
+            <ImportCsvDialog
+              entityName="Incoming Receipts"
+              endpoint="/incoming-receipts/import"
+              sampleHeaders={[
+                'Legal Entity Code',
+                'Counterparty Code',
+                'Receive-to Account Number',
+                'Expected Amount',
+                'Currency Code',
+                'Purpose',
+              ]}
+              sampleRows={[
+                ['RADIANT-IN', 'CP-0001', '50100123456789', '12500.0000', 'USD', 'Advance against PO-2026-014'],
+                ['RADIANT-DXB', 'CP-0002', '1015400987654', '8000.00', 'USD', 'Final settlement invoice INV-91'],
+              ]}
+              onSuccess={() => void list.refetch()}
+            />
+            <Link href="/incoming-receipts/new">
+              <Button>
+                <Plus className="mr-2 h-4 w-4" /> New Receipt
+              </Button>
+            </Link>
+          </div>
         }
       />
 

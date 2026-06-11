@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
+  AlertTriangle,
   BadgeCheck,
   CheckCircle2,
   Loader2,
@@ -21,7 +22,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, type ExtractedRemittance } from '@/lib/api';
 import type { PaymentRequest, PaymentRequestDocument } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +53,34 @@ const treasurySubmitSchema = z.object({
   swiftCopyUrl: z.string().min(1, 'SWIFT / MT103 copy required'),
 });
 type TreasurySubmitData = z.infer<typeof treasurySubmitSchema>;
+
+type RemitRow = { label: string; expected: string; document: string; status: 'match' | 'mismatch' };
+
+/**
+ * Compare the auto-read SWIFT/MT103 copy against the reference the maker typed
+ * and the approved request amount (warn-only). Returns one row per field the
+ * reader could identify.
+ */
+function compareRemittance(
+  ext: ExtractedRemittance,
+  expected: { referenceNumber?: string; amount?: string },
+): RemitRow[] {
+  const rows: RemitRow[] = [];
+  if (ext.referenceNumber != null) {
+    const norm = (s: string): string => s.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    const e = (expected.referenceNumber ?? '').trim();
+    const status = e !== '' && norm(e) === norm(ext.referenceNumber) ? 'match' : 'mismatch';
+    rows.push({ label: 'Reference', expected: e || '—', document: ext.referenceNumber, status });
+  }
+  if (ext.amount != null) {
+    const e = (expected.amount ?? '').trim();
+    const en = Number(e), xn = Number(ext.amount);
+    const status =
+      e !== '' && Number.isFinite(en) && Math.abs(en - xn) < 0.0001 ? 'match' : 'mismatch';
+    rows.push({ label: 'Amount', expected: e || '—', document: ext.amount, status });
+  }
+  return rows;
+}
 
 // ---------------------------------------------------------------------
 
@@ -125,7 +154,24 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     // Confidential payments capture the reference + SWIFT/MT103 here; the
     // standard flow already has them from the maker stage and sends nothing.
     mutationFn: (d?: TreasurySubmitData) => mut('treasury/complete', d ?? {}),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setTreasuryCompleteOpen(false); notify.success('Payment completed'); },
+    onSuccess: (updated) => {
+      void qc.invalidateQueries({ queryKey: ['payment-request', id] });
+      void qc.invalidateQueries({ queryKey: ['bank-accounts-source'] });
+      setTreasuryCompleteOpen(false);
+      // Notify the authoriser of the resulting bank balance.
+      const acct = updated.sourceAccount;
+      if (acct) {
+        const ccy = updated.currency?.code ? `${updated.currency.code} ` : '';
+        const money = (n: number | string): string =>
+          `${ccy}${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const bank = acct.bankNickname ?? 'the source account';
+        notify.success(
+          `Payment completed — ${money(updated.amount)} debited from ${bank}. New balance: ${money(acct.remainingBalance)}`,
+        );
+      } else {
+        notify.success('Payment completed');
+      }
+    },
     onError: (e: Error) => notify.error('Complete failed', e),
   });
   const treasuryRejectMut = useMutation({
@@ -215,6 +261,16 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     activeStep
       ? (activeStep.approverType === 'USER' && activeStep.approverUserId === user?.id) ||
         (activeStep.approverType === 'ROLE' && !!activeStep.approverRole?.code && userRoles.includes(activeStep.approverRole.code))
+      : false;
+
+  // Insufficient-balance warning, surfaced at the checker step (step 1 of the
+  // approval chain) so the checker can act before the payment proceeds. The
+  // balance is only debited at treasury completion, so this is advisory — it
+  // never blocks.
+  const sourceAcct = pr.sourceAccount;
+  const balanceShortfall =
+    pr.status === 'PENDING_APPROVAL' && pr.currentStepOrder === 1 && sourceAcct != null
+      ? Number(sourceAcct.remainingBalance) - Number(pr.amount) < Number(sourceAcct.minimumBalance)
       : false;
 
   // Lifecycle buttons — passed as the header `actions` slot of the shared view.
@@ -337,6 +393,27 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
 
   return (
     <>
+      {balanceShortfall && sourceAcct && (() => {
+        const ccy = pr.currency?.code ? `${pr.currency.code} ` : '';
+        const money = (n: number | string): string =>
+          `${ccy}${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const remaining = Number(sourceAcct.remainingBalance);
+        const projected = remaining - Number(pr.amount);
+        const bank = sourceAcct.bankNickname ?? sourceAcct.bankName ?? 'the source account';
+        return (
+          <div className="mb-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 flex items-start gap-2">
+            <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+            <div>
+              <p className="font-medium">Insufficient balance for this payment</p>
+              <p className="text-xs mt-0.5">
+                {bank} ({sourceAcct.accountNumber}) has {money(remaining)} available with a{' '}
+                {money(sourceAcct.minimumBalance)} minimum balance. This {money(pr.amount)} payment would
+                leave {money(projected)}. Review before approving — the balance is debited when treasury completes it.
+              </p>
+            </div>
+          </div>
+        );
+      })()}
       <PaymentRequestDetailView
         pr={pr}
         backHref="/payment-requests"
@@ -355,6 +432,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         onSubmit={(d) => rejectMut.mutate(d)} />
       <TreasurySubmitDialog open={treasurySubmitOpen} onOpenChange={setTreasurySubmitOpen}
         submitting={treasurySubmitMut.isPending}
+        expectedAmount={pr.amount} currencyCode={pr.currency?.code}
         onSubmit={(d) => treasurySubmitMut.mutate(d)} />
       <TreasurySubmitDialog open={treasuryCompleteOpen} onOpenChange={setTreasuryCompleteOpen}
         title="Complete confidential payment"
@@ -362,6 +440,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         submitLabel="Mark completed"
         submittingLabel="Completing…"
         submitting={treasuryCompleteMut.isPending}
+        expectedAmount={pr.amount} currencyCode={pr.currency?.code}
         onSubmit={(d) => treasuryCompleteMut.mutate(d)} />
       <RejectDialog open={treasuryRejectOpen} onOpenChange={setTreasuryRejectOpen}
         submitting={treasuryRejectMut.isPending}
@@ -444,6 +523,8 @@ function TreasurySubmitDialog({
   description = 'Capture the bank reference number and attach the SWIFT / MT103 copy received from the bank.',
   submitLabel = 'Submit',
   submittingLabel = 'Submitting…',
+  expectedAmount,
+  currencyCode,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -453,18 +534,24 @@ function TreasurySubmitDialog({
   description?: string;
   submitLabel?: string;
   submittingLabel?: string;
+  /** Approved request amount, cross-checked against the SWIFT/MT103 copy. */
+  expectedAmount?: string | null;
+  currencyCode?: string | null;
 }) {
   const notify = useNotify();
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
   const [fileName, setFileName] = useState('');
-  const { register, handleSubmit, reset, setValue, formState: { errors } } =
+  // Warn-only auto-read of the uploaded SWIFT/MT103 copy. Advisory; never blocks.
+  const [extraction, setExtraction] = useState<ExtractedRemittance | null>(null);
+  const { register, handleSubmit, reset, setValue, watch, formState: { errors } } =
     useForm<TreasurySubmitData>({ resolver: zodResolver(treasurySubmitSchema) });
 
   function resetAll() {
     reset();
     setUploadState('idle');
     setFileName('');
+    setExtraction(null);
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -472,11 +559,17 @@ function TreasurySubmitDialog({
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadState('uploading');
+    setExtraction(null);
     try {
       const result = await api.upload(file);
       setValue('swiftCopyUrl', result.url, { shouldValidate: true });
       setFileName(result.fileName);
       setUploadState('done');
+      // Fire-and-forget auto-read (PDFs only). Failures are silent — the
+      // cross-check is optional and must not affect the upload.
+      if (file.type === 'application/pdf') {
+        api.extractRemittance(file).then(setExtraction).catch(() => { /* best-effort */ });
+      }
     } catch (err) {
       setUploadState('error');
       notify.error('Upload failed', err instanceof Error ? err : new Error('Upload failed'));
@@ -509,6 +602,56 @@ function TreasurySubmitDialog({
             </div>
             {errors.swiftCopyUrl && <p className="text-xs text-destructive">{errors.swiftCopyUrl.message}</p>}
           </div>
+
+          {/* Warn-only SWIFT/MT103 auto-read cross-check. */}
+          {extraction && (() => {
+            if (!extraction.readable) {
+              return (
+                <div className="rounded-md border border-muted bg-muted/40 p-2 text-xs text-muted-foreground flex items-start gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>{extraction.reason ?? 'Could not auto-read this copy. Please verify manually.'}</span>
+                </div>
+              );
+            }
+            const rows = compareRemittance(extraction, {
+              referenceNumber: watch('referenceNumber'),
+              amount: expectedAmount ?? undefined,
+            });
+            if (rows.length === 0) {
+              return (
+                <div className="rounded-md border border-muted bg-muted/40 p-2 text-xs text-muted-foreground">
+                  Copy read, but no reference or amount could be identified to compare.
+                </div>
+              );
+            }
+            const anyMismatch = rows.some((r) => r.status === 'mismatch');
+            return (
+              <div className={`rounded-md border p-2 text-xs space-y-1 ${anyMismatch ? 'border-amber-400 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}>
+                <p className="font-medium flex items-center gap-1.5">
+                  {anyMismatch
+                    ? <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                    : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
+                  {anyMismatch ? 'SWIFT/MT103 copy does not match' : 'SWIFT/MT103 copy matches'}
+                </p>
+                {rows.map((r) => (
+                  <div key={r.label} className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">{r.label}</span>
+                    <span className="flex items-center gap-2">
+                      <span>expected: <b>{r.label === 'Amount' && currencyCode ? `${currencyCode} ` : ''}{r.expected}</b></span>
+                      <span>document: <b>{r.label === 'Amount' && currencyCode ? `${currencyCode} ` : ''}{r.document}</b></span>
+                      {r.status === 'match'
+                        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
+                    </span>
+                  </div>
+                ))}
+                <p className="text-[11px] text-muted-foreground pt-1">
+                  Auto-read is advisory and may be inaccurate — it does not block submission.
+                </p>
+              </div>
+            );
+          })()}
+
           <DialogFooter>
             <Button type="submit" disabled={submitting || uploadState === 'uploading'}>
               {submitting ? submittingLabel : submitLabel}

@@ -8,6 +8,7 @@ import { PaymentRequestsService } from './payment-requests.service';
 import { BeneficiaryAccountsModule } from '../beneficiary-accounts/beneficiary-accounts.module';
 import { ApprovalMatricesModule } from '../approval-matrices/approval-matrices.module';
 import { UploadsModule } from '../uploads/uploads.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { UploadsModule } from '../uploads/uploads.module';
     BeneficiaryAccountsModule,
     ApprovalMatricesModule,
     UploadsModule,
+    MailModule,
   ],
   controllers: [PaymentRequestsController],
   providers: [PaymentRequestsService],
