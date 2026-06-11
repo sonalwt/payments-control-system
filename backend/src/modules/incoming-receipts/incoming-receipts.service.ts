@@ -17,9 +17,12 @@ import {
   UpdateIncomingReceiptDto,
 } from './dto/incoming-receipt.dto';
 import { BankAccount } from '../bank-accounts/bank-account.entity';
+import { LegalEntity } from '../legal-entities/legal-entity.entity';
+import { Counterparty } from '../counterparties/counterparty.entity';
 import { User } from '../users/user.entity';
 import { MailService } from '../mail/mail.service';
 import { PaginatedResult } from '../../common/dto/pagination.dto';
+import { ImportResult, parseImportFile } from '../../common/helpers/parse-import-file';
 import { dubaiYear } from '../../common/utils/datetime';
 
 @Injectable()
@@ -52,6 +55,7 @@ export class IncomingReceiptsService {
         expectedAmount: dto.expectedAmount,
         expectedCurrencyCode: dto.expectedCurrencyCode.toUpperCase(),
         purposeDescription: dto.purposeDescription ?? null,
+        receivedFromAccount: dto.receivedFromAccount ?? null,
         status: 'DRAFT',
         createdBy: actorId,
         updatedBy: actorId,
@@ -62,6 +66,76 @@ export class IncomingReceiptsService {
       }
       return this.loadOne(saved.id, em);
     });
+  }
+
+  /**
+   * Bulk-create incoming receipts (as DRAFT) from a CSV/Excel upload. Foreign
+   * keys are resolved from human-friendly codes/numbers: legal entity code,
+   * counterparty code, and the receive-to (group) bank account number. Each row
+   * is independent — a bad row is skipped and reported, the rest still import.
+   */
+  async bulkImport(file: Express.Multer.File, actorId: string): Promise<ImportResult> {
+    const rows = parseImportFile(file);
+    const [entities, counterparties, accounts] = await Promise.all([
+      this.dataSource.getRepository(LegalEntity).find({ select: ['id', 'code'] }),
+      this.dataSource.getRepository(Counterparty).find({ select: ['id', 'code'] }),
+      this.dataSource.getRepository(BankAccount).find({ select: ['id', 'accountNumber'] }),
+    ]);
+    const entityMap = new Map(entities.map((e) => [e.code.toUpperCase(), e.id]));
+    const cpMap = new Map(counterparties.map((c) => [c.code.toUpperCase(), c.id]));
+    const acctMap = new Map(accounts.map((a) => [a.accountNumber.trim(), a.id]));
+
+    const AMOUNT_RE = /^\d+(\.\d{1,4})?$/;
+    const result: ImportResult = { created: 0, skipped: 0, errors: [] };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // header is row 1
+      const fail = (message: string): void => {
+        result.errors.push({ row: rowNum, message });
+        result.skipped++;
+      };
+
+      const leCode = (row['legal_entity_code'] ?? '').toUpperCase();
+      const cpCode = (row['counterparty_code'] ?? '').toUpperCase();
+      const acctNo = (row['receive_to_account_number'] ?? '').trim();
+      const amount = (row['expected_amount'] ?? '').trim();
+      const ccy = (row['currency_code'] ?? '').trim().toUpperCase();
+      const purpose = (row['purpose'] ?? '').trim();
+
+      if (!leCode) { fail('legal_entity_code is required'); continue; }
+      const legalEntityId = entityMap.get(leCode);
+      if (!legalEntityId) { fail(`Legal entity code "${leCode}" not found`); continue; }
+
+      if (!cpCode) { fail('counterparty_code is required'); continue; }
+      const counterpartyId = cpMap.get(cpCode);
+      if (!counterpartyId) { fail(`Counterparty code "${cpCode}" not found`); continue; }
+
+      if (!acctNo) { fail('receive_to_account_number is required'); continue; }
+      const receiveFromAccountId = acctMap.get(acctNo);
+      if (!receiveFromAccountId) { fail(`Receive-to account number "${acctNo}" not found`); continue; }
+
+      if (!AMOUNT_RE.test(amount)) { fail('expected_amount must be a positive decimal (max 4 dp)'); continue; }
+      if (!ccy || ccy.length > 10) { fail('currency_code is required (max 10 chars)'); continue; }
+
+      try {
+        await this.create(
+          {
+            legalEntityId,
+            counterpartyId,
+            receiveFromAccountId,
+            expectedAmount: amount,
+            expectedCurrencyCode: ccy,
+            purposeDescription: purpose || undefined,
+          },
+          actorId,
+        );
+        result.created++;
+      } catch (e: unknown) {
+        fail(e instanceof Error ? e.message : 'Unknown error');
+      }
+    }
+    return result;
   }
 
   async findAll(query: IncomingReceiptQueryDto): Promise<PaginatedResult<IncomingReceipt>> {
@@ -118,6 +192,9 @@ export class IncomingReceiptsService {
       }
       if (dto.purposeDescription !== undefined) {
         receipt.purposeDescription = dto.purposeDescription ?? null;
+      }
+      if (dto.receivedFromAccount !== undefined) {
+        receipt.receivedFromAccount = dto.receivedFromAccount ?? null;
       }
       receipt.updatedBy = actorId;
       await em.save(receipt);

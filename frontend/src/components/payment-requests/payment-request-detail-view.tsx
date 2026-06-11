@@ -98,6 +98,8 @@ export function treasurySteps(pr: PaymentRequest, isConfidential = false): TtSte
     let detail: string | null = null;
     if (s.order === 1 && pr.treasuryReferenceNumber) detail = `Reference: ${pr.treasuryReferenceNumber}`;
     if (rejected && pr.rejectionReason) detail = pr.rejectionReason;
+    // Request bounced back to the maker after a checker/authoriser rejection.
+    if (s.role === 'MAKER' && active && pr.rejectionReason) detail = `Returned: ${pr.rejectionReason}`;
     const roleName =
       s.role === 'MAKER' ? pr.treasuryMakerRole?.name
       : s.role === 'CHECKER' ? pr.treasuryCheckerRole?.name

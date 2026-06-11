@@ -65,13 +65,11 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
     queryFn: () => api.get<IncomingReceiptDocument[]>(`/incoming-receipts/${id}/documents`),
   });
 
+  // Bank accounts aren't linked to a legal entity, and the list endpoint only
+  // whitelists page/limit/search — so fetch all and filter active client-side.
   const bankAccounts = useQuery({
-    queryKey: ['bank-accounts', ir.data?.legalEntityId],
-    enabled: !!ir.data?.legalEntityId,
-    queryFn: () =>
-      api.get<Paginated<BankAccount>>(
-        `/bank-accounts?legalEntityId=${ir.data!.legalEntityId}&page=1&limit=100`,
-      ),
+    queryKey: ['bank-accounts-all'],
+    queryFn: () => api.get<Paginated<BankAccount>>('/bank-accounts?page=1&limit=200'),
   });
 
   const submitMutation = useMutation({
@@ -127,9 +125,7 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
 
   const r = ir.data;
   const documents = docs.data ?? [];
-  const accountOpts = (bankAccounts.data?.data ?? []).filter(
-    (a) => a.isActive && a.accountType === 'CURRENT',
-  );
+  const accountOpts = (bankAccounts.data?.data ?? []).filter((a) => a.isActive);
 
   const canSubmit = r.status === 'DRAFT';
   const canMarkReceived = r.status === 'AWAITING_RECEIPT';
@@ -203,7 +199,10 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
           <Field label="Counterparty" value={r.counterparty?.name ?? '—'} />
           <Field label="Legal Entity" value={r.legalEntity?.name ?? '—'} />
           <Field label="Expected Amount" value={`${r.expectedAmount} ${r.expectedCurrencyCode}`} />
-          <Field label="Receive-from Account" value={r.receiveFromAccount?.nickname ?? '—'} />
+          <Field label="Receive-to Account" value={r.receiveFromAccount?.bankNickname ?? r.receiveFromAccount?.bankName ?? '—'} />
+          {r.receivedFromAccount && (
+            <Field label="Received-from Account" value={r.receivedFromAccount} />
+          )}
           {r.purposeDescription && (
             <Field className="md:col-span-2" label="Purpose" value={r.purposeDescription} />
           )}
@@ -242,7 +241,7 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
           <h3 className="mb-4 text-sm font-semibold">Mark Credit Received (SOW §7.3)</h3>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
-              <Label htmlFor="rf-acct">Receive-from Account *</Label>
+              <Label htmlFor="rf-acct">Receive-to Account *</Label>
               <select
                 id="rf-acct"
                 className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
@@ -252,7 +251,7 @@ export default function IncomingReceiptDetailPage(): React.ReactElement {
                 <option value="">Select…</option>
                 {accountOpts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.nickname} — {a.accountNumber} ({a.currency?.code ?? '—'})
+                    {a.bankNickname ?? a.bankName ?? 'Account'} — {a.accountNumber} ({a.currency?.code ?? '—'})
                   </option>
                 ))}
               </select>

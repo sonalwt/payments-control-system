@@ -44,8 +44,10 @@ export type TtMode = 'ONLINE_TT' | 'OFFLINE_TT';
  * On final matrix approval the request is forwarded to the Treasury Team,
  * which executes and signs off the payment (maker → checker → authoriser).
  * Any non-terminal status may also transition to REJECTED, WITHDRAWN
- * (initiator), or CANCELLED (admin). A treasury reject sends the request
- * back to REJECTED; the maker then resubmits and reruns the matrix.
+ * (initiator), or CANCELLED (admin). A treasury checker/authoriser reject
+ * bounces the request back to TREASURY_MAKER for correction; a maker reject
+ * (or an authoriser reject on a confidential payment, which has no maker
+ * stage) sends it back to the initiator as REJECTED.
  *
  * The active approval matrix is snapshotted at submission (§1.5) so
  * in-flight requests are unaffected by later matrix edits.

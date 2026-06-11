@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { AlertTriangle, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { AccountType, Bank, BankAccount, Currency, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
@@ -375,8 +375,16 @@ export default function BankAccountsPage(): React.ReactElement {
           <TableBody>
             {isLoading ? (
               <TableRow><TableCell colSpan={12} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
-            ) : data && data.data.length > 0 ? data.data.map((a) => (
-              <TableRow key={a.id}>
+            ) : data && data.data.length > 0 ? data.data.map((a) => {
+              // Highlight accounts whose remaining balance is below the minimum
+              // (same rule as the dashboard "Urgent attention" alert).
+              const belowMin =
+                a.isActive &&
+                a.remainingBalance != null &&
+                a.minimumBalance != null &&
+                Number(a.remainingBalance) < Number(a.minimumBalance);
+              return (
+              <TableRow key={a.id} className={belowMin ? 'bg-red-50/60 hover:bg-red-50' : undefined}>
                 <TableCell>
                   <div className="font-medium">{a.bank?.name ?? a.bankName ?? '—'}</div>
                   <div className="text-xs text-muted-foreground">{a.bankNickname ?? '—'}</div>
@@ -395,7 +403,14 @@ export default function BankAccountsPage(): React.ReactElement {
                   {a.minimumBalance != null ? Number(a.minimumBalance).toLocaleString() : '—'}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {a.remainingBalance != null ? Number(a.remainingBalance).toLocaleString() : '—'}
+                  <span className={belowMin ? 'font-semibold text-red-700' : undefined}>
+                    {a.remainingBalance != null ? Number(a.remainingBalance).toLocaleString() : '—'}
+                  </span>
+                  {belowMin && (
+                    <span className="ml-2 inline-flex items-center gap-1 rounded-md bg-red-100 px-1.5 py-0.5 align-middle text-xs font-medium text-red-700">
+                      <AlertTriangle className="h-3 w-3" /> Below min
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {a.chargeBands && a.chargeBands.length > 0 ? (
@@ -436,7 +451,8 @@ export default function BankAccountsPage(): React.ReactElement {
                   <Button size="icon" variant="ghost" onClick={() => setDeleting(a)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
-            )) : (
+              );
+            }) : (
               <TableRow><TableCell colSpan={12} className="py-12 text-center text-muted-foreground">No bank accounts yet.</TableCell></TableRow>
             )}
           </TableBody>

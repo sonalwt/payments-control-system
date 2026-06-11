@@ -115,6 +115,22 @@ export class BankAccountsService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
+  /**
+   * Active group-own accounts whose remaining balance has fallen below their
+   * configured minimum balance — used for the admin dashboard alert.
+   */
+  async findBelowMinimum(): Promise<BankAccount[]> {
+    return this.repo
+      .createQueryBuilder('a')
+      .leftJoinAndSelect('a.bank', 'bank')
+      .leftJoinAndSelect('a.currency', 'currency')
+      .where('a.isCounterparty = false')
+      .andWhere('a.isActive = true')
+      .andWhere('a.remainingBalance < a.minimumBalance')
+      .orderBy('a.bankNickname', 'ASC')
+      .getMany();
+  }
+
   async findOne(id: string, isCounterparty = false): Promise<BankAccount> {
     const acc = await this.repo.findOne({
       where: { id, isCounterparty },

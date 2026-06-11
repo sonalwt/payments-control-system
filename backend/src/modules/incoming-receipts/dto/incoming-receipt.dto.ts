@@ -79,6 +79,12 @@ export class CreateIncomingReceiptDto {
   @IsString()
   purposeDescription?: string;
 
+  @ApiPropertyOptional({ description: 'Optional counterparty account the credit is received from' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 200)
+  receivedFromAccount?: string;
+
   @ApiPropertyOptional({ type: [AttachReceiptDocumentDto] })
   @IsOptional()
   @IsArray()

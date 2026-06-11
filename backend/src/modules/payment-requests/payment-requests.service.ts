@@ -46,6 +46,7 @@ import {
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
 import { S3Service } from '../uploads/s3.service';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class PaymentRequestsService {
@@ -57,6 +58,7 @@ export class PaymentRequestsService {
     private readonly beneficiaryService: BeneficiaryAccountsService,
     private readonly dataSource: DataSource,
     private readonly s3: S3Service,
+    private readonly mail: MailService,
   ) {}
 
   // ===================================================================
@@ -993,6 +995,14 @@ export class PaymentRequestsService {
   // Treasury Team execution (post final-approval)
   // ===================================================================
 
+  /** Format a number as a 2-decimal money string (no currency symbol). */
+  private money(n: number): string {
+    return n.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+
   /**
    * Treasury maker captures the bank reference + SWIFT/MT103 copy and forwards
    * the request to the treasury checker. The maker role depends on the TT mode
@@ -1025,6 +1035,8 @@ export class PaymentRequestsService {
       pr.swiftCopyUrl = dto.swiftCopyUrl;
       pr.treasuryMakerBy = actorId;
       pr.treasuryMakerAt = new Date();
+      // Clear any rejection note carried over from a checker/authoriser bounce.
+      pr.rejectionReason = null;
       pr.status = 'TREASURY_CHECKER';
       pr.updatedBy = actorId;
       await em.save(pr);
@@ -1067,7 +1079,7 @@ export class PaymentRequestsService {
     dto: TreasuryCompleteDto,
     actorId: string,
   ): Promise<PaymentRequest> {
-    return this.dataSource.transaction(async (em) => {
+    const { result, balanceUpdate } = await this.dataSource.transaction(async (em) => {
       const pr = await em.findOne(PaymentRequest, { where: { id } });
       if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
       if (pr.status !== 'TREASURY_AUTHORISER') {
@@ -1096,12 +1108,34 @@ export class PaymentRequestsService {
       }
 
       // §2.5 — debit the source account's remaining balance on completion
-      // (preserved from the retired mark-paid flow) when one is set.
+      // (preserved from the retired mark-paid flow) when one is set. Capture
+      // the before/after figures so we can notify the authoriser.
+      let balanceUpdate: {
+        bankLabel: string;
+        accountNumber: string;
+        currencyCode: string;
+        amount: number;
+        previousBalance: number;
+        newBalance: number;
+      } | null = null;
       if (pr.sourceAccountId) {
-        const acc = await em.findOne(BankAccount, { where: { id: pr.sourceAccountId } });
+        const acc = await em.findOne(BankAccount, {
+          where: { id: pr.sourceAccountId },
+          relations: { currency: true, bank: true },
+        });
         if (acc) {
-          acc.remainingBalance = Number(acc.remainingBalance) - Number(pr.amount);
+          const previousBalance = Number(acc.remainingBalance);
+          const newBalance = previousBalance - Number(pr.amount);
+          acc.remainingBalance = newBalance;
           await em.save(acc);
+          balanceUpdate = {
+            bankLabel: acc.bankNickname || acc.bank?.name || acc.bankName || 'Bank account',
+            accountNumber: acc.accountNumber,
+            currencyCode: acc.currency?.code ?? '',
+            amount: Number(pr.amount),
+            previousBalance,
+            newBalance,
+          };
         }
       }
 
@@ -1112,13 +1146,68 @@ export class PaymentRequestsService {
       pr.updatedBy = actorId;
       await em.save(pr);
 
-      return this.loadOne(pr.id, em.getRepository(PaymentRequest));
+      const result = await this.loadOne(pr.id, em.getRepository(PaymentRequest));
+      return { result, balanceUpdate };
     });
+
+    // Notify the authoriser of the completed payment and the resulting bank
+    // balance. Best-effort and post-commit: a mail failure must not roll back
+    // or fail the completion (sendNotification already swallows its errors).
+    if (balanceUpdate) {
+      await this.notifyAuthoriserOfCompletion(actorId, result, balanceUpdate);
+    }
+
+    return result;
+  }
+
+  /** Email the acting treasury authoriser a confirmation + new bank balance. */
+  private async notifyAuthoriserOfCompletion(
+    actorId: string,
+    pr: PaymentRequest,
+    balance: {
+      bankLabel: string;
+      accountNumber: string;
+      currencyCode: string;
+      amount: number;
+      previousBalance: number;
+      newBalance: number;
+    },
+  ): Promise<void> {
+    const authoriser = await this.repo.manager.findOne(User, {
+      where: { id: actorId },
+      select: ['id', 'email', 'fullName'],
+    });
+    if (!authoriser?.email) return;
+
+    const ccy = balance.currencyCode ? `${balance.currencyCode} ` : '';
+    const fmt = (n: number): string =>
+      `${ccy}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const subject = `Payment ${pr.requestNumber} completed — ${fmt(balance.amount)} debited`;
+    const text =
+      `Hello ${authoriser.fullName},\n\n` +
+      `You completed payment request ${pr.requestNumber}.\n\n` +
+      `${fmt(balance.amount)} was debited from ${balance.bankLabel} (${balance.accountNumber}).\n` +
+      `New available balance: ${fmt(balance.newBalance)} (was ${fmt(balance.previousBalance)}).\n`;
+    const html =
+      `<p>Hello ${authoriser.fullName},</p>` +
+      `<p>You completed payment request <strong>${pr.requestNumber}</strong>.</p>` +
+      `<p><strong>${fmt(balance.amount)}</strong> was debited from ${balance.bankLabel} ` +
+      `(${balance.accountNumber}).</p>` +
+      `<p>New available balance: <strong>${fmt(balance.newBalance)}</strong> ` +
+      `(was ${fmt(balance.previousBalance)}).</p>`;
+    await this.mail.sendNotification(authoriser.email, subject, text, html);
   }
 
   /**
-   * Any treasury stage may reject — the request returns to the initiator as
-   * REJECTED. The maker then resubmits, which reruns the approval matrix.
+   * Treasury rejection routing:
+   * - The treasury MAKER rejecting sends the request back to the request
+   *   initiator as REJECTED (the maker resubmits, rerunning the matrix).
+   * - The treasury CHECKER or AUTHORISER rejecting bounces the request back
+   *   to the treasury MAKER (TREASURY_MAKER) for correction — not all the way
+   *   back to the initiator.
+   * - Confidential payments have no maker stage (they go straight to the
+   *   authoriser), so an authoriser rejection there returns to the initiator
+   *   as REJECTED.
    */
   async treasuryReject(
     id: string,
@@ -1159,8 +1248,34 @@ export class PaymentRequestsService {
         await this.assertHasRole(em, actorId, stageRole);
       }
 
-      pr.status = 'REJECTED';
+      // A checker/authoriser rejection bounces the request back to the
+      // treasury maker for correction; a maker rejection (or an authoriser
+      // rejection on a confidential payment, which has no maker) returns the
+      // request to the initiator as REJECTED.
+      let bounceToMaker = pr.status === 'TREASURY_CHECKER';
+      if (pr.status === 'TREASURY_AUTHORISER') {
+        const paymentType = await em.findOne(PaymentType, {
+          where: { id: pr.paymentTypeId },
+          select: ['id', 'isConfidential'],
+        });
+        bounceToMaker = !paymentType?.isConfidential;
+      }
+
       pr.rejectionReason = dto.comments;
+      if (bounceToMaker) {
+        // Reopen the maker stage and clear the downstream execution stamps so
+        // the timeline reflects an awaiting-resubmit maker step. The maker's
+        // captured reference/SWIFT are kept as a prefill for the resubmit.
+        pr.status = 'TREASURY_MAKER';
+        pr.treasuryMakerBy = null;
+        pr.treasuryMakerAt = null;
+        pr.treasuryCheckerBy = null;
+        pr.treasuryCheckerAt = null;
+        pr.treasuryAuthoriserBy = null;
+        pr.treasuryAuthoriserAt = null;
+      } else {
+        pr.status = 'REJECTED';
+      }
       pr.updatedBy = actorId;
       await em.save(pr);
 

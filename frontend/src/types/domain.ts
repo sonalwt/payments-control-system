@@ -674,6 +674,7 @@ export interface IncomingReceipt extends AuditFields {
   expectedAmount: string;
   expectedCurrencyCode: string;
   purposeDescription?: string | null;
+  receivedFromAccount?: string | null;
   status: IncomingReceiptStatus;
   submittedAt?: string | null;
   receivedAt?: string | null;

@@ -99,19 +99,19 @@ export default function StatementUploadsPage(): React.ReactElement {
     setFormNotes('');
   }
 
-  // Legal entities for filter
+  // Legal entities for filter. The list endpoint only whitelists page/limit/
+  // search query params (forbidNonWhitelisted), so we filter active ones
+  // client-side rather than passing an unsupported ?isActive param (which 400s).
   const { data: entitiesData } = useQuery({
     queryKey: ['legal-entities-all'],
-    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?isActive=true&limit=100'),
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=100'),
   });
 
-  // Bank accounts for filter + form dropdown
+  // Bank accounts for the form dropdown. Same constraint — pass only
+  // page/limit and filter active accounts client-side.
   const { data: accountsData } = useQuery({
-    queryKey: ['bank-accounts-for-statements', filterEntityId],
-    queryFn: () =>
-      api.get<Paginated<BankAccount>>(
-        `/bank-accounts?isActive=true&limit=200${filterEntityId ? `&legalEntityId=${filterEntityId}` : ''}`,
-      ),
+    queryKey: ['bank-accounts-for-statements'],
+    queryFn: () => api.get<Paginated<BankAccount>>('/bank-accounts?page=1&limit=200'),
   });
 
   // Statement uploads list
@@ -151,8 +151,8 @@ export default function StatementUploadsPage(): React.ReactElement {
     onError: (e: Error) => notify.error('Delete failed', e),
   });
 
-  const entities = entitiesData?.data ?? [];
-  const accounts = accountsData?.data ?? [];
+  const entities = (entitiesData?.data ?? []).filter((e) => e.isActive);
+  const accounts = (accountsData?.data ?? []).filter((a) => a.isActive);
   const uploads = uploadsData?.data ?? [];
   const totalPages = uploadsData?.totalPages ?? 1;
 
