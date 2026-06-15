@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatDate } from '@/lib/datetime';
 import type { Group, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -149,7 +148,7 @@ export default function GroupsPage(): React.ReactElement {
                     {g.description ?? '—'}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {formatDate(g.createdAt)}
+                    {new Date(g.createdAt).toLocaleDateString()}
                   </TableCell>
                   <TableCell className="text-right">
                     <Button size="icon" variant="ghost" onClick={() => setEditing(g)}>

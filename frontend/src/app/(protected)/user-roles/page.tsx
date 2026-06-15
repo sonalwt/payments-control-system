@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -11,10 +10,8 @@ import { api } from '@/lib/api';
 import type { Paginated, Role, User, UserRole } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -31,19 +28,9 @@ const schema = z.object({
 });
 type FormData = z.infer<typeof schema>;
 
-const roleSchema = z.object({
-  code: z.string().min(2).max(50).regex(/^[A-Z][A-Z0-9_]*$/, 'UPPER_SNAKE_CASE'),
-  name: z.string().min(2).max(100),
-  description: z.string().optional().or(z.literal('')),
-});
-type RoleFormData = z.infer<typeof roleSchema>;
-
 export default function UserRolesPage(): React.ReactElement {
-  const searchParams = useSearchParams();
-  const userIdParam = searchParams.get('userId') ?? '';
-  const [selectedUserId, setSelectedUserId] = useState<string>(userIdParam);
+  const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [assignOpen, setAssignOpen] = useState(false);
-  const [createRoleOpen, setCreateRoleOpen] = useState(false);
   const [deleting, setDeleting] = useState<UserRole | null>(null);
   const notify = useNotify();
   const qc = useQueryClient();
@@ -58,16 +45,12 @@ export default function UserRolesPage(): React.ReactElement {
     queryFn: () => api.get<Role[]>('/roles'),
   });
 
-  // Prefer the user named in the URL (?userId=…), e.g. when arriving from the
-  // "Manage roles" link; otherwise auto-select the first user once loaded.
+  // Auto-select first user once loaded
   useEffect(() => {
-    if (!users || users.data.length === 0) return;
-    if (userIdParam && users.data.some((u) => u.id === userIdParam)) {
-      setSelectedUserId(userIdParam);
-    } else if (!selectedUserId) {
+    if (!selectedUserId && users && users.data.length > 0) {
       setSelectedUserId(users.data[0]!.id);
     }
-  }, [users, selectedUserId, userIdParam]);
+  }, [users, selectedUserId]);
 
   const { data: assignments, isLoading } = useQuery({
     queryKey: ['user-roles', selectedUserId],
@@ -116,32 +99,6 @@ export default function UserRolesPage(): React.ReactElement {
     onError: (err: Error) => notify.error('Failed to revoke role', err),
   });
 
-  const {
-    register: registerRole,
-    handleSubmit: handleRoleSubmit,
-    formState: { errors: roleErrors },
-    reset: resetRoleForm,
-  } = useForm<RoleFormData>({
-    resolver: zodResolver(roleSchema),
-    defaultValues: { code: '', name: '', description: '' },
-  });
-
-  const createRoleMut = useMutation({
-    mutationFn: (data: RoleFormData) =>
-      api.post<Role>('/roles', {
-        code: data.code,
-        name: data.name,
-        description: data.description || undefined,
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['roles-all'] });
-      setCreateRoleOpen(false);
-      resetRoleForm({ code: '', name: '', description: '' });
-      notify.success('Role created');
-    },
-    onError: (err: Error) => notify.error('Failed to create role', err),
-  });
-
   const selectedUser = (users?.data ?? []).find((u) => u.id === selectedUserId);
 
   return (
@@ -149,39 +106,6 @@ export default function UserRolesPage(): React.ReactElement {
       <PageHeader
         title="Role Assignment"
         description="Assign or revoke roles for each user"
-        actions={
-          <Dialog open={createRoleOpen} onOpenChange={setCreateRoleOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> New role</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader><DialogTitle>Create role</DialogTitle></DialogHeader>
-              <form onSubmit={handleRoleSubmit((d) => createRoleMut.mutate(d))} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="newRoleCode">Code <span className="text-destructive">*</span></Label>
-                    <Input id="newRoleCode" placeholder="CUSTOM_ROLE" {...registerRole('code')} />
-                    {roleErrors.code && <p className="text-xs text-destructive">{roleErrors.code.message}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="newRoleName">Name <span className="text-destructive">*</span></Label>
-                    <Input id="newRoleName" placeholder="Custom Role" {...registerRole('name')} />
-                    {roleErrors.name && <p className="text-xs text-destructive">{roleErrors.name.message}</p>}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="newRoleDescription">Description</Label>
-                  <Textarea id="newRoleDescription" rows={2} {...registerRole('description')} />
-                </div>
-                <DialogFooter>
-                  <Button type="submit" disabled={createRoleMut.isPending}>
-                    {createRoleMut.isPending ? 'Creating…' : 'Create role'}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
-        }
       />
 
       {/* User picker */}

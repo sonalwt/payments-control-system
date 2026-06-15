@@ -85,19 +85,6 @@ CREATE INDEX idx_legal_entities_group_id   ON legal_entities(group_id);
 CREATE INDEX idx_legal_entities_currency   ON legal_entities(base_currency_id);
 CREATE INDEX idx_legal_entities_deleted_at ON legal_entities(deleted_at) WHERE deleted_at IS NULL;
 
--- Seed a default group + legal entity so system masters that require a
--- legal entity (e.g. payment types) can be bootstrapped from this file.
-INSERT INTO groups(code, name, description) VALUES
-    ('DEFAULT_GROUP', 'Default Group', 'Bootstrap group for system seeds.')
-ON CONFLICT (code) DO NOTHING;
-
-INSERT INTO legal_entities(group_id, name, code, registered_country, base_currency_id)
-SELECT g.id, 'Default Legal Entity', 'DEFAULT_LE', 'AE', c.id
-  FROM groups g
-  CROSS JOIN currencies c
- WHERE g.code = 'DEFAULT_GROUP' AND c.code = 'AED'
-ON CONFLICT (group_id, code) DO NOTHING;
-
 CREATE TABLE countries (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     legal_entity_id UUID NOT NULL REFERENCES legal_entities(id) ON DELETE RESTRICT,
@@ -281,9 +268,7 @@ CREATE TABLE payment_types (
     mobile_initiation_only  BOOLEAN NOT NULL DEFAULT FALSE,
     allows_cross_currency   BOOLEAN NOT NULL DEFAULT TRUE,
     approval_matrix_ref     UUID,
-    -- Legal entity this payment type belongs to (required). A request's
-    -- legal entity is derived from its payment type.
-    legal_entity_id         UUID NOT NULL REFERENCES legal_entities(id) ON DELETE RESTRICT,
+    document_policy         JSONB NOT NULL DEFAULT '[]',
     field_config            JSONB NOT NULL DEFAULT '[]',
     is_system               BOOLEAN NOT NULL DEFAULT FALSE,
     is_active               BOOLEAN NOT NULL DEFAULT TRUE,
@@ -302,20 +287,15 @@ CREATE TABLE payment_types (
 CREATE INDEX idx_payment_types_code       ON payment_types(code);
 CREATE INDEX idx_payment_types_active     ON payment_types(is_active)   WHERE deleted_at IS NULL;
 CREATE INDEX idx_payment_types_deleted_at ON payment_types(deleted_at)  WHERE deleted_at IS NULL;
-CREATE INDEX idx_payment_types_legal_entity_id ON payment_types(legal_entity_id) WHERE deleted_at IS NULL;
 CREATE TRIGGER trg_payment_types_touch BEFORE UPDATE ON payment_types FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
-INSERT INTO payment_types(code, name, description, direction, requires_approval_chain, is_batch_based, is_confidential, mobile_initiation_only, allows_cross_currency, field_config, is_system, legal_entity_id)
-SELECT v.code, v.name, v.description, v.direction, v.requires_approval_chain, v.is_batch_based, v.is_confidential, v.mobile_initiation_only, v.allows_cross_currency, v.field_config::jsonb, v.is_system, le.id
-FROM (VALUES
-    ('VENDOR_PAYMENT',  'Vendor Payment',               'Outgoing supplier-invoice settlement.',             'OUTGOING', TRUE,  FALSE, FALSE, FALSE, TRUE,  '[]', TRUE),
-    ('PAYROLL',         'Payroll',                      'Bulk salary payments uploaded by HR.',              'OUTGOING', TRUE,  TRUE,  FALSE, FALSE, FALSE, '[]', TRUE),
-    ('REIMBURSEMENT',   'Reimbursement',                'Employee out-of-pocket claim.',                     'OUTGOING', TRUE,  FALSE, FALSE, FALSE, TRUE,  '[]', TRUE),
-    ('FNF',             'Full-and-Final Settlement',    'End-of-service settlement raised by HR.',           'OUTGOING', TRUE,  FALSE, FALSE, FALSE, TRUE,  '[]', TRUE),
-    ('INCOMING_RECEIPT','Incoming Receipt',             'Inbound amount expected from a counterparty.',      'INCOMING', FALSE, FALSE, FALSE, FALSE, FALSE, '[]', TRUE),
-    ('CHAIRMAN_PAYMENT','Chairman Payment',             'Confidential chairman-initiated payment.',          'OUTGOING', FALSE, FALSE, TRUE,  TRUE,  TRUE,  '[]', TRUE)
-) AS v(code, name, description, direction, requires_approval_chain, is_batch_based, is_confidential, mobile_initiation_only, allows_cross_currency, field_config, is_system)
-CROSS JOIN (SELECT id FROM legal_entities WHERE code = 'DEFAULT_LE' LIMIT 1) le
+INSERT INTO payment_types(code, name, description, direction, requires_approval_chain, is_batch_based, is_confidential, mobile_initiation_only, allows_cross_currency, document_policy, field_config, is_system) VALUES
+    ('VENDOR_PAYMENT',  'Vendor Payment',               'Outgoing supplier-invoice settlement.',             'OUTGOING', TRUE,  FALSE, FALSE, FALSE, TRUE,  '[]', '[]', TRUE),
+    ('PAYROLL',         'Payroll',                      'Bulk salary payments uploaded by HR.',              'OUTGOING', TRUE,  TRUE,  FALSE, FALSE, FALSE, '[]', '[]', TRUE),
+    ('REIMBURSEMENT',   'Reimbursement',                'Employee out-of-pocket claim.',                     'OUTGOING', TRUE,  FALSE, FALSE, FALSE, TRUE,  '[]', '[]', TRUE),
+    ('FNF',             'Full-and-Final Settlement',    'End-of-service settlement raised by HR.',           'OUTGOING', TRUE,  FALSE, FALSE, FALSE, TRUE,  '[]', '[]', TRUE),
+    ('INCOMING_RECEIPT','Incoming Receipt',             'Inbound amount expected from a counterparty.',      'INCOMING', FALSE, FALSE, FALSE, FALSE, FALSE, '[]', '[]', TRUE),
+    ('CHAIRMAN_PAYMENT','Chairman Payment',             'Confidential chairman-initiated payment.',          'OUTGOING', FALSE, FALSE, TRUE,  TRUE,  TRUE,  '[]', '[]', TRUE)
 ON CONFLICT DO NOTHING;
 
 -- =====================================================================
@@ -396,20 +376,24 @@ CREATE TABLE approval_matrices (
     name              VARCHAR(150) NOT NULL,
     description       TEXT,
     payment_type_code VARCHAR(50)  NOT NULL,
+    version           INT          NOT NULL,
+    status            VARCHAR(20)  NOT NULL DEFAULT 'DRAFT',
     effective_from    DATE         NOT NULL,
     effective_to      DATE,
+    published_at      TIMESTAMPTZ,
+    published_by      UUID,
     is_active         BOOLEAN      NOT NULL DEFAULT TRUE,
-    tt_mode           VARCHAR(20)  NOT NULL DEFAULT 'ONLINE_TT',
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     deleted_at        TIMESTAMPTZ,
     created_by        UUID,
     updated_by        UUID,
+    CONSTRAINT chk_approval_matrix_status    CHECK (status IN ('DRAFT','PUBLISHED','SUPERSEDED')),
     CONSTRAINT chk_approval_matrix_effective CHECK (effective_to IS NULL OR effective_to >= effective_from),
-    CONSTRAINT chk_approval_matrix_tt_mode   CHECK (tt_mode IN ('ONLINE_TT','OFFLINE_TT')),
-    CONSTRAINT uq_approval_matrix_pt_name UNIQUE (payment_type_code, name)
+    CONSTRAINT uq_approval_matrix_pt_version UNIQUE (payment_type_code, version)
 );
 CREATE INDEX idx_am_payment_type ON approval_matrices(payment_type_code) WHERE deleted_at IS NULL;
+CREATE INDEX idx_am_status       ON approval_matrices(status)            WHERE deleted_at IS NULL;
 CREATE INDEX idx_am_effective    ON approval_matrices(effective_from)    WHERE deleted_at IS NULL;
 CREATE INDEX idx_am_deleted_at   ON approval_matrices(deleted_at)        WHERE deleted_at IS NULL;
 
@@ -608,6 +592,7 @@ CREATE TABLE payment_requests (
     id                       UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     request_number           VARCHAR(30) NOT NULL UNIQUE,
     payment_type_code        VARCHAR(30) NOT NULL,
+    legal_entity_id          UUID        NOT NULL REFERENCES legal_entities(id)  ON DELETE RESTRICT,
     counterparty_id          UUID        REFERENCES counterparties(id)            ON DELETE RESTRICT,
     employee_id              UUID        REFERENCES employees(id)                 ON DELETE RESTRICT,
     currency_code            CHAR(3)     NOT NULL,
@@ -628,18 +613,8 @@ CREATE TABLE payment_requests (
     approved_at              TIMESTAMPTZ,
     paid_at                  TIMESTAMPTZ,
     matrix_id                UUID,
+    matrix_version           INTEGER,
     current_step_order       INTEGER,
-    -- Treasury Team execution (post final-approval)
-    tt_mode                   VARCHAR(20),
-    treasury_reference_number VARCHAR(100),
-    swift_copy_url            VARCHAR(500),
-    treasury_maker_by         UUID,
-    treasury_maker_at         TIMESTAMPTZ,
-    treasury_checker_by       UUID,
-    treasury_checker_at       TIMESTAMPTZ,
-    treasury_authoriser_by    UUID,
-    treasury_authoriser_at    TIMESTAMPTZ,
-    completed_at              TIMESTAMPTZ,
     rejection_reason         TEXT,
     cancellation_reason      TEXT,
     maker_notes              TEXT,
@@ -647,8 +622,8 @@ CREATE TABLE payment_requests (
     sanction_warning         BOOLEAN     NOT NULL DEFAULT FALSE,
     -- §6.5
     sanction_override_reason TEXT,
-    -- §6 beneficiary account (FK added after beneficiary_accounts is created)
-    beneficiary_account_id   UUID,
+    -- §6 beneficiary account
+    beneficiary_account_id   UUID        REFERENCES beneficiary_accounts(id)     ON DELETE RESTRICT,
     counterparty_snapshot    JSONB,
     beneficiary_snapshot     JSONB,
     -- §9 chairman payment
@@ -664,8 +639,8 @@ CREATE TABLE payment_requests (
     created_by               UUID,
     updated_by               UUID,
     CONSTRAINT chk_pr_status CHECK (status IN (
-        'DRAFT','PENDING_APPROVAL',
-        'TREASURY_MAKER','TREASURY_CHECKER','TREASURY_AUTHORISER','COMPLETED',
+        'DRAFT','PENDING_APPROVAL','APPROVED',
+        'AWAITING_PAYMENT_CONFIRMATION','PAID',
         'REJECTED','WITHDRAWN','CANCELLED',
         'AWAITING_MAKER_PREP','AWAITING_CHECKER_REVIEW','AWAITING_HEAD_APPROVAL'
     )),
@@ -674,6 +649,7 @@ CREATE TABLE payment_requests (
 );
 CREATE INDEX idx_payment_requests_deleted ON payment_requests(deleted_at)        WHERE deleted_at IS NULL;
 CREATE INDEX idx_payment_requests_status  ON payment_requests(status)            WHERE deleted_at IS NULL;
+CREATE INDEX idx_payment_requests_entity  ON payment_requests(legal_entity_id)   WHERE deleted_at IS NULL;
 CREATE INDEX idx_payment_requests_type    ON payment_requests(payment_type_code) WHERE deleted_at IS NULL;
 CREATE INDEX idx_payment_requests_cp      ON payment_requests(counterparty_id)   WHERE counterparty_id IS NOT NULL;
 CREATE INDEX idx_payment_requests_emp     ON payment_requests(employee_id)       WHERE employee_id IS NOT NULL;
@@ -763,8 +739,7 @@ CREATE TABLE payroll_batch_items (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     batch_id               UUID NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
     employee_id            UUID NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
-    -- FK added after beneficiary_accounts is created
-    beneficiary_account_id UUID,
+    beneficiary_account_id UUID REFERENCES beneficiary_accounts(id),
     gross_amount_minor     BIGINT NOT NULL,
     net_amount_minor       BIGINT NOT NULL,
     deductions_minor       BIGINT NOT NULL DEFAULT 0,
@@ -864,16 +839,10 @@ DO $$ BEGIN
         FOREIGN KEY (employee_bank_account_id) REFERENCES beneficiary_accounts(id) ON DELETE RESTRICT;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Also add back-reference from payment_requests (column defined inline above)
--- now that beneficiary_accounts exists.
+-- Also add back-reference from payment_requests (already defined inline above)
+-- but we need to add the FK now that beneficiary_accounts exists
 DO $$ BEGIN
     ALTER TABLE payment_requests ADD CONSTRAINT fk_pr_beneficiary_account
-        FOREIGN KEY (beneficiary_account_id) REFERENCES beneficiary_accounts(id) ON DELETE RESTRICT;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Same for payroll_batch_items (column defined inline above).
-DO $$ BEGIN
-    ALTER TABLE payroll_batch_items ADD CONSTRAINT fk_pbi_beneficiary_account
         FOREIGN KEY (beneficiary_account_id) REFERENCES beneficiary_accounts(id) ON DELETE RESTRICT;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 

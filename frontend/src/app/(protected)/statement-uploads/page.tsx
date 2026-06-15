@@ -4,10 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Plus, Trash2, UploadCloud } from 'lucide-react';
-import { api } from '@/lib/api';
-import { formatDateMedium } from '@/lib/datetime';
+import { api, resolveFileUrl } from '@/lib/api';
 import type { BankAccount, LegalEntity, Paginated, StatementUpload } from '@/types/domain';
-import { FileActions } from '@/components/shared/file-actions';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,7 +34,8 @@ import { useNotify } from '@/hooks/use-notify';
 // -----------------------------------------------------------------------
 
 function fmtDate(d: string | undefined | null): string {
-  return formatDateMedium(d);
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
 function fmtBalance(v: string | number | undefined | null): string {
@@ -99,19 +98,19 @@ export default function StatementUploadsPage(): React.ReactElement {
     setFormNotes('');
   }
 
-  // Legal entities for filter. The list endpoint only whitelists page/limit/
-  // search query params (forbidNonWhitelisted), so we filter active ones
-  // client-side rather than passing an unsupported ?isActive param (which 400s).
+  // Legal entities for filter
   const { data: entitiesData } = useQuery({
     queryKey: ['legal-entities-all'],
-    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=100'),
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?isActive=true&limit=100'),
   });
 
-  // Bank accounts for the form dropdown. Same constraint — pass only
-  // page/limit and filter active accounts client-side.
+  // Bank accounts for filter + form dropdown
   const { data: accountsData } = useQuery({
-    queryKey: ['bank-accounts-for-statements'],
-    queryFn: () => api.get<Paginated<BankAccount>>('/bank-accounts?page=1&limit=200'),
+    queryKey: ['bank-accounts-for-statements', filterEntityId],
+    queryFn: () =>
+      api.get<Paginated<BankAccount>>(
+        `/bank-accounts?isActive=true&limit=200${filterEntityId ? `&legalEntityId=${filterEntityId}` : ''}`,
+      ),
   });
 
   // Statement uploads list
@@ -151,8 +150,8 @@ export default function StatementUploadsPage(): React.ReactElement {
     onError: (e: Error) => notify.error('Delete failed', e),
   });
 
-  const entities = (entitiesData?.data ?? []).filter((e) => e.isActive);
-  const accounts = (accountsData?.data ?? []).filter((a) => a.isActive);
+  const entities = entitiesData?.data ?? [];
+  const accounts = accountsData?.data ?? [];
   const uploads = uploadsData?.data ?? [];
   const totalPages = uploadsData?.totalPages ?? 1;
 
@@ -435,7 +434,14 @@ export default function StatementUploadsPage(): React.ReactElement {
                   </TableCell>
                   <TableCell>
                     {u.fileUrl ? (
-                      <FileActions fileUrl={u.fileUrl} />
+                      <a
+                        href={resolveFileUrl(u.fileUrl)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Open
+                      </a>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}

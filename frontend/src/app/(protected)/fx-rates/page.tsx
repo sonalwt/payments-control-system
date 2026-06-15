@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Edit3, RefreshCw, Search } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatDateTime } from '@/lib/datetime';
 import type { FxRate, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -207,7 +206,7 @@ export default function FxRatesPage(): React.ReactElement {
                       </p>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {formatDateTime(r.fetchedAt)}
+                      {new Date(r.fetchedAt).toLocaleString()}
                     </TableCell>
                   </TableRow>
                 );
