@@ -1,11 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { AlertTriangle, ArrowLeft, FileText, ShieldAlert } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, ArrowLeft, Download, Eye, FileText, ShieldAlert, X } from 'lucide-react';
 import { formatDateTime } from '@/lib/datetime';
-import type { PresignFn } from '@/lib/api';
+import { downloadFile, resolveViewableUrl, type PresignFn } from '@/lib/api';
 import type { PaymentRequest, PaymentRequestDocument } from '@/types/domain';
-import { FileActions } from '@/components/shared/file-actions';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +21,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
  *   - `documentsFooter` — add-document UI (admin)
  * The employee portal passes none of these → a read-only view.
  */
+
+/** Minimal shape a file needs to be shown in the inline preview block. */
+type PreviewTarget = {
+  id: string;
+  fileUrl: string;
+  fileName?: string | null;
+  documentLabel?: string | null;
+};
 
 export const STATUS_STYLES: Record<string, string> = {
   DRAFT: 'bg-muted text-muted-foreground ring-border',
@@ -134,6 +142,35 @@ export function PaymentRequestDetailView({
   presign,
 }: Props): React.ReactElement {
   const isConfidential = pr.paymentType?.isConfidential ?? false;
+
+  // Inline document preview — open the selected document in a block on this
+  // page instead of a new tab. Clicking the active document again toggles the
+  // preview closed. Works for both attached documents and the SWIFT/MT103 copy.
+  const [previewDoc, setPreviewDoc] = useState<PreviewTarget | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(false);
+
+  const openPreview = async (d: PreviewTarget): Promise<void> => {
+    if (previewDoc?.id === d.id) {
+      setPreviewDoc(null);
+      setPreviewUrl(null);
+      return;
+    }
+    setPreviewDoc(d);
+    setPreviewUrl(null);
+    setPreviewError(false);
+    setPreviewLoading(true);
+    try {
+      const url = await resolveViewableUrl(d.fileUrl, presign);
+      setPreviewUrl(url);
+    } catch {
+      setPreviewError(true);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="mb-4 flex items-center gap-2">
@@ -216,8 +253,34 @@ export function PaymentRequestDetailView({
                   <li key={d.id} className="flex items-center gap-2 px-3 py-2 text-sm">
                     <FileText className="h-4 w-4 text-muted-foreground" />
                     <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.documentCode}</code>
-                    <span>{d.documentLabel ?? d.fileName}</span>
-                    <FileActions className="ml-auto" fileUrl={d.fileUrl} fileName={d.fileName} presign={presign} />
+                    <button
+                      type="button"
+                      onClick={() => { void openPreview(d); }}
+                      title="View in page"
+                      className={`truncate text-left hover:underline ${previewDoc?.id === d.id ? 'font-medium text-foreground' : ''}`}
+                    >
+                      {d.documentLabel ?? d.fileName}
+                    </button>
+                    <span className="ml-auto inline-flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { void openPreview(d); }}
+                        title="View in page"
+                        aria-label="View in page"
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { void downloadFile(d.fileUrl, d.fileName, presign); }}
+                        title="Download"
+                        aria-label="Download"
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                    </span>
                     {documentActions?.(d)}
                   </li>
                 ))}
@@ -226,6 +289,53 @@ export function PaymentRequestDetailView({
             {documentsFooter}
           </CardContent>
         </Card>
+
+        {/* Inline document preview (§4.2 / §10.2 — documents accessible in-app) */}
+        {previewDoc && (
+          <Card className="order-2 col-span-3">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <FileText className="h-4 w-4 text-muted-foreground" />
+                <span className="truncate">{previewDoc.documentLabel ?? previewDoc.fileName}</span>
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { void downloadFile(previewDoc.fileUrl, previewDoc.fileName ?? undefined, presign); }}
+                >
+                  <Download className="mr-1 h-4 w-4" /> Download
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => { setPreviewDoc(null); setPreviewUrl(null); }}
+                  aria-label="Close preview"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {previewLoading ? (
+                <div className="flex h-[480px] items-center justify-center text-sm text-muted-foreground">
+                  Loading preview…
+                </div>
+              ) : previewError || !previewUrl ? (
+                <div className="flex h-[480px] flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <AlertTriangle className="h-5 w-5" />
+                  Could not load preview. Use the download action above.
+                </div>
+              ) : (
+                <iframe
+                  src={previewUrl}
+                  title={previewDoc.fileName ?? previewDoc.documentLabel ?? 'document'}
+                  className="h-[640px] w-full rounded-md border bg-muted"
+                />
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Approval chain */}
         <Card className="order-3 col-span-3">
@@ -321,9 +431,26 @@ export function PaymentRequestDetailView({
                         <div className="mt-1 text-xs whitespace-pre-wrap">{step.detail}</div>
                       )}
                       {step.order === 1 && pr.swiftCopyUrl && (
-                        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                           <span>SWIFT / MT103 copy</span>
-                          <FileActions fileUrl={pr.swiftCopyUrl} fileName="swift-mt103" presign={presign} />
+                          <button
+                            type="button"
+                            onClick={() => { void openPreview({ id: 'swift-mt103', fileUrl: pr.swiftCopyUrl!, fileName: 'swift-mt103', documentLabel: 'SWIFT / MT103 copy' }); }}
+                            title="View in page"
+                            aria-label="View in page"
+                            className="hover:text-foreground"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { void downloadFile(pr.swiftCopyUrl!, 'swift-mt103', presign); }}
+                            title="Download"
+                            aria-label="Download"
+                            className="hover:text-foreground"
+                          >
+                            <Download className="h-4 w-4" />
+                          </button>
                         </div>
                       )}
                     </li>

@@ -281,9 +281,27 @@ export const presignFileUrl: PresignFn = async (fileUrl, opts) => {
 };
 
 /**
+ * Resolve a stored file reference to a URL the browser can open directly
+ * (iframe src, new tab, download). Local files (served by the backend at
+ * `/uploads/...`) are used as-is; private S3 objects need a short-lived
+ * presigned URL. This lets file viewing work in both dev (local disk) and
+ * production (S3) without the caller knowing where the file lives.
+ */
+export async function resolveViewableUrl(
+  fileUrl: string,
+  presign: PresignFn = presignFileUrl,
+  opts?: { download?: boolean; fileName?: string },
+): Promise<string> {
+  if (fileUrl.startsWith('/uploads/') || fileUrl.startsWith(BACKEND_ORIGIN)) {
+    return resolveFileUrl(fileUrl);
+  }
+  return presign(fileUrl, opts);
+}
+
+/**
  * Open a stored file inline in a new tab. The blank tab is opened synchronously
  * (inside the click gesture) to avoid popup blockers, then redirected to the
- * presigned URL once it resolves.
+ * resolved URL once it resolves.
  */
 export async function viewFile(fileUrl: string, presign: PresignFn = presignFileUrl): Promise<void> {
   // Open the tab synchronously (inside the click gesture) so it isn't blocked.
@@ -292,7 +310,7 @@ export async function viewFile(fileUrl: string, presign: PresignFn = presignFile
   const w = window.open('', '_blank');
   if (w) { try { w.opener = null; } catch { /* ignore */ } }
   try {
-    const url = await presign(fileUrl);
+    const url = await resolveViewableUrl(fileUrl, presign);
     if (w) w.location.href = url;
     else window.open(url, '_blank', 'noopener');
   } catch {
@@ -310,7 +328,7 @@ export async function downloadFile(
   fileName?: string,
   presign: PresignFn = presignFileUrl,
 ): Promise<void> {
-  const url = await presign(fileUrl, { download: true, fileName });
+  const url = await resolveViewableUrl(fileUrl, presign, { download: true, fileName });
   const a = document.createElement('a');
   a.href = url;
   if (fileName) a.download = fileName;
