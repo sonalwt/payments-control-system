@@ -6,7 +6,6 @@ import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, FileSearch, ShieldAlert } from 'lucide-react';
 import { api, friendlyError } from '@/lib/api';
-import { formatDateMedium } from '@/lib/datetime';
 import type {
   Paginated,
   ReconciliationException,
@@ -48,7 +47,8 @@ const TYPE_LABEL: Record<ReconciliationExceptionType, string> = {
 };
 
 function fmtDate(d: string | null | undefined): string {
-  return formatDateMedium(d);
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
 function fmtAmount(v: string | null | undefined, ccy?: string): string {

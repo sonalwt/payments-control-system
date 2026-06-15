@@ -9,11 +9,10 @@ import * as bcrypt from 'bcrypt';
 import { User } from './user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { UsersQueryDto } from './dto/users-query.dto';
 import {
   PaginatedResult,
+  PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
-import { ImportResult, parseImportFile } from '../../common/helpers/parse-import-file';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -43,8 +42,8 @@ export class UsersService {
     return saved;
   }
 
-  async findAll(query: UsersQueryDto): Promise<PaginatedResult<User>> {
-    const { page = 1, limit = 20, search, roleCode } = query;
+  async findAll(query: PaginationQueryDto): Promise<PaginatedResult<User>> {
+    const { page = 1, limit = 20, search } = query;
     const qb = this.repo
       .createQueryBuilder('u')
       .orderBy('u.fullName', 'ASC')
@@ -53,30 +52,20 @@ export class UsersService {
     if (search) {
       qb.andWhere('(u.fullName ILIKE :s OR u.email ILIKE :s)', { s: `%${search}%` });
     }
-    if (roleCode) {
-      qb.andWhere(
-        `u.id IN (
-          SELECT ur.user_id FROM user_roles ur
-          INNER JOIN roles r ON r.id = ur.role_id
-          WHERE r.code = :roleCode AND r.deleted_at IS NULL
-        )`,
-        { roleCode },
-      );
-    }
     const [data, total] = await qb.getManyAndCount();
 
-    // Batch-load role names for users on this page.
+    // Batch-load role names for all users on this page.
     const roleMap = new Map<string, string[]>();
     if (data.length > 0) {
       const ids = data.map((u) => u.id);
-      const roleRows = await this.repo
+      const rows = await this.repo
         .createQueryBuilder('u')
         .leftJoin('u.userRoles', 'ur')
         .leftJoin('ur.role', 'r')
         .where('u.id IN (:...ids)', { ids })
         .select(['u.id AS uid', 'r.name AS role_name'])
         .getRawMany<{ uid: string; role_name: string | null }>();
-      for (const row of roleRows) {
+      for (const row of rows) {
         if (row.role_name) {
           if (!roleMap.has(row.uid)) roleMap.set(row.uid, []);
           if (!roleMap.get(row.uid)!.includes(row.role_name))
@@ -134,43 +123,6 @@ export class UsersService {
 
   async touchLastLogin(id: string): Promise<void> {
     await this.repo.update({ id }, { lastLoginAt: new Date() });
-  }
-
-  /** Load a user including the (normally hidden) password hash, by id. */
-  async findByIdWithPassword(id: string): Promise<User | null> {
-    return this.repo
-      .createQueryBuilder('u')
-      .addSelect('u.passwordHash')
-      .where('u.id = :id', { id })
-      .getOne();
-  }
-
-  async bulkImport(file: Express.Multer.File, actorId: string): Promise<ImportResult> {
-    const rows = parseImportFile(file);
-    const result: ImportResult = { created: 0, skipped: 0, errors: [] };
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const email = row['email'], fullName = row['full_name'], password = row['password'];
-      if (!email) { result.errors.push({ row: i + 2, message: 'email is required' }); result.skipped++; continue; }
-      if (!fullName) { result.errors.push({ row: i + 2, message: 'full_name is required' }); result.skipped++; continue; }
-      if (!password) { result.errors.push({ row: i + 2, message: 'password is required' }); result.skipped++; continue; }
-      try {
-        await this.create({ email, fullName, password, employeeCode: row['employee_code'] || undefined, isActive: row['is_active'] !== 'false' }, actorId);
-        result.created++;
-      } catch (e: unknown) {
-        result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });
-        result.skipped++;
-      }
-    }
-    return result;
-  }
-
-  /** Hash and set a new password for the given user (no current-password check). */
-  async setPassword(id: string, newPassword: string): Promise<void> {
-    const user = await this.findOne(id);
-    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-    user.updatedBy = id;
-    await this.repo.save(user);
   }
 
   async loadRoleCodes(userId: string): Promise<{ roles: string[]; entityIds: string[] }> {

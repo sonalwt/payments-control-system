@@ -5,7 +5,6 @@ import { useParams, useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
 import { api } from '@/lib/api';
-import { formatDateTime } from '@/lib/datetime';
 import type { EbacChangeType, EbacStatus, EmployeeBankAccountChange } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -231,7 +230,7 @@ export default function EbacDetailPage() {
                 : change.requestedBy
             }
           />
-          <FieldRow label="Created" value={formatDateTime(change.createdAt)} />
+          <FieldRow label="Created" value={new Date(change.createdAt).toLocaleString()} />
           {change.verifiedBy && (
             <FieldRow
               label="Verified By"
@@ -242,7 +241,7 @@ export default function EbacDetailPage() {
               }
             />
           )}
-          {change.verifiedAt && <FieldRow label="Verified At" value={formatDateTime(change.verifiedAt)} />}
+          {change.verifiedAt && <FieldRow label="Verified At" value={new Date(change.verifiedAt).toLocaleString()} />}
           {change.verificationNotes && <FieldRow label="Verification Notes" value={change.verificationNotes} />}
           {change.callbackEvidence && <FieldRow label="Callback Evidence" value={change.callbackEvidence} />}
           {change.approvedBy && (
@@ -255,7 +254,7 @@ export default function EbacDetailPage() {
               }
             />
           )}
-          {change.approvedAt && <FieldRow label="Approved At" value={formatDateTime(change.approvedAt)} />}
+          {change.approvedAt && <FieldRow label="Approved At" value={new Date(change.approvedAt).toLocaleString()} />}
           {change.rejectedBy && (
             <FieldRow
               label="Rejected By"

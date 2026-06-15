@@ -6,6 +6,8 @@ import {
   Layers,
   Building2,
   Globe,
+  Briefcase,
+  Network,
   Clock,
   CheckCircle2,
   Send,
@@ -15,28 +17,21 @@ import {
   Users2,
   ArrowRight,
   Hourglass,
-  AlertTriangle,
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { hourInDubai } from '@/lib/datetime';
 import { useAuth } from '@/hooks/use-auth';
 import type {
   Paginated,
   Group,
   LegalEntity,
   Country,
+  BusinessUnit,
+  Department,
   PaymentRequest,
   BankAccount,
 } from '@/types/domain';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,7 +57,7 @@ function usePrCount(status: string, enabled = true): number | null {
 }
 
 function greeting(name: string): string {
-  const h = hourInDubai();
+  const h = new Date().getHours();
   const time = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   return `${time}, ${name.split(' ')[0]}`;
 }
@@ -135,9 +130,9 @@ function PrRow({ pr }: { pr: PaymentRequest }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{pr.requestNumber}</p>
         <p className="text-xs text-muted-foreground">
-          {pr.paymentType?.code ?? '—'} · {pr.currency?.code ?? '—'}{' '}
+          {pr.paymentTypeCode} · {pr.currencyCode}{' '}
           {Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          {pr.paymentType?.legalEntity && ` · ${pr.paymentType.legalEntity.name}`}
+          {pr.legalEntity && ` · ${pr.legalEntity.name}`}
         </p>
       </div>
       <Link href={`/payment-requests/${pr.id}`}>
@@ -149,138 +144,6 @@ function PrRow({ pr }: { pr: PaymentRequest }) {
   );
 }
 
-// What the viewer needs to do, by the request's current status.
-const ACTION_LABEL: Record<string, string> = {
-  PENDING_APPROVAL: 'Awaiting your approval',
-  TREASURY_MAKER: 'Add reference no. + SWIFT/MT103',
-  TREASURY_CHECKER: 'Awaiting your check',
-  TREASURY_AUTHORISER: 'Awaiting your authorisation',
-};
-
-/**
- * "Needs your attention" — requests awaiting THIS user's action right now
- * (their active approval step, or a treasury stage they own). Backed by the
- * `awaitingAction=true` list filter, so it works for approvers and for every
- * treasury role. Renders nothing when the queue is empty.
- */
-function NeedsAttention(): React.ReactElement | null {
-  const { data } = useQuery({
-    queryKey: ['pr-awaiting-action'],
-    queryFn: () =>
-      api.get<Paginated<PaymentRequest>>(
-        '/payment-requests?awaitingAction=true&page=1&limit=8',
-      ),
-  });
-  const rows = data?.data ?? [];
-  if (rows.length === 0) return null;
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <SectionHeading>Needs your attention</SectionHeading>
-        <Link href="/payment-requests">
-          <Button variant="ghost" size="sm" className="h-6 text-xs">View all</Button>
-        </Link>
-      </div>
-      <Card className="border-amber-300 bg-amber-50/40 p-4">
-        <ul>
-          {rows.map((pr) => (
-            <li key={pr.id} className="flex items-center gap-3 border-b py-2 last:border-0">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{pr.requestNumber}</p>
-                <p className="text-xs text-muted-foreground">
-                  {pr.paymentType?.code ?? '—'} · {pr.currency?.code ?? '—'}{' '}
-                  {Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </p>
-              </div>
-              <span className="hidden rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 sm:inline">
-                {ACTION_LABEL[pr.status] ?? pr.status.replace(/_/g, ' ')}
-              </span>
-              <Link href={`/payment-requests/${pr.id}`}>
-                <Button size="sm" className="h-7 gap-1 text-xs">
-                  Action <ArrowRight className="h-3 w-3" />
-                </Button>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </Card>
-    </div>
-  );
-}
-
-/**
- * Admin alert: group-own bank accounts whose remaining balance has dropped
- * below their configured minimum balance. Shown as a compact "Urgent attention"
- * banner; clicking it opens a popup with the breaching accounts. Renders nothing
- * when all accounts are healthy. Admin-only (the endpoint requires SUPER_ADMIN).
- */
-function LowBalanceAlert(): React.ReactElement | null {
-  const { data } = useQuery({
-    queryKey: ['bank-accounts-below-minimum'],
-    queryFn: () => api.get<BankAccount[]>('/bank-accounts/below-minimum'),
-  });
-  const rows = data ?? [];
-  if (rows.length === 0) return null;
-  const money = (n: number | string): string =>
-    Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <button
-          type="button"
-          className="flex w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-left transition-colors hover:bg-red-100"
-        >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100">
-            <AlertTriangle className="h-4 w-4 text-red-600" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold text-red-800">Urgent attention</span>
-            <span className="block text-xs text-red-700">
-              {rows.length} bank account{rows.length > 1 ? 's are' : ' is'} below minimum balance — click to review
-            </span>
-          </span>
-          <span className="shrink-0 rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold text-white">
-            {rows.length}
-          </span>
-        </button>
-      </DialogTrigger>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-red-800">
-            <AlertTriangle className="h-5 w-5" />
-            Accounts below minimum balance
-          </DialogTitle>
-        </DialogHeader>
-        <ul className="max-h-[60vh] divide-y overflow-y-auto">
-          {rows.map((a) => {
-            const ccy = a.currency?.code ? `${a.currency.code} ` : '';
-            const bank = a.bankNickname ?? a.bankName ?? 'Account';
-            const shortfall = Number(a.minimumBalance) - Number(a.remainingBalance);
-            return (
-              <li key={a.id} className="flex items-center gap-3 py-3">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{bank} · {a.accountNumber}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Balance {ccy}{money(a.remainingBalance)} · minimum {ccy}{money(a.minimumBalance)}
-                  </p>
-                </div>
-                <span className="shrink-0 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
-                  short {ccy}{money(shortfall)}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-        <div className="flex justify-end">
-          <Link href="/bank-accounts">
-            <Button size="sm" variant="outline">Go to Bank Accounts</Button>
-          </Link>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Role-specific sections
 // ---------------------------------------------------------------------------
@@ -289,12 +152,14 @@ function AdminDashboard() {
   const groups = useCount<Group>('/groups');
   const legalEntities = useCount<LegalEntity>('/legal-entities');
   const countries = useCount<Country>('/countries');
+  const businessUnits = useCount<BusinessUnit>('/business-units');
+  const departments = useCount<Department>('/departments');
 
   const draft = usePrCount('DRAFT');
   const pendingApproval = usePrCount('PENDING_APPROVAL');
-  const approved = usePrCount('TREASURY_MAKER');
-  const awaitingPayment = usePrCount('TREASURY_CHECKER');
-  const paid = usePrCount('COMPLETED');
+  const approved = usePrCount('APPROVED');
+  const awaitingPayment = usePrCount('AWAITING_PAYMENT_CONFIRMATION');
+  const paid = usePrCount('PAID');
 
   const { data: pendingList } = useQuery({
     queryKey: ['dashboard-pending-approvals'],
@@ -308,28 +173,27 @@ function AdminDashboard() {
 
   return (
     <div className="space-y-8">
-      {/* Low-balance admin alert */}
-      <LowBalanceAlert />
-
       {/* Payment Stats */}
       <div className="space-y-3">
         <SectionHeading>Payment Requests</SectionHeading>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           <StatTile label="Drafts" value={draft} icon={FilePen} href="/payment-requests?status=DRAFT" />
           <StatTile label="Pending Approval" value={pendingApproval} icon={Clock} highlight href="/payment-requests?status=PENDING_APPROVAL" />
-          <StatTile label="In Treasury" value={approved} icon={CheckCircle2} href="/payment-requests?status=TREASURY_MAKER" />
-          <StatTile label="Treasury — Checking" value={awaitingPayment} icon={Hourglass} href="/payment-requests?status=TREASURY_CHECKER" />
-          <StatTile label="Completed" value={paid} icon={BadgeCheck} href="/payment-requests?status=COMPLETED" />
+          <StatTile label="Approved" value={approved} icon={CheckCircle2} href="/payment-requests?status=APPROVED" />
+          <StatTile label="Awaiting Payment" value={awaitingPayment} icon={Hourglass} href="/payment-requests?status=AWAITING_PAYMENT_CONFIRMATION" />
+          <StatTile label="Paid" value={paid} icon={BadgeCheck} href="/payment-requests?status=PAID" />
         </div>
       </div>
 
       {/* Org Overview */}
       <div className="space-y-3">
         <SectionHeading>Organisation Overview</SectionHeading>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           <StatTile label="Groups" value={groups} icon={Layers} href="/groups" />
           <StatTile label="Legal Entities" value={legalEntities} icon={Building2} href="/legal-entities" />
           <StatTile label="Countries" value={countries} icon={Globe} href="/countries" />
+          <StatTile label="Business Units" value={businessUnits} icon={Briefcase} href="/business-units" />
+          <StatTile label="Departments" value={departments} icon={Network} href="/departments" />
         </div>
       </div>
 
@@ -365,8 +229,16 @@ function AdminDashboard() {
 
 function ApproverDashboard() {
   const pendingApproval = usePrCount('PENDING_APPROVAL');
-  const approved = usePrCount('TREASURY_MAKER');
-  const paid = usePrCount('COMPLETED');
+  const approved = usePrCount('APPROVED');
+  const paid = usePrCount('PAID');
+
+  const { data: pendingList } = useQuery({
+    queryKey: ['dashboard-pending-approvals'],
+    queryFn: () =>
+      api.get<Paginated<PaymentRequest>>(
+        '/payment-requests?status=PENDING_APPROVAL&page=1&limit=8',
+      ),
+  });
 
   return (
     <div className="space-y-8">
@@ -374,9 +246,31 @@ function ApproverDashboard() {
         <SectionHeading>Payment Overview</SectionHeading>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <StatTile label="Awaiting My Approval" value={pendingApproval} icon={Clock} highlight href="/payment-requests?status=PENDING_APPROVAL" />
-          <StatTile label="In Treasury (Total)" value={approved} icon={CheckCircle2} href="/payment-requests?status=TREASURY_MAKER" />
-          <StatTile label="Completed (Total)" value={paid} icon={BadgeCheck} href="/payment-requests?status=COMPLETED" />
+          <StatTile label="Approved (Total)" value={approved} icon={CheckCircle2} href="/payment-requests?status=APPROVED" />
+          <StatTile label="Paid (Total)" value={paid} icon={BadgeCheck} href="/payment-requests?status=PAID" />
         </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <SectionHeading>Requests Pending Your Approval</SectionHeading>
+          <Link href="/payment-requests?status=PENDING_APPROVAL">
+            <Button variant="ghost" size="sm" className="h-6 text-xs">View all</Button>
+          </Link>
+        </div>
+        {pendingList && pendingList.data.length > 0 ? (
+          <Card className="p-4">
+            <ul>
+              {pendingList.data.map((pr) => (
+                <PrRow key={pr.id} pr={pr} />
+              ))}
+            </ul>
+          </Card>
+        ) : (
+          <Card className="p-6 text-center text-sm text-muted-foreground">
+            No payment requests are currently pending approval.
+          </Card>
+        )}
       </div>
     </div>
   );
@@ -385,9 +279,9 @@ function ApproverDashboard() {
 function FinanceHeadDashboard() {
   const draft = usePrCount('DRAFT');
   const pendingApproval = usePrCount('PENDING_APPROVAL');
-  const approved = usePrCount('TREASURY_MAKER');
-  const awaitingPayment = usePrCount('TREASURY_CHECKER');
-  const paid = usePrCount('COMPLETED');
+  const approved = usePrCount('APPROVED');
+  const awaitingPayment = usePrCount('AWAITING_PAYMENT_CONFIRMATION');
+  const paid = usePrCount('PAID');
   const bankAccounts = useCount<BankAccount>('/bank-accounts');
 
   return (
@@ -397,9 +291,9 @@ function FinanceHeadDashboard() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           <StatTile label="Drafts" value={draft} icon={FilePen} href="/payment-requests?status=DRAFT" />
           <StatTile label="Pending Approval" value={pendingApproval} icon={Clock} highlight href="/payment-requests?status=PENDING_APPROVAL" />
-          <StatTile label="In Treasury" value={approved} icon={CheckCircle2} href="/payment-requests?status=TREASURY_MAKER" />
-          <StatTile label="Treasury — Checking" value={awaitingPayment} icon={Hourglass} href="/payment-requests?status=TREASURY_CHECKER" />
-          <StatTile label="Completed" value={paid} icon={BadgeCheck} href="/payment-requests?status=COMPLETED" />
+          <StatTile label="Approved" value={approved} icon={CheckCircle2} href="/payment-requests?status=APPROVED" />
+          <StatTile label="Awaiting Payment" value={awaitingPayment} icon={Hourglass} href="/payment-requests?status=AWAITING_PAYMENT_CONFIRMATION" />
+          <StatTile label="Paid" value={paid} icon={BadgeCheck} href="/payment-requests?status=PAID" />
         </div>
       </div>
       <div className="space-y-3">
@@ -415,8 +309,8 @@ function FinanceHeadDashboard() {
 function InitiatorDashboard() {
   const draft = usePrCount('DRAFT');
   const pendingApproval = usePrCount('PENDING_APPROVAL');
-  const approved = usePrCount('TREASURY_MAKER');
-  const paid = usePrCount('COMPLETED');
+  const approved = usePrCount('APPROVED');
+  const paid = usePrCount('PAID');
 
   const { data: myDrafts } = useQuery({
     queryKey: ['dashboard-my-drafts'],
@@ -433,8 +327,8 @@ function InitiatorDashboard() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatTile label="Drafts" value={draft} icon={FilePen} highlight href="/payment-requests?status=DRAFT" />
           <StatTile label="Pending Approval" value={pendingApproval} icon={Clock} href="/payment-requests?status=PENDING_APPROVAL" />
-          <StatTile label="In Treasury" value={approved} icon={CheckCircle2} href="/payment-requests?status=TREASURY_MAKER" />
-          <StatTile label="Completed" value={paid} icon={BadgeCheck} href="/payment-requests?status=COMPLETED" />
+          <StatTile label="Approved" value={approved} icon={CheckCircle2} href="/payment-requests?status=APPROVED" />
+          <StatTile label="Paid" value={paid} icon={BadgeCheck} href="/payment-requests?status=PAID" />
         </div>
       </div>
 
@@ -460,15 +354,15 @@ function InitiatorDashboard() {
 }
 
 function MakerCheckerDashboard({ role }: { role: 'PAYMENTS_MAKER' | 'PAYMENTS_CHECKER' }) {
-  const approved = usePrCount('TREASURY_MAKER');
-  const awaitingPayment = usePrCount('TREASURY_CHECKER');
-  const paid = usePrCount('COMPLETED');
+  const approved = usePrCount('APPROVED');
+  const awaitingPayment = usePrCount('AWAITING_PAYMENT_CONFIRMATION');
+  const paid = usePrCount('PAID');
 
   const { data: readyList } = useQuery({
     queryKey: ['dashboard-ready-to-release'],
     queryFn: () =>
       api.get<Paginated<PaymentRequest>>(
-        '/payment-requests?status=TREASURY_MAKER&page=1&limit=8',
+        '/payment-requests?status=APPROVED&page=1&limit=8',
       ),
   });
 
@@ -484,10 +378,10 @@ function MakerCheckerDashboard({ role }: { role: 'PAYMENTS_MAKER' | 'PAYMENTS_CH
             value={approved}
             icon={Send}
             highlight
-            href="/payment-requests?status=TREASURY_MAKER"
+            href="/payment-requests?status=APPROVED"
           />
-          <StatTile label="Treasury — Checking" value={awaitingPayment} icon={Hourglass} href="/payment-requests?status=TREASURY_CHECKER" />
-          <StatTile label="Total Completed" value={paid} icon={BadgeCheck} href="/payment-requests?status=COMPLETED" />
+          <StatTile label="Awaiting Confirmation" value={awaitingPayment} icon={Hourglass} href="/payment-requests?status=AWAITING_PAYMENT_CONFIRMATION" />
+          <StatTile label="Total Paid" value={paid} icon={BadgeCheck} href="/payment-requests?status=PAID" />
         </div>
       </div>
 
@@ -496,7 +390,7 @@ function MakerCheckerDashboard({ role }: { role: 'PAYMENTS_MAKER' | 'PAYMENTS_CH
           <SectionHeading>
             {ismaker ? 'Approved Payments Ready to Release' : 'Approved Payments to Verify'}
           </SectionHeading>
-          <Link href="/payment-requests?status=TREASURY_MAKER">
+          <Link href="/payment-requests?status=APPROVED">
             <Button variant="ghost" size="sm" className="h-6 text-xs">View all</Button>
           </Link>
         </div>
@@ -564,9 +458,6 @@ export default function DashboardPage(): React.ReactElement {
           </div>
         </div>
       </div>
-
-      {/* Requests awaiting this user's action (approval step or treasury stage) */}
-      <NeedsAttention />
 
       {/* Role-specific content */}
       {isAdmin && <AdminDashboard />}

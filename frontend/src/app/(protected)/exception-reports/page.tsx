@@ -5,7 +5,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import { formatDateTime, todayInDubai } from '@/lib/datetime';
 import type { ExceptionReport, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -44,7 +43,7 @@ export default function ExceptionReportsPage(): React.ReactElement {
   // Manual trigger to (re)generate today's report on demand.
   const generateMutation = useMutation({
     mutationFn: () => {
-      const today = todayInDubai();
+      const today = new Date().toISOString().slice(0, 10);
       return api.post<ExceptionReport>(`/exception-reports/generate/${today}`);
     },
     onSuccess: () => {
@@ -106,7 +105,7 @@ export default function ExceptionReportsPage(): React.ReactElement {
                     )}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    {formatDateTime(r.generatedAt)}
+                    {new Date(r.generatedAt).toLocaleString()}
                   </TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -189,7 +188,7 @@ export default function ExceptionReportsPage(): React.ReactElement {
                         })}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {formatDateTime(item.paidAt)}
+                        {new Date(item.paidAt).toLocaleString()}
                       </TableCell>
                       <TableCell>
                         <Link href={`/payment-requests/${item.paymentRequestId}`}>

@@ -1,272 +1,354 @@
 'use client';
 
-import { useForm } from 'react-hook-form';
+import * as React from 'react';
+import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
-import { api } from '@/lib/api';
-import type { LegalEntity, Paginated, PaymentCategory, PaymentType, Role } from '@/types/domain';
+import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Select } from '@/components/ui/select';
 import { DialogFooter } from '@/components/ui/dialog';
+import type { PaymentType } from '@/types/domain';
 
-export const paymentTypeSchema = z.object({
+const documentPolicySchema = z.object({
   code: z
     .string()
     .min(2)
-    .max(40)
-    .regex(/^[A-Z][A-Z0-9_]*$/, 'UPPER_SNAKE_CASE'),
-  name: z.string().min(2).max(100),
-  description: z.string().optional().or(z.literal('')),
-  paymentCategoryId: z.string().uuid().optional().or(z.literal('')),
-  legalEntityId: z.string().uuid('Select a legal entity'),
-  makerRoleIds: z.array(z.string().uuid()).default([]),
-  checkerRoleId: z.string().uuid().optional().or(z.literal('')),
-  direction: z.enum(['OUTGOING', 'INCOMING']),
-  requiresApprovalChain: z.boolean().optional(),
-  isBatchBased: z.boolean().optional(),
-  isConfidential: z.boolean().optional(),
-  mobileInitiationOnly: z.boolean().optional(),
-  allowsCrossCurrency: z.boolean().optional(),
-  isActive: z.boolean().optional(),
+    .max(50)
+    .regex(/^[A-Z0-9_]+$/, 'Uppercase alphanumeric only'),
+  label: z.string().min(1).max(120),
+  required: z.boolean(),
+  amountThresholdMinor: z
+    .union([z.literal('').transform(() => null), z.coerce.number().int().min(0)])
+    .nullable()
+    .optional(),
+  currencyCode: z
+    .union([z.literal('').transform(() => null), z.string().length(3)])
+    .nullable()
+    .optional(),
 });
+
+const fieldConfigSchema = z.object({
+  key: z
+    .string()
+    .min(1)
+    .max(60)
+    .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/, 'camelCase / snake_case identifier'),
+  label: z.string().min(1).max(120),
+  visible: z.boolean(),
+  required: z.boolean(),
+  readOnly: z.boolean(),
+  sortOrder: z.coerce.number().int().min(0),
+  helpText: z.string().max(500).optional().or(z.literal('')),
+});
+
+export const paymentTypeSchema = z
+  .object({
+    code: z
+      .string()
+      .min(2)
+      .max(50)
+      .regex(/^[A-Z0-9_]+$/, 'Uppercase alphanumeric only'),
+    name: z.string().min(2).max(120),
+    description: z.string().max(2000).optional().or(z.literal('')),
+    direction: z.enum(['OUTGOING', 'INCOMING']),
+    requiresApprovalChain: z.boolean(),
+    isBatchBased: z.boolean(),
+    isConfidential: z.boolean(),
+    mobileInitiationOnly: z.boolean(),
+    allowsCrossCurrency: z.boolean(),
+    isActive: z.boolean(),
+    documentPolicy: z.array(documentPolicySchema),
+    fieldConfig: z.array(fieldConfigSchema),
+  })
+  .refine((v) => !(v.isConfidential && v.requiresApprovalChain), {
+    message: 'Confidential types cannot require a standard approval chain',
+    path: ['requiresApprovalChain'],
+  });
+
 export type PaymentTypeFormData = z.infer<typeof paymentTypeSchema>;
 
 interface Props {
   defaultValues?: Partial<PaymentType>;
   onSubmit: (data: PaymentTypeFormData) => void | Promise<void>;
   submitting?: boolean;
+  /** Code is immutable after creation. */
+  codeLocked?: boolean;
 }
 
 export function PaymentTypeForm({
   defaultValues,
   onSubmit,
   submitting,
+  codeLocked,
 }: Props): React.ReactElement {
-  const {
-    register,
-    handleSubmit,
-    watch,
-    setValue,
-    formState: { errors },
-  } = useForm<PaymentTypeFormData>({
+  const form = useForm<PaymentTypeFormData>({
     resolver: zodResolver(paymentTypeSchema),
     defaultValues: {
       code: defaultValues?.code ?? '',
       name: defaultValues?.name ?? '',
       description: defaultValues?.description ?? '',
-      paymentCategoryId: defaultValues?.paymentCategoryId ?? '',
-      legalEntityId: defaultValues?.legalEntityId ?? '',
-      makerRoleIds:
-        defaultValues?.makerRoleIds ??
-        (defaultValues?.makerRoleId ? [defaultValues.makerRoleId] : []),
-      checkerRoleId: defaultValues?.checkerRoleId ?? '',
-      direction: (defaultValues?.direction ?? 'OUTGOING') as 'OUTGOING' | 'INCOMING',
+      direction: defaultValues?.direction ?? 'OUTGOING',
       requiresApprovalChain: defaultValues?.requiresApprovalChain ?? true,
       isBatchBased: defaultValues?.isBatchBased ?? false,
       isConfidential: defaultValues?.isConfidential ?? false,
       mobileInitiationOnly: defaultValues?.mobileInitiationOnly ?? false,
       allowsCrossCurrency: defaultValues?.allowsCrossCurrency ?? true,
       isActive: defaultValues?.isActive ?? true,
+      documentPolicy: (defaultValues?.documentPolicy ?? []).map((d) => ({
+        code: d.code,
+        label: d.label,
+        required: d.required,
+        amountThresholdMinor: d.amountThresholdMinor ?? null,
+        currencyCode: d.currencyCode ?? null,
+      })),
+      fieldConfig: (defaultValues?.fieldConfig ?? []).map((f) => ({
+        key: f.key,
+        label: f.label,
+        visible: f.visible,
+        required: f.required,
+        readOnly: f.readOnly,
+        sortOrder: f.sortOrder,
+        helpText: f.helpText ?? '',
+      })),
     },
   });
+  const { register, handleSubmit, control, formState } = form;
+  const { errors } = formState;
 
-  const { data: categories } = useQuery({
-    queryKey: ['payment-categories-all'],
-    queryFn: () => api.get<Paginated<PaymentCategory>>('/payment-categories?page=1&limit=200'),
-  });
-  const categoryOptions = (categories?.data ?? [])
-    .filter((c) => c.isActive)
-    .map((c) => ({ label: c.name, value: c.id }));
-
-  const { data: legalEntities } = useQuery({
-    queryKey: ['legal-entities-all'],
-    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
-  });
-  const legalEntityOptions = (legalEntities?.data ?? [])
-    .filter((le) => le.isActive)
-    .map((le) => ({ label: `${le.code} — ${le.name}`, value: le.id }));
-
-  const { data: roles } = useQuery({
-    queryKey: ['roles-all'],
-    queryFn: () => api.get<Role[]>('/roles'),
-  });
-  const roleOptions = (roles ?? []).map((r) => ({ label: r.name, value: r.id }));
-
-  const makerRoleIds = watch('makerRoleIds') ?? [];
-
-  // "Requires approval chain" and "Confidential (chairman-style)" are mutually
-  // exclusive: a confidential type bypasses the approval matrix and goes
-  // straight to the Treasury Authoriser. Selecting one clears the other.
-  const requiresApprovalChain = watch('requiresApprovalChain') ?? false;
-  const isConfidential = watch('isConfidential') ?? false;
-
-  const isSystem = defaultValues?.isSystem ?? false;
-
-  const submit = handleSubmit((d) =>
-    onSubmit({
-      ...d,
-      paymentCategoryId: d.paymentCategoryId ? d.paymentCategoryId : undefined,
-      makerRoleIds: d.makerRoleIds ?? [],
-      checkerRoleId: d.checkerRoleId ? d.checkerRoleId : undefined,
-    }),
-  );
+  const docs = useFieldArray({ control, name: 'documentPolicy' });
+  const fields = useFieldArray({ control, name: 'fieldConfig' });
 
   return (
-    <form onSubmit={submit} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
-      <div className="grid grid-cols-2 gap-4">
+    <form onSubmit={handleSubmit(onSubmit)} className="max-h-[80vh] space-y-6 overflow-y-auto pr-2">
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="code">Code <span className="text-destructive">*</span></Label>
-          <Input id="code" placeholder="VENDOR_PAYMENT" disabled={isSystem} {...register('code')} />
+          <Label htmlFor="code">Code</Label>
+          <Input
+            id="code"
+            placeholder="VENDOR_PAYMENT"
+            disabled={codeLocked}
+            {...register('code')}
+          />
           {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
-          {isSystem && <p className="text-xs text-muted-foreground">System code is locked.</p>}
         </div>
         <div className="space-y-2">
-          <Label htmlFor="name">Name <span className="text-destructive">*</span></Label>
-          <Input id="name" placeholder="Vendor Payment" {...register('name')} />
+          <Label htmlFor="name">Name</Label>
+          <Input id="name" {...register('name')} />
           {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
         </div>
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="description">Description</Label>
-        <Textarea id="description" rows={2} {...register('description')} />
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="paymentCategoryId">Payment category</Label>
-          <Select
-            id="paymentCategoryId"
-            placeholder="Select category"
-            options={[{ label: '— None —', value: '' }, ...categoryOptions]}
-            {...register('paymentCategoryId')}
-          />
-          {errors.paymentCategoryId && <p className="text-xs text-destructive">{errors.paymentCategoryId.message}</p>}
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor="description">Description</Label>
+          <Textarea id="description" rows={2} {...register('description')} />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="direction">Direction <span className="text-destructive">*</span></Label>
+          <Label htmlFor="direction">Direction</Label>
           <Select
             id="direction"
             options={[
-              { label: 'Outgoing (payment)', value: 'OUTGOING' },
-              { label: 'Incoming (receipt)', value: 'INCOMING' },
+              { label: 'Outgoing', value: 'OUTGOING' },
+              { label: 'Incoming', value: 'INCOMING' },
             ]}
             {...register('direction')}
           />
-          {errors.direction && <p className="text-xs text-destructive">{errors.direction.message}</p>}
         </div>
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
-        <Select
-          id="legalEntityId"
-          placeholder="Select legal entity"
-          options={legalEntityOptions}
-          {...register('legalEntityId')}
-        />
-        {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
-      </div>
+      </section>
 
-      <div className="space-y-2">
-        <Label>Payment request creator roles (Maker)</Label>
-        <p className="text-xs text-muted-foreground">
-          Select one or more roles. Any user holding one of these may create requests for this payment type.
-        </p>
-        {roleOptions.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No roles available.</p>
-        ) : (
-          <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
-            {roleOptions.map((r) => {
-              const selected = makerRoleIds.includes(r.value);
-              return (
-                <label key={r.value} className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-border"
-                    checked={selected}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...makerRoleIds, r.value]
-                        : makerRoleIds.filter((id) => id !== r.value);
-                      setValue('makerRoleIds', next, { shouldValidate: true, shouldDirty: true });
-                    }}
-                  />
-                  <span>{r.label}</span>
-                </label>
-              );
-            })}
-          </div>
-        )}
-        {errors.makerRoleIds && <p className="text-xs text-destructive">{errors.makerRoleIds.message as string}</p>}
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="checkerRoleId">Payment request checker role</Label>
-        <Select
-          id="checkerRoleId"
-          placeholder="Select Checker role"
-          options={[{ label: '— None —', value: '' }, ...roleOptions]}
-          {...register('checkerRoleId')}
-        />
-        {errors.checkerRoleId && <p className="text-xs text-destructive">{errors.checkerRoleId.message}</p>}
-      </div>
-
-      <div className="rounded-md border p-3 space-y-2">
-        <p className="text-sm font-medium">Workflow behaviour</p>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-border"
-              checked={requiresApprovalChain}
-              onChange={(e) => {
-                const on = e.target.checked;
-                setValue('requiresApprovalChain', on, { shouldDirty: true });
-                if (on) setValue('isConfidential', false, { shouldDirty: true });
-              }}
-            />
-            <span>Requires approval chain</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('isBatchBased')} />
-            <span>Batch-based (e.g. payroll)</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-border"
-              checked={isConfidential}
-              onChange={(e) => {
-                const on = e.target.checked;
-                setValue('isConfidential', on, { shouldDirty: true });
-                if (on) setValue('requiresApprovalChain', false, { shouldDirty: true });
-              }}
-            />
-            <span>Confidential (chairman-style)</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('mobileInitiationOnly')} />
-            <span>Mobile initiation only</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('allowsCrossCurrency')} />
-            <span>Allows cross-currency</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('isActive')} />
-            <span>Active</span>
-          </label>
+      <section>
+        <h3 className="mb-2 text-sm font-semibold">Workflow behaviour</h3>
+        <div className="grid grid-cols-1 gap-2 rounded-md border p-3 md:grid-cols-2">
+          <CheckboxRow
+            id="requiresApprovalChain"
+            label="Requires approval chain"
+            description="Routes through the per-type matrix (Section 1.5)."
+            {...register('requiresApprovalChain')}
+          />
+          <CheckboxRow
+            id="isBatchBased"
+            label="Batch-based"
+            description="Approval is given at batch level (payroll)."
+            {...register('isBatchBased')}
+          />
+          <CheckboxRow
+            id="isConfidential"
+            label="Confidential"
+            description="Beneficiary identity is suppressed outside the payments team."
+            {...register('isConfidential')}
+          />
+          <CheckboxRow
+            id="mobileInitiationOnly"
+            label="Mobile initiation only"
+            description="Initiation permitted only from the mobile app."
+            {...register('mobileInitiationOnly')}
+          />
+          <CheckboxRow
+            id="allowsCrossCurrency"
+            label="Allows cross-currency"
+            description="Maker may pick a current account in another currency."
+            {...register('allowsCrossCurrency')}
+          />
+          <CheckboxRow id="isActive" label="Active" {...register('isActive')} />
         </div>
-        {isConfidential && (
-          <p className="text-xs text-muted-foreground">
-            Confidential payments skip the approval matrix and go directly to the Treasury
-            Authoriser, who captures the reference number + SWIFT/MT103 copy and marks the
-            payment completed.
+        {errors.requiresApprovalChain?.message && (
+          <p className="mt-2 text-xs text-destructive">
+            {errors.requiresApprovalChain.message}
           </p>
         )}
-      </div>
+      </section>
+
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Document-attachment policy</h3>
+            <p className="text-xs text-muted-foreground">
+              Mandatory and threshold-gated attachments enforced at request creation.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              docs.append({
+                code: '',
+                label: '',
+                required: true,
+                amountThresholdMinor: null,
+                currencyCode: null,
+              })
+            }
+          >
+            <Plus className="mr-1 h-3 w-3" /> Add document
+          </Button>
+        </div>
+        {docs.fields.length === 0 ? (
+          <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+            No documents configured.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {docs.fields.map((f, i) => (
+              <div key={f.id} className="grid grid-cols-12 items-end gap-2 rounded-md border p-2">
+                <div className="col-span-3 space-y-1">
+                  <Label className="text-xs">Code</Label>
+                  <Input placeholder="INVOICE_PDF" {...register(`documentPolicy.${i}.code`)} />
+                </div>
+                <div className="col-span-4 space-y-1">
+                  <Label className="text-xs">Label</Label>
+                  <Input placeholder="Invoice PDF" {...register(`documentPolicy.${i}.label`)} />
+                </div>
+                <div className="col-span-2 space-y-1">
+                  <Label className="text-xs">Threshold (minor)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="—"
+                    {...register(`documentPolicy.${i}.amountThresholdMinor`)}
+                  />
+                </div>
+                <div className="col-span-1 space-y-1">
+                  <Label className="text-xs">Ccy</Label>
+                  <Input placeholder="USD" maxLength={3} {...register(`documentPolicy.${i}.currencyCode`)} />
+                </div>
+                <div className="col-span-1 flex items-center pb-2">
+                  <label className="flex items-center gap-1 text-xs">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      {...register(`documentPolicy.${i}.required`)}
+                    />
+                    Req
+                  </label>
+                </div>
+                <div className="col-span-1 flex justify-end">
+                  <Button type="button" size="icon" variant="ghost" onClick={() => docs.remove(i)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Field-level configuration</h3>
+            <p className="text-xs text-muted-foreground">
+              Controls field visibility, required and read-only status on the request form.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              fields.append({
+                key: '',
+                label: '',
+                visible: true,
+                required: false,
+                readOnly: false,
+                sortOrder: (fields.fields.length + 1) * 10,
+                helpText: '',
+              })
+            }
+          >
+            <Plus className="mr-1 h-3 w-3" /> Add field
+          </Button>
+        </div>
+        {fields.fields.length === 0 ? (
+          <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+            No fields configured.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {fields.fields.map((f, i) => (
+              <div key={f.id} className="grid grid-cols-12 items-end gap-2 rounded-md border p-2">
+                <div className="col-span-3 space-y-1">
+                  <Label className="text-xs">Key</Label>
+                  <Input placeholder="invoiceNumber" {...register(`fieldConfig.${i}.key`)} />
+                </div>
+                <div className="col-span-3 space-y-1">
+                  <Label className="text-xs">Label</Label>
+                  <Input placeholder="Invoice Number" {...register(`fieldConfig.${i}.label`)} />
+                </div>
+                <div className="col-span-1 space-y-1">
+                  <Label className="text-xs">Order</Label>
+                  <Input type="number" min={0} {...register(`fieldConfig.${i}.sortOrder`)} />
+                </div>
+                <div className="col-span-3 flex items-center gap-3 pb-2">
+                  <label className="flex items-center gap-1 text-xs">
+                    <input type="checkbox" className="h-4 w-4" {...register(`fieldConfig.${i}.visible`)} />
+                    Visible
+                  </label>
+                  <label className="flex items-center gap-1 text-xs">
+                    <input type="checkbox" className="h-4 w-4" {...register(`fieldConfig.${i}.required`)} />
+                    Required
+                  </label>
+                  <label className="flex items-center gap-1 text-xs">
+                    <input type="checkbox" className="h-4 w-4" {...register(`fieldConfig.${i}.readOnly`)} />
+                    Read-only
+                  </label>
+                </div>
+                <div className="col-span-1 space-y-1">
+                  <Label className="text-xs">Help</Label>
+                  <Input placeholder="—" {...register(`fieldConfig.${i}.helpText`)} />
+                </div>
+                <div className="col-span-1 flex justify-end">
+                  <Button type="button" size="icon" variant="ghost" onClick={() => fields.remove(i)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <DialogFooter>
         <Button type="submit" disabled={submitting}>
@@ -276,3 +358,24 @@ export function PaymentTypeForm({
     </form>
   );
 }
+
+interface CheckboxRowProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+const CheckboxRow = React.forwardRef<HTMLInputElement, CheckboxRowProps>(
+  ({ id, label, description, ...rest }, ref) => (
+    <label htmlFor={id} className="flex items-start gap-2 rounded-sm p-1 text-sm">
+      <input ref={ref} id={id} type="checkbox" className="mt-0.5 h-4 w-4" {...rest} />
+      <span>
+        <span className="font-medium">{label}</span>
+        {description ? (
+          <span className="block text-xs text-muted-foreground">{description}</span>
+        ) : null}
+      </span>
+    </label>
+  ),
+);
+CheckboxRow.displayName = 'CheckboxRow';

@@ -27,7 +27,6 @@ import { Card } from '@/components/ui/card';
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
-import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 import { LegalEntityForm, type LegalEntityFormData } from './legal-entity-form';
 
 const KEY = 'legal-entities';
@@ -53,14 +52,14 @@ export default function LegalEntitiesPage(): React.ReactElement {
   });
 
   const createMutation = useMutation({
-    mutationFn: (input: LegalEntityFormData) =>
-      api.post<LegalEntity>('/legal-entities', input),
+    mutationFn: (input: LegalEntityFormData) => api.post<LegalEntity>('/legal-entities', input),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       setCreateOpen(false);
       notify.success('Legal entity created');
     },
-    onError: (err: Error) => notify.error('Create failed', err),
+    onError: (err: Error) =>
+      notify.error('Create failed', err),
   });
 
   const updateMutation = useMutation({
@@ -71,7 +70,8 @@ export default function LegalEntitiesPage(): React.ReactElement {
       setEditing(null);
       notify.success('Updated');
     },
-    onError: (err: Error) => notify.error('Update failed', err),
+    onError: (err: Error) =>
+      notify.error('Update failed', err),
   });
 
   const deleteMutation = useMutation({
@@ -81,40 +81,32 @@ export default function LegalEntitiesPage(): React.ReactElement {
       setDeleting(null);
       notify.success('Deleted');
     },
-    onError: (err: Error) => notify.error('Delete failed', err),
+    onError: (err: Error) =>
+      notify.error('Delete failed', err),
   });
 
   return (
     <div>
       <PageHeader
         title="Legal Entities"
-        description="Master list of legal entities (Super Admin only)."
+        description="Registered companies within each group"
         actions={
-          <div className="flex items-center gap-2">
-            <ImportCsvDialog
-              entityName="Legal Entities"
-              endpoint="/legal-entities/import"
-              sampleHeaders={['name', 'code', 'country_code', 'is_active']}
-              sampleRows={[['Acme Corp UK', 'ACME_UK', 'GB', 'true'], ['Acme Corp US', 'ACME_US', 'US', 'true']]}
-              onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
-            />
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" /> New legal entity
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create legal entity</DialogTitle>
-                </DialogHeader>
-                <LegalEntityForm
-                  submitting={createMutation.isPending}
-                  onSubmit={(d) => createMutation.mutate(d)}
-                />
-              </DialogContent>
-            </Dialog>
-          </div>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" /> New legal entity
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create legal entity</DialogTitle>
+              </DialogHeader>
+              <LegalEntityForm
+                submitting={createMutation.isPending}
+                onSubmit={(d) => createMutation.mutate(d)}
+              />
+            </DialogContent>
+          </Dialog>
         }
       />
 
@@ -136,15 +128,16 @@ export default function LegalEntitiesPage(): React.ReactElement {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Code</TableHead>
+              <TableHead>Group</TableHead>
               <TableHead>Country</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Currency</TableHead>
               <TableHead className="w-32 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
@@ -155,20 +148,11 @@ export default function LegalEntitiesPage(): React.ReactElement {
                   <TableCell>
                     <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{le.code}</code>
                   </TableCell>
-                  <TableCell>
-                    {le.country ? `${le.country.code} — ${le.country.countryName}` : '—'}
+                  <TableCell className="text-muted-foreground">
+                    {le.group?.name ?? '—'}
                   </TableCell>
-                  <TableCell>
-                    <span
-                      className={
-                        le.isActive
-                          ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
-                          : 'inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border'
-                      }
-                    >
-                      {le.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </TableCell>
+                  <TableCell>{le.registeredCountry}</TableCell>
+                  <TableCell>{le.baseCurrency?.code ?? '—'}</TableCell>
                   <TableCell className="text-right">
                     <Button size="icon" variant="ghost" onClick={() => setEditing(le)}>
                       <Pencil className="h-4 w-4" />
@@ -181,7 +165,7 @@ export default function LegalEntitiesPage(): React.ReactElement {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
                   No legal entities yet.
                 </TableCell>
               </TableRow>
@@ -218,7 +202,7 @@ export default function LegalEntitiesPage(): React.ReactElement {
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
         title={`Delete "${deleting?.name}"?`}
-        description="This will soft-delete the legal entity."
+        description="Fails if any countries are still attached."
         loading={deleteMutation.isPending}
         onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
       />
