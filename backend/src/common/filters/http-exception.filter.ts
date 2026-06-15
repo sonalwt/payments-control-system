@@ -8,9 +8,6 @@ import {
 } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { Request, Response } from 'express';
-import { AuditAction } from '../enums/audit-action.enum';
-import { AuthenticatedUser } from '../decorators/current-user.decorator';
-import { AuditService } from '../../modules/audit/audit.service';
 
 interface ErrorBody {
   statusCode: number;
@@ -20,37 +17,9 @@ interface ErrorBody {
   timestamp: string;
 }
 
-/** Mutating HTTP verbs — read-only requests are not audited. */
-const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-
-/** Kebab-case path segment -> semantic action (lifecycle/auth verbs). */
-const SEGMENT_ACTION: Record<string, AuditAction> = {
-  submit: AuditAction.SUBMIT,
-  approve: AuditAction.APPROVE,
-  reject: AuditAction.REJECT,
-  resubmit: AuditAction.RESUBMIT,
-  withdraw: AuditAction.WITHDRAW,
-  check: AuditAction.TREASURY_CHECK,
-  complete: AuditAction.TREASURY_COMPLETE,
-  cancel: AuditAction.CANCEL,
-  restore: AuditAction.RESTORE,
-  login: AuditAction.LOGIN,
-  'forgot-password': AuditAction.FORGOT_PASSWORD,
-  'reset-password': AuditAction.RESET_PASSWORD,
-};
-
-const METHOD_FALLBACK: Record<string, AuditAction> = {
-  POST: AuditAction.CREATE,
-  PUT: AuditAction.UPDATE,
-  PATCH: AuditAction.UPDATE,
-  DELETE: AuditAction.DELETE,
-};
-
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
-
-  constructor(private readonly audit: AuditService) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -72,12 +41,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         error = (r.error as string) ?? exception.name;
       }
     } else if (exception instanceof QueryFailedError) {
-      const e = exception as QueryFailedError & {
-        code?: string;
-        detail?: string;
-        constraint?: string;
-        table?: string;
-      };
+      const e = exception as QueryFailedError & { code?: string; detail?: string };
       if (e.code === '23505') {
         status = HttpStatus.CONFLICT;
         message = e.detail ?? 'Duplicate value violates unique constraint';
@@ -86,15 +50,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
         status = HttpStatus.CONFLICT;
         message = 'Cannot complete operation: related records exist';
         error = 'ForeignKeyViolation';
-        // The friendly message hides which FK failed; log the real detail so
-        // these (e.g. a referenced record deleted after a request was raised)
-        // are diagnosable. Constraint violations map to 409, not 500, so they
-        // would otherwise never be logged.
-        this.logger.warn(
-          `${request.method} ${request.url} -> 23503 FK violation` +
-            `${e.constraint ? ` (constraint=${e.constraint})` : ''}` +
-            `${e.table ? ` (table=${e.table})` : ''}: ${e.detail ?? 'no detail'}`,
-        );
       } else {
         message = 'Database error';
         error = 'DatabaseError';
@@ -111,12 +66,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
       );
     }
 
-    // Audit requests that were rejected BEFORE reaching the route handler
-    // (e.g. 401 unauthenticated / 403 wrong role from a guard). Requests that
-    // reached the handler are flagged by AuditInterceptor and recorded there,
-    // so skipping them here avoids double-logging.
-    this.auditBlocked(request, status, message);
-
     const body: ErrorBody = {
       statusCode: status,
       message,
@@ -125,67 +74,5 @@ export class HttpExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
     };
     response.status(status).json(body);
-  }
-
-  /** Record a guard-blocked mutating request as a failed audit entry. */
-  private auditBlocked(
-    request: Request,
-    status: number,
-    message: string | string[],
-  ): void {
-    const handled = (request as Request & { __auditHandled?: boolean }).__auditHandled;
-    if (handled || !MUTATING_METHODS.has(request.method)) return;
-
-    const path = request.originalUrl ?? request.url;
-    // For 403, the JWT guard already populated req.user before the roles guard
-    // rejected — capture who attempted it. For 401 there is no user.
-    const user = (request as Request & { user?: AuthenticatedUser }).user;
-
-    void this.audit.record({
-      action: this.actionFor(request.method, path),
-      entityType: this.resourceFor(path),
-      entityId: (request.params as Record<string, string> | undefined)?.id ?? null,
-      userId: user?.id ?? null,
-      userEmail: user?.email ?? this.bodyEmail(request),
-      httpMethod: request.method,
-      path,
-      statusCode: status,
-      success: false,
-      errorMessage: Array.isArray(message) ? message.join(', ') : message,
-      ipAddress: request.ip ?? null,
-      userAgent: request.headers['user-agent'] ?? null,
-    });
-  }
-
-  /** Resource the request targeted, derived from the URL path (PascalCase). */
-  private resourceFor(path: string): string | null {
-    const segments = this.pathSegments(path);
-    const resource = segments[0];
-    if (!resource) return null;
-    return resource
-      .split('-')
-      .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-      .join('');
-  }
-
-  private actionFor(method: string, path: string): AuditAction {
-    const segments = this.pathSegments(path);
-    const last = segments[segments.length - 1];
-    return (
-      SEGMENT_ACTION[last] ?? METHOD_FALLBACK[method] ?? AuditAction.ACTION
-    );
-  }
-
-  /** Path segments after the global `/api/vN` prefix, query stripped. */
-  private pathSegments(path: string): string[] {
-    return path
-      .split('?')[0]
-      .split('/')
-      .filter((s) => s && s !== 'api' && !/^v\d+$/.test(s));
-  }
-
-  private bodyEmail(request: Request): string | null {
-    const email = (request.body as Record<string, unknown> | undefined)?.email;
-    return typeof email === 'string' ? email : null;
   }
 }

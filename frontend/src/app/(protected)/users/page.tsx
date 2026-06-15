@@ -5,10 +5,8 @@ import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
 import { api, friendlyError } from '@/lib/api';
-import { formatDateTime } from '@/lib/datetime';
 import type { Paginated, User } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
-import { ImportCsvDialog } from '@/components/shared/import-csv-dialog';
 import { Input } from '@/components/ui/input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -92,19 +90,10 @@ export default function UsersPage(): React.ReactElement {
         title="Users"
         description="Application users and their role assignments."
         actions={
-          <div className="flex items-center gap-2">
-            <ImportCsvDialog
-              entityName="Users"
-              endpoint="/users/import"
-              sampleHeaders={['email', 'full_name', 'password', 'employee_code', 'is_active']}
-              sampleRows={[['john.smith@company.com', 'John Smith', 'Temp@1234', 'EMP001', 'true']]}
-              onSuccess={() => void queryClient.invalidateQueries({ queryKey: ['users'] })}
-            />
-            <Button onClick={openDialog} size="sm">
-              <Plus className="mr-2 h-4 w-4" />
-              Add User
-            </Button>
-          </div>
+          <Button onClick={openDialog} size="sm">
+            <Plus className="mr-2 h-4 w-4" />
+            Add User
+          </Button>
         }
       />
 
@@ -124,6 +113,7 @@ export default function UsersPage(): React.ReactElement {
               <TableHead>Full name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Employee code</TableHead>
+              <TableHead>Legal entity</TableHead>
               <TableHead>Roles</TableHead>
               <TableHead>Last login</TableHead>
               <TableHead className="w-36 text-right">Actions</TableHead>
@@ -132,13 +122,26 @@ export default function UsersPage(): React.ReactElement {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell>
+                <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell>
               </TableRow>
             ) : data && data.data.length > 0 ? data.data.map((u) => (
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.fullName}</TableCell>
                 <TableCell>{u.email}</TableCell>
                 <TableCell className="text-muted-foreground">{u.employeeCode ?? '—'}</TableCell>
+                <TableCell>
+                  {u.legalEntities && u.legalEntities.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {u.legalEntities.map((le) => (
+                        <span key={le} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-800">
+                          {le}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
                 <TableCell>
                   {u.roles && u.roles.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
@@ -153,7 +156,7 @@ export default function UsersPage(): React.ReactElement {
                   )}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {formatDateTime(u.lastLoginAt)}
+                  {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}
                 </TableCell>
                 <TableCell className="text-right">
                   <Button asChild variant="outline" size="sm">
@@ -163,7 +166,7 @@ export default function UsersPage(): React.ReactElement {
               </TableRow>
             )) : (
               <TableRow>
-                <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No users yet.</TableCell>
+                <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No users yet.</TableCell>
               </TableRow>
             )}
           </TableBody>

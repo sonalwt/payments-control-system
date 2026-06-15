@@ -286,13 +286,13 @@ BEGIN
   --   Band 2:   INR 50,001 – 500,000 (5,000,001 – 50,000,000 minor)
   --   Band 3:   INR 500,001+         (50,000,001+ minor, open-ended)
   -- ================================================================
-  INSERT INTO approval_matrices(name, description, payment_type_code,
-                                 effective_from)
+  INSERT INTO approval_matrices(name, description, payment_type_code, version,
+                                 status, effective_from, published_at, published_by)
   VALUES (
     'Vendor Payment — Standard INR Matrix v1',
     'Three-tier INR approval matrix for vendor payments',
-    'VENDOR_PAYMENT',
-    CURRENT_DATE
+    'VENDOR_PAYMENT', 1,
+    'PUBLISHED', CURRENT_DATE, now(), v_usr_admin
   )
   ON CONFLICT (payment_type_code, version) DO UPDATE SET updated_at = now()
   RETURNING id INTO v_mat_vendor;
