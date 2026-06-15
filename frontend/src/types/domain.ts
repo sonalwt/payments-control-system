@@ -15,14 +15,36 @@ export interface AuditFields {
   updatedBy?: string | null;
 }
 
+export interface AuditLog {
+  id: string;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  userId?: string | null;
+  userEmail?: string | null;
+  httpMethod: string;
+  path: string;
+  statusCode?: number | null;
+  success: boolean;
+  params?: Record<string, unknown> | null;
+  requestBody?: Record<string, unknown> | null;
+  errorMessage?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  durationMs?: number | null;
+  createdAt: string;
+}
+
 export interface Currency extends AuditFields {
-  code: string;
   name: string;
-  numericCode?: string | null;
-  minorUnit: number;
-  symbol?: string | null;
   isActive: boolean;
-  isSystem: boolean;
+  // Optional legacy attributes — present on seeded rows from the original
+  // ISO 4217 master; not collected by the simplified SUPER_ADMIN form.
+  code?: string | null;
+  numericCode?: string | null;
+  minorUnit?: number;
+  symbol?: string | null;
+  isSystem?: boolean;
 }
 
 export interface Group extends AuditFields {
@@ -32,42 +54,37 @@ export interface Group extends AuditFields {
 }
 
 export interface LegalEntity extends AuditFields {
-  groupId: string;
-  group?: Group;
   name: string;
   code: string;
-  registeredCountry: string;
-  baseCurrencyId: string;
+  countryId?: string | null;
+  country?: Country | null;
+  isActive: boolean;
+  // Optional richer-org fields — present on legacy/seeded rows, not set by
+  // the SUPER_ADMIN master form.
+  groupId?: string;
+  group?: Group;
+  registeredCountry?: string;
+  baseCurrencyId?: string;
   baseCurrency?: Currency;
   approvalMatrixRef?: string | null;
   taxIdentifier?: string | null;
-  isActive: boolean;
 }
 
 export interface Country extends AuditFields {
-  legalEntityId: string;
+  countryName: string;
+  countryShortName: string;
+  code: string;
+  currencyId: string;
+  currency?: Currency | null;
+  isActive: boolean;
+  isSanctioned: boolean;
+  // Optional legacy aliases — preserved on rows that used the older
+  // master shape. Prefer the canonical field names above.
+  name?: string;
+  shortName?: string | null;
+  isoCode?: string;
+  legalEntityId?: string;
   legalEntity?: LegalEntity;
-  name: string;
-  isoCode: string;
-  isActive: boolean;
-}
-
-export interface BusinessUnit extends AuditFields {
-  countryId: string;
-  country?: Country;
-  name: string;
-  code: string;
-  description?: string | null;
-  isActive: boolean;
-}
-
-export interface Department extends AuditFields {
-  businessUnitId: string;
-  businessUnit?: BusinessUnit;
-  name: string;
-  code: string;
-  description?: string | null;
-  isActive: boolean;
 }
 
 export interface Role {
@@ -110,14 +127,6 @@ export interface UserRole {
 
 export type PaymentDirection = 'OUTGOING' | 'INCOMING';
 
-export interface DocumentPolicyItem {
-  code: string;
-  label: string;
-  required: boolean;
-  amountThresholdMinor?: number | null;
-  currencyCode?: string | null;
-}
-
 export interface FieldConfigItem {
   key: string;
   label: string;
@@ -159,7 +168,8 @@ export interface Counterparty extends AuditFields {
   name: string;
   legalName?: string | null;
   role: CounterpartyRole;
-  countryCode: string;
+  countryId?: string | null;
+  country?: Country | null;
   taxIdentifiers: TaxIdentifier[];
   addresses: Address[];
   primaryContactName?: string | null;
@@ -167,31 +177,44 @@ export interface Counterparty extends AuditFields {
   primaryContactPhone?: string | null;
   notes?: string | null;
   isActive: boolean;
+  kycDone: boolean;
+  // Legacy alias kept for older rows where country was a plain ISO code
+  countryCode?: string;
 }
 
 export interface Employee extends AuditFields {
   employeeCode: string;
   fullName: string;
-  preferredName?: string | null;
-  workEmail?: string | null;
-  legalEntityId: string;
-  legalEntity?: LegalEntity;
-  countryCode: string;
-  baseCurrencyId: string;
-  baseCurrency?: Currency;
-  payrollCategory: string;
-  employeeBankAccountId?: string | null;
-  employmentStartDate?: string | null;
-  employmentEndDate?: string | null;
+  workEmail: string;
+  countryOfEmploymentId: string;
+  countryOfEmployment?: Country;
+  startDate?: string | null;
+  endDate?: string | null;
   // Sensitive — returned as '••••' unless the caller holds PAYROLL_PII_ACCESS.
   nationalId?: string | null;
   taxIdentifier?: string | null;
   dateOfBirth?: string | null;
+  mobileNumber?: string | null;
+  address?: string | null;
   compensationBand?: string | null;
   isActive: boolean;
+  // Optional legacy fields — preserved on rows that used the older shape.
+  preferredName?: string | null;
+  legalEntityId?: string;
+  legalEntity?: LegalEntity;
+  countryCode?: string;
+  baseCurrencyId?: string;
+  baseCurrency?: Currency;
+  payrollCategory?: string;
+  employeeBankAccountId?: string | null;
+  // Older alias fields kept for backwards-compat with pages that haven't
+  // migrated to the canonical names yet.
+  countryId?: string | null;
+  country?: Country | null;
+  employmentStartDate?: string | null;
+  employmentEndDate?: string | null;
 }
 
-export type ApprovalMatrixStatus = 'DRAFT' | 'PUBLISHED' | 'SUPERSEDED';
 export type ApproverType = 'USER' | 'ROLE';
 
 export interface ApprovalMatrixStep {
@@ -200,30 +223,41 @@ export interface ApprovalMatrixStep {
   approverType: ApproverType;
   approverUserId?: string | null;
   approverRoleId?: string | null;
+  approverUser?: User | null;
+  approverRole?: Role | null;
   isOptional: boolean;
 }
 
 export interface ApprovalMatrixBand {
   id?: string;
-  currencyCode: string;
-  minAmountMinor: number;
-  maxAmountMinor?: number | null;
-  sortOrder?: number;
+  sortOrder: number;
+  minAmount: number;
+  maxAmount?: number | null;
   steps: ApprovalMatrixStep[];
 }
 
 export interface ApprovalMatrix extends AuditFields {
   name: string;
   description?: string | null;
-  paymentTypeCode: string;
-  version: number;
-  status: ApprovalMatrixStatus;
+  paymentTypeId: string;
+  paymentType?: PaymentType;
+  currencyId: string;
+  currency?: Currency;
   effectiveFrom: string;
   effectiveTo?: string | null;
-  publishedAt?: string | null;
-  publishedBy?: string | null;
   isActive: boolean;
+  /** Treasury Team that executes the payment after final approval. */
+  ttMode: TtMode;
+  /** Role that acts at each Treasury Team stage (required for new matrices). */
+  treasuryMakerRoleId?: string | null;
+  treasuryMakerRole?: Role | null;
+  treasuryCheckerRoleId?: string | null;
+  treasuryCheckerRole?: Role | null;
+  treasuryAuthoriserRoleId?: string | null;
+  treasuryAuthoriserRole?: Role | null;
   bands?: ApprovalMatrixBand[];
+  // Legacy alias (older rows / resolved-chain output)
+  paymentTypeCode?: string;
 }
 
 export interface ResolvedChainStep {
@@ -258,13 +292,23 @@ export interface PaymentType extends AuditFields {
   mobileInitiationOnly: boolean;
   allowsCrossCurrency: boolean;
   approvalMatrixRef?: string | null;
-  documentPolicy: DocumentPolicyItem[];
   fieldConfig: FieldConfigItem[];
   isSystem: boolean;
   isActive: boolean;
   version: number;
   effectiveFrom: string;
   effectiveTo?: string | null;
+  paymentCategoryId?: string | null;
+  paymentCategory?: PaymentCategory | null;
+  legalEntityId: string;
+  legalEntity?: LegalEntity | null;
+  /** Maker role UUIDs (multi-select). Any holder of one of these can create requests. */
+  makerRoleIds?: string[];
+  /** Deprecated denormalised primary maker role (kept in sync with makerRoleIds[0]). */
+  makerRoleId?: string | null;
+  makerRole?: Role | null;
+  checkerRoleId?: string | null;
+  checkerRole?: Role | null;
 }
 
 // =====================================================================
@@ -300,10 +344,13 @@ export interface ResolvedFxRate {
 export interface Bank extends AuditFields {
   name: string;
   shortName?: string | null;
-  countryCode: string;
+  countryId: string;
+  country?: Country | null;
   swiftBic?: string | null;
-  address?: string | null;
   isActive: boolean;
+  // Legacy aliases
+  countryCode?: string;
+  address?: string | null;
 }
 
 export type BankAccountType = 'CURRENT' | 'COLLATERAL' | 'DEPOSIT';
@@ -313,25 +360,56 @@ export type BalanceSource =
   | 'STATEMENT_RECONCILED'
   | 'MANUAL_OVERRIDE';
 
+export interface AccountType extends AuditFields {
+  name: string;
+  isActive: boolean;
+}
+
+export interface PaymentCategory extends AuditFields {
+  name: string;
+  isActive: boolean;
+}
+
+export interface BankAccountChargeBand {
+  id?: string;
+  sortOrder?: number;
+  minAmount: number;
+  maxAmount?: number | null;
+  percentage: number;
+}
+
 export interface BankAccount extends AuditFields {
-  nickname: string;
-  legalEntityId: string;
-  legalEntity?: LegalEntity;
-  bankId: string;
-  bank?: Bank;
+  bankId?: string | null;
+  bank?: Bank | null;
+  bankNickname?: string | null;
   currencyId: string;
   currency?: Currency;
   accountNumber: string;
-  iban?: string | null;
-  accountType: BankAccountType;
   branchName?: string | null;
   branchCode?: string | null;
-  balance: string;
-  balanceAsOf: string;
-  balanceSource: BalanceSource;
-  minimumBalance?: string | null;
+  openingBalance: number | string;
+  minimumBalance: number | string;
+  remainingBalance: number | string;
   isChairmanDesignated: boolean;
   isActive: boolean;
+  // Tiered bank charges by amount band (e.g. 0–1000 → 2%, 1000+ → 5%).
+  chargeBands?: BankAccountChargeBand[];
+  // Account-type master FK + joined master row
+  accountTypeId?: string | null;
+  accountTypeMaster?: AccountType | null;
+  // §1.3 - Counterparty owner (counterparty bank accounts only).
+  counterpartyId?: string | null;
+  counterparty?: Counterparty | null;
+  // Legacy fields preserved for older consumers (statements, reconciliation, etc.)
+  bankName?: string | null;
+  nickname?: string;
+  accountType?: BankAccountType;
+  legalEntityId?: string;
+  legalEntity?: LegalEntity;
+  iban?: string | null;
+  balance?: string;
+  balanceAsOf?: string;
+  balanceSource?: BalanceSource;
 }
 
 export type BalanceChangeKind =
@@ -385,16 +463,16 @@ export interface SanctionedCountry extends AuditFields {
 export type PaymentRequestStatus =
   | 'DRAFT'
   | 'PENDING_APPROVAL'
-  | 'APPROVED'
-  | 'AWAITING_PAYMENT_CONFIRMATION'
-  | 'PAID'
+  | 'TREASURY_MAKER'
+  | 'TREASURY_CHECKER'
+  | 'TREASURY_AUTHORISER'
+  | 'COMPLETED'
   | 'REJECTED'
   | 'WITHDRAWN'
-  | 'CANCELLED'
-  // §9 — Chairman payment execution stages (chain-free).
-  | 'AWAITING_MAKER_PREP'
-  | 'AWAITING_CHECKER_REVIEW'
-  | 'AWAITING_HEAD_APPROVAL';
+  | 'CANCELLED';
+
+/** Treasury-Team execution mode, selected on the approval matrix. */
+export type TtMode = 'ONLINE_TT' | 'OFFLINE_TT';
 
 export type ApprovalDecision = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -404,16 +482,12 @@ export interface PaymentRequestApproval {
   stepOrder: number;
   approverType: 'USER' | 'ROLE';
   approverUserId?: string | null;
+  approverUser?: User | null;
   approverRoleId?: string | null;
-  /** Resolved display name for ROLE-type steps (e.g. "Approver") */
-  approverRoleName?: string | null;
-  /** Resolved email for USER-type steps */
-  approverUserEmail?: string | null;
-  /** Resolved full name for USER-type steps */
-  approverUserName?: string | null;
-  isOptional: boolean;
+  approverRole?: Role | null;
   decision: ApprovalDecision;
   decidedBy?: string | null;
+  decidedByUser?: User | null;
   decidedAt?: string | null;
   comments?: string | null;
   createdAt: string;
@@ -456,13 +530,13 @@ export interface BeneficiaryAccount extends AuditFields {
   accountNumber: string;
   bankId: string;
   bank?: Bank;
-  bankName?: string | null;
   branchName?: string | null;
   swiftBic?: string | null;
   iban?: string | null;
   currencyId: string;
   currency?: Currency;
-  countryCode: string;
+  countryId: string;
+  country?: Country;
   status: BeneficiaryAccountStatus;
   coolingOffUntil?: string | null;
   /** §1.3 — Direction tag: pay-to (outgoing), receive-from (incoming), or both. */
@@ -475,151 +549,94 @@ export interface BeneficiaryAccountChangeRequest extends AuditFields {
   changeType: ChangeRequestType;
   status: ChangeRequestStatus;
   proposedData: Record<string, unknown>;
-  documents: Array<{ documentCode: string; fileName: string; fileUrl: string; mimeType?: string }>;
+  documents: Array<{ code: string; label: string; fileName: string; fileUrl: string; mimeType?: string | null }>;
   requestedBy: string;
-  requester?: { id: string; fullName: string; email: string };
+  requestedByUser?: User;
+  requestedAt: string;
   verifiedBy?: string | null;
-  verifier?: { id: string; fullName: string; email: string } | null;
+  verifiedByUser?: User | null;
   verifiedAt?: string | null;
   verificationNotes?: string | null;
+  /** §6.2 — Free-text record of the independent verification call. */
   callbackEvidence?: string | null;
   approvedBy?: string | null;
+  approvedByUser?: User | null;
   approvedAt?: string | null;
   rejectedBy?: string | null;
+  rejectedByUser?: User | null;
   rejectedAt?: string | null;
   rejectionReason?: string | null;
-  /** §6.4 — True when at least one anomaly signal fired on creation. */
-  anomalyFlag: boolean;
-  /** §6.4 — Pipe-separated list of anomaly signals. */
-  anomalyNotes?: string | null;
-  /** §6.5 — True when the proposed beneficiary country is sanctioned. */
-  sanctionWarning: boolean;
-  /** §6.5 — Written acknowledgement from the final approver when sanctionWarning is true. */
-  sanctionOverrideReason?: string | null;
-}
-
-// -----------------------------------------------------------------------
-// Section 9 — Chairman Beneficiary Master
-// -----------------------------------------------------------------------
-
-export type ChairmanBeneficiaryStatus = 'PENDING_ACTIVATION' | 'ACTIVE' | 'INACTIVE';
-export type ChairmanCrType = 'ADD' | 'MODIFY' | 'DEACTIVATE';
-export type ChairmanCrStatus =
-  | 'PENDING_VERIFICATION'
-  | 'VERIFIED'
-  | 'APPROVED'
-  | 'REJECTED'
-  | 'CANCELLED';
-
-/** A confidential payment beneficiary — no counterparty/employee owner. */
-export interface ChairmanBeneficiary extends AuditFields {
-  accountHolderName: string;   // may be 'Confidential' when masked by the API
-  accountNumber: string;       // may be '****' when masked
-  bankId: string;
-  bank?: Bank;
-  bankName?: string | null;    // may be 'Confidential' when masked
-  branchName?: string | null;
-  swiftBic?: string | null;
-  iban?: string | null;
-  currencyId: string;
-  currency?: Currency;
-  countryCode: string;
-  status: ChairmanBeneficiaryStatus;
-  coolingOffUntil?: string | null;
-  anomalyFlag: boolean;
-  anomalyNotes?: string | null;
-  sanctionWarning: boolean;
-  sanctionOverrideReason?: string | null;
-}
-
-export interface ChairmanBeneficiaryChangeRequest extends AuditFields {
-  chairmanBeneficiaryId?: string | null;
-  chairmanBeneficiary?: ChairmanBeneficiary | null;
-  changeType: ChairmanCrType;
-  status: ChairmanCrStatus;
-  proposedData: Record<string, unknown>;
-  documents: Array<{ documentCode: string; fileName: string; fileUrl: string; mimeType?: string }>;
-  anomalyFlag: boolean;
-  anomalyNotes?: string | null;
-  sanctionWarning: boolean;
-  sanctionOverrideReason?: string | null;
-  requestedBy: string;
-  requester?: { id: string; fullName: string; email: string };
-  verifiedBy?: string | null;
-  verifier?: { id: string; fullName: string; email: string } | null;
-  verifiedAt?: string | null;
-  verificationNotes?: string | null;
-  callbackEvidence?: string | null;
-  approvedBy?: string | null;
-  approvedAt?: string | null;
-  rejectedBy?: string | null;
-  rejectedAt?: string | null;
-  rejectionReason?: string | null;
+  coolingOffOverride: boolean;
+  coolingOffOverrideReason?: string | null;
 }
 
 // -----------------------------------------------------------------------
 
 export interface PaymentRequest extends AuditFields {
   requestNumber: string;
-  paymentTypeCode: string;
-  legalEntityId: string;
-  legalEntity?: LegalEntity;
+  paymentTypeId: string;
+  paymentType?: PaymentType;
   counterpartyId?: string | null;
   counterparty?: Counterparty | null;
   employeeId?: string | null;
   employee?: Employee | null;
-  currencyCode: string;
+  beneficiaryAccountId?: string | null;
+  beneficiaryAccount?: BeneficiaryAccount | null;
+  sourceAccountId?: string | null;
+  sourceAccount?: BankAccount | null;
+  currencyId: string;
+  currency?: Currency;
   amount: string;
-  amountMinor: number;
   purposeDescription?: string | null;
   invoiceNumber?: string | null;
   dueDate?: string | null;
-  sourceAccountId?: string | null;
-  sourceAccount?: BankAccount | null;
-  isCrossCurrency: boolean;
-  indicativeSourceAmount?: string | null;
-  bankReference?: string | null;
-  valueDate?: string | null;
-  proofOfPaymentUrl?: string | null;
   status: PaymentRequestStatus;
   submittedAt?: string | null;
   approvedAt?: string | null;
+  releasedAt?: string | null;
   paidAt?: string | null;
   matrixId?: string | null;
-  matrixVersion?: number | null;
   currentStepOrder?: number | null;
-  rejectionReason?: string | null;
-  cancellationReason?: string | null;
-  makerNotes?: string | null;
-  beneficiaryAccountId?: string | null;
-  beneficiaryAccount?: BeneficiaryAccount | null;
-  /** §4.2 — Snapshot of counterparty/employee frozen at submission time. */
+  bankReference?: string | null;
+  valueDate?: string | null;
+  proofOfPaymentUrl?: string | null;
+  // Treasury Team execution (post final-approval)
+  ttMode?: TtMode | null;
+  // Role pinned to each treasury stage (snapshotted from the matrix).
+  treasuryMakerRoleId?: string | null;
+  treasuryMakerRole?: Role | null;
+  treasuryCheckerRoleId?: string | null;
+  treasuryCheckerRole?: Role | null;
+  treasuryAuthoriserRoleId?: string | null;
+  treasuryAuthoriserRole?: Role | null;
+  treasuryReferenceNumber?: string | null;
+  swiftCopyUrl?: string | null;
+  treasuryMakerBy?: string | null;
+  treasuryMakerByUser?: User | null;
+  treasuryMakerAt?: string | null;
+  treasuryCheckerBy?: string | null;
+  treasuryCheckerByUser?: User | null;
+  treasuryCheckerAt?: string | null;
+  treasuryAuthoriserBy?: string | null;
+  treasuryAuthoriserByUser?: User | null;
+  treasuryAuthoriserAt?: string | null;
+  completedAt?: string | null;
+  sanctionWarning: boolean;
+  sanctionOverrideReason?: string | null;
+  /** §6.4 — anomaly flag set at submit time (does not block the payment). */
+  anomalyFlag: boolean;
+  anomalyNotes?: string | null;
+  /** §1.3/§4.2 — Snapshot of counterparty frozen at submission time. */
   counterpartySnapshot?: Record<string, unknown> | null;
   /** §4.2 — Snapshot of beneficiary account frozen at submission time. */
   beneficiarySnapshot?: Record<string, unknown> | null;
-  /**
-   * §4.2/§6.5 — True when the beneficiary or counterparty country was on the
-   * sanctioned-country list at the time of submission.
-   */
-  sanctionWarning?: boolean;
-  /** §6.5 — Written acknowledgement from the final approver when sanctionWarning is true. */
-  sanctionOverrideReason?: string | null;
-  /**
-   * §2.5/§2.6 — True once this request's debit has been reconciled against an
-   * uploaded bank statement. Post-execution amount correction is blocked.
-   */
-  isAmountLocked?: boolean;
+  rejectionReason?: string | null;
+  cancellationReason?: string | null;
+  withdrawnReason?: string | null;
   approvals?: PaymentRequestApproval[];
   documents?: PaymentRequestDocument[];
-  // §9 — Chairman payment fields.
-  isChairmanPayment?: boolean;
-  chairmanBeneficiaryId?: string | null;
-  /** Full object when loaded with relations; may be masked for non-execution roles. */
-  chairmanBeneficiary?: ChairmanBeneficiary | null;
-  makerPreparedAt?: string | null;
-  checkerVerifiedAt?: string | null;
-  headApprovedAt?: string | null;
-  checkerNotes?: string | null;
+  /** Maker who created the request — joined for the "Worked on by" column. */
+  createdByUser?: { id: string; fullName: string; email: string } | null;
 }
 
 // -----------------------------------------------------------------------
@@ -657,6 +674,7 @@ export interface IncomingReceipt extends AuditFields {
   expectedAmount: string;
   expectedCurrencyCode: string;
   purposeDescription?: string | null;
+  receivedFromAccount?: string | null;
   status: IncomingReceiptStatus;
   submittedAt?: string | null;
   receivedAt?: string | null;

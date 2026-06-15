@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, FileText, FileUp } from 'lucide-react';
-import { api, friendlyError, resolveFileUrl } from '@/lib/api';
+import { api, friendlyError } from '@/lib/api';
+import { FileActions } from '@/components/shared/file-actions';
 import type {
   BankAccount,
   Counterparty,
@@ -58,13 +59,11 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
     queryKey: ['currencies-all'],
     queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=100'),
   });
+  // Bank accounts aren't linked to a legal entity, and the list endpoint only
+  // whitelists page/limit/search — so fetch all and filter active client-side.
   const accounts = useQuery({
-    queryKey: ['bank-accounts', ir.data?.legalEntityId],
-    enabled: !!ir.data?.legalEntityId,
-    queryFn: () =>
-      api.get<Paginated<BankAccount>>(
-        `/bank-accounts?legalEntityId=${ir.data!.legalEntityId}&page=1&limit=100`,
-      ),
+    queryKey: ['bank-accounts-all'],
+    queryFn: () => api.get<Paginated<BankAccount>>('/bank-accounts?page=1&limit=200'),
   });
 
   const [counterpartyId, setCounterpartyId] = useState('');
@@ -72,6 +71,7 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
   const [currencyCode, setCurrencyCode] = useState('');
   const [amount, setAmount] = useState('');
   const [purpose, setPurpose] = useState('');
+  const [receivedFromAccount, setReceivedFromAccount] = useState('');
   const [newDocs, setNewDocs] = useState<DocDraft[]>([]);
   const [uploading, setUploading] = useState(false);
 
@@ -84,6 +84,7 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
       setCurrencyCode(ir.data.expectedCurrencyCode);
       setAmount(ir.data.expectedAmount);
       setPurpose(ir.data.purposeDescription ?? '');
+      setReceivedFromAccount(ir.data.receivedFromAccount ?? '');
       setHydrated(true);
     }
   }, [ir.data, hydrated]);
@@ -97,8 +98,8 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
       setNewDocs((d) => [
         ...d,
         {
-          documentCode: 'DEBIT_NOTE',
-          documentLabel: 'Debit Note / Final Invoice',
+          documentCode: 'SUPPORTING_DOC',
+          documentLabel: 'Supporting Document',
           fileName,
           fileUrl: url,
           fileSizeBytes: file.size,
@@ -122,6 +123,7 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
         expectedAmount: amount,
         expectedCurrencyCode: currencyCode.toUpperCase(),
         purposeDescription: purpose || undefined,
+        receivedFromAccount: receivedFromAccount || undefined,
         documents: newDocs.length > 0 ? newDocs : undefined,
       }),
     onSuccess: () => {
@@ -169,9 +171,7 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
     );
   }
 
-  const accountOpts = (accounts.data?.data ?? []).filter(
-    (a) => a.isActive && a.accountType === 'CURRENT',
-  );
+  const accountOpts = (accounts.data?.data ?? []).filter((a) => a.isActive);
   const attached = existingDocs.data ?? [];
   const canSave =
     !!counterpartyId &&
@@ -252,7 +252,7 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
               {(currencies.data?.data ?? [])
                 .filter((c) => c.isActive)
                 .map((c) => (
-                  <option key={c.id} value={c.code}>
+                  <option key={c.id} value={c.code ?? ''}>
                     {c.code} — {c.name}
                   </option>
                 ))}
@@ -260,7 +260,7 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
           </div>
 
           <div className="md:col-span-2">
-            <Label htmlFor="receive-from">Receive-from Account *</Label>
+            <Label htmlFor="receive-from">Receive-to Account *</Label>
             <select
               id="receive-from"
               className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
@@ -270,12 +270,27 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
               <option value="">Select…</option>
               {accountOpts.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.nickname} — {a.accountNumber} ({a.currency?.code ?? '—'})
+                  {a.bankNickname ?? a.bankName ?? 'Account'} — {a.accountNumber} ({a.currency?.code ?? '—'})
                 </option>
               ))}
             </select>
             <p className="mt-1 text-xs text-muted-foreground">
               The group bank account expected to receive this credit.
+            </p>
+          </div>
+
+          <div className="md:col-span-2">
+            <Label htmlFor="received-from-account">Received-from Account</Label>
+            <Input
+              id="received-from-account"
+              value={receivedFromAccount}
+              onChange={(e) => setReceivedFromAccount(e.target.value)}
+              className="mt-1"
+              placeholder="Counterparty account / IBAN (optional)"
+              maxLength={200}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Optional — the counterparty bank account the credit is expected from.
             </p>
           </div>
 
@@ -299,17 +314,11 @@ export default function EditIncomingReceiptPage(): React.ReactElement {
                 {attached.map((d) => (
                   <li key={d.id} className="flex items-center gap-2">
                     <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                    <a
-                      href={resolveFileUrl(d.fileUrl)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      {d.fileName}
-                    </a>
+                    <span>{d.fileName}</span>
                     <span className="text-xs text-muted-foreground">
                       ({d.documentLabel ?? d.documentCode})
                     </span>
+                    <FileActions className="ml-auto" fileUrl={d.fileUrl} fileName={d.fileName} />
                   </li>
                 ))}
               </ul>

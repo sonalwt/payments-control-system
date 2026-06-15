@@ -1,510 +1,482 @@
 'use client';
 
-import { useState } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
-import { AlertTriangle, FileText, Paperclip, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api, type ExtractedInvoice } from '@/lib/api';
+import { useAuth } from '@/hooks/use-auth';
+import type {
+  BankAccount,
+  BeneficiaryAccount,
+  Counterparty,
+  Currency,
+  Paginated,
+  PaymentType,
+  Role,
+} from '@/types/domain';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { useNotify } from '@/hooks/use-notify';
-import { api } from '@/lib/api';
-import type { BeneficiaryAccount, Counterparty, Employee, LegalEntity, PaymentType, SanctionedCountry } from '@/types/domain';
+import { DialogFooter } from '@/components/ui/dialog';
 
 const documentSchema = z.object({
-  documentCode: z.string().min(1, 'Code required').max(50),
+  documentCode: z.string().min(1).max(50),
   documentLabel: z.string().optional(),
-  fileName: z.string().min(1, 'File name required'),
-  fileUrl: z.string().min(1, 'File URL required'),
+  fileName: z.string().min(1),
+  fileUrl: z.string().min(1),
   mimeType: z.string().optional(),
 });
 
-const schema = z.object({
-  paymentTypeCode: z.string().min(1, 'Payment type required'),
-  legalEntityId: z.string().uuid('Legal entity required'),
+export const paymentRequestSchema = z.object({
+  paymentTypeId: z.string().uuid('Select a payment type'),
   counterpartyId: z.string().uuid().optional().or(z.literal('')),
-  employeeId: z.string().uuid().optional().or(z.literal('')),
   beneficiaryAccountId: z.string().uuid().optional().or(z.literal('')),
-  currencyCode: z.string().length(3, 'Currency code must be 3 characters'),
-  amount: z.string().regex(/^\d+(\.\d{1,4})?$/, 'Enter a valid positive amount'),
+  sourceAccountId: z.string().uuid().optional().or(z.literal('')),
+  currencyId: z.string().uuid('Select a currency'),
+  amount: z.string().regex(/^\d+(\.\d{1,4})?$/, 'Positive decimal, up to 4 dp'),
   purposeDescription: z.string().optional(),
   invoiceNumber: z
     .string()
-    .regex(/^[A-Za-z0-9\-_/]*$/, 'No spaces allowed — hyphens and slashes are permitted')
+    .regex(/^[A-Za-z0-9\-_/]*$/, 'Alphanumeric only — no spaces')
     .optional()
     .or(z.literal('')),
   dueDate: z.string().optional().or(z.literal('')),
   documents: z.array(documentSchema).optional(),
 });
+export type PaymentRequestFormData = z.infer<typeof paymentRequestSchema>;
 
-export type PaymentRequestFormData = z.infer<typeof schema>;
+type UploadStatus = 'idle' | 'uploading' | 'done' | 'error';
+interface DocUploadState { status: UploadStatus; error: string }
 
-interface Props {
-  paymentTypes: PaymentType[];
-  legalEntities: LegalEntity[];
-  counterparties: Counterparty[];
-  employees: Employee[];
-  beneficiaryAccounts: BeneficiaryAccount[];
-  sanctionedCountryCodes: Set<string>;
-  defaultValues?: Partial<PaymentRequestFormData>;
-  submitting?: boolean;
-  onSubmit: (data: PaymentRequestFormData) => void;
-}
+type CompareRow = { label: string; entered: string; extracted: string; status: 'match' | 'mismatch' };
 
-function SectionHeader({ step, title, description }: { step: number; title: string; description?: string }) {
-  return (
-    <div className="flex items-start gap-3 mb-4">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold">
-        {step}
-      </div>
-      <div>
-        <p className="font-semibold text-sm leading-tight">{title}</p>
-        {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
-      </div>
-    </div>
-  );
-}
-
-function FieldError({ message }: { message?: string }) {
-  if (!message) return null;
-  return <p className="text-xs text-destructive mt-1">{message}</p>;
-}
-
-function RequiredMark() {
-  return <span className="text-destructive ml-0.5">*</span>;
+/** Compare auto-read invoice fields against what the user entered (warn-only). */
+function compareInvoice(
+  ext: ExtractedInvoice,
+  entered: { amount?: string; invoiceNumber?: string },
+): CompareRow[] {
+  const rows: CompareRow[] = [];
+  if (ext.amount != null) {
+    const e = (entered.amount ?? '').trim();
+    const enteredNum = Number(e);
+    const extractedNum = Number(ext.amount);
+    const status =
+      e !== '' && Number.isFinite(enteredNum) && Math.abs(enteredNum - extractedNum) < 0.0001
+        ? 'match'
+        : 'mismatch';
+    rows.push({ label: 'Amount', entered: e || '—', extracted: ext.amount, status });
+  }
+  if (ext.invoiceNumber != null) {
+    const norm = (s: string): string => s.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    const e = (entered.invoiceNumber ?? '').trim();
+    const status = e !== '' && norm(e) === norm(ext.invoiceNumber) ? 'match' : 'mismatch';
+    rows.push({ label: 'Invoice no.', entered: e || '—', extracted: ext.invoiceNumber, status });
+  }
+  return rows;
 }
 
 export function PaymentRequestForm({
-  paymentTypes,
-  legalEntities,
-  counterparties,
-  employees,
-  beneficiaryAccounts,
-  sanctionedCountryCodes,
-  defaultValues,
-  submitting,
-  onSubmit,
-}: Props): React.ReactElement {
-  const form = useForm<PaymentRequestFormData>({
-    resolver: zodResolver(schema),
-    defaultValues: defaultValues ?? {
-      paymentTypeCode: '',
-      legalEntityId: '',
-      currencyCode: '',
-      amount: '',
-      documents: [],
-    },
+  onSubmit, submitting, defaultValues, submitLabel = 'Save as draft', showDocuments = true,
+}: {
+  onSubmit: (d: PaymentRequestFormData) => void;
+  submitting?: boolean;
+  defaultValues?: Partial<PaymentRequestFormData>;
+  submitLabel?: string;
+  showDocuments?: boolean;
+}): React.ReactElement {
+  // §4.1 — when the documents section is shown (create flow), at least one
+  // supporting document is mandatory. The edit flow hides documents, so it
+  // keeps the base (optional) schema.
+  const formSchema = useMemo(
+    () =>
+      showDocuments
+        ? paymentRequestSchema.refine((d) => (d.documents?.length ?? 0) >= 1, {
+            message: 'Attach at least one document.',
+            path: ['documents'],
+          })
+        : paymentRequestSchema,
+    [showDocuments],
+  );
+
+  const { register, control, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<PaymentRequestFormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { documents: [], ...defaultValues },
   });
 
-  const notify = useNotify();
-  const [uploadingDocIdx, setUploadingDocIdx] = useState<number>(-1);
+  // Hydrate the form when default values arrive asynchronously (edit mode).
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    if (!hydrated && defaultValues) {
+      reset({ documents: [], ...defaultValues });
+      setHydrated(true);
+    }
+  }, [defaultValues, hydrated, reset]);
 
-  const { fields: docFields, append: addDoc, remove: removeDoc } = useFieldArray({
-    control: form.control,
-    name: 'documents',
+  const [docUploadStates, setDocUploadStates] = useState<DocUploadState[]>([]);
+  // Warn-only invoice auto-read results, keyed by document index. Advisory:
+  // surfaced as a comparison panel, never blocks submission.
+  const [docExtractions, setDocExtractions] = useState<(ExtractedInvoice | null)[]>([]);
+  const fileInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  async function handleDocUpload(idx: number, file: File): Promise<void> {
+    setDocUploadStates((prev) => {
+      const next = [...prev];
+      next[idx] = { status: 'uploading', error: '' };
+      return next;
+    });
+    // Clear any prior auto-read for this slot before re-uploading.
+    setDocExtractions((prev) => {
+      const next = [...prev];
+      next[idx] = null;
+      return next;
+    });
+    try {
+      const result = await api.upload(file);
+      setValue(`documents.${idx}.fileName`, result.fileName, { shouldValidate: true });
+      setValue(`documents.${idx}.fileUrl`, result.url, { shouldValidate: true });
+      setDocUploadStates((prev) => {
+        const next = [...prev];
+        next[idx] = { status: 'done', error: '' };
+        return next;
+      });
+      // Fire-and-forget invoice auto-read (PDFs only). Failures are silent —
+      // this is an optional cross-check, not part of the upload contract.
+      if (file.type === 'application/pdf') {
+        api
+          .extractInvoice(file)
+          .then((extracted) => {
+            setDocExtractions((prev) => {
+              const next = [...prev];
+              next[idx] = extracted;
+              return next;
+            });
+          })
+          .catch(() => {
+            /* ignore — auto-read is best-effort */
+          });
+      }
+    } catch (err) {
+      setDocUploadStates((prev) => {
+        const next = [...prev];
+        next[idx] = { status: 'error', error: err instanceof Error ? err.message : 'Upload failed' };
+        return next;
+      });
+    }
+  }
+
+  const counterpartyId = watch('counterpartyId');
+  const currencyId = watch('currencyId');
+  const beneficiaryAccountId = watch('beneficiaryAccountId');
+
+  const { user } = useAuth();
+
+  const { data: paymentTypes } = useQuery({
+    queryKey: ['payment-types-for-request'],
+    queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?page=1&limit=200'),
+  });
+  const { data: roles } = useQuery({
+    queryKey: ['roles-all'],
+    queryFn: () => api.get<Role[]>('/roles'),
+  });
+  const { data: counterparties } = useQuery({
+    queryKey: ['counterparties-all'],
+    queryFn: () => api.get<Paginated<Counterparty>>('/counterparties?page=1&limit=200'),
+  });
+  const { data: currencies } = useQuery({
+    queryKey: ['currencies-all'],
+    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
+  });
+  // Group-own bank accounts (master) — pool of source accounts from which
+  // the payment will be released. Cross-currency release is blocked, so the
+  // dropdown is filtered to the request currency once chosen.
+  const { data: sourceAccounts } = useQuery({
+    queryKey: ['bank-accounts-source'],
+    queryFn: () => api.get<Paginated<BankAccount>>('/bank-accounts?page=1&limit=200'),
+  });
+  // §4.1 — destination beneficiary list is filtered to the chosen counterparty,
+  // and to payable accounts only (ACTIVE, cooling-off elapsed).
+  const { data: beneficiaries } = useQuery({
+    queryKey: ['beneficiary-accounts-payable', counterpartyId],
+    queryFn: () =>
+      api.get<Paginated<BeneficiaryAccount>>(
+        `/beneficiary-accounts?page=1&limit=200&counterpartyId=${counterpartyId}&payableOnly=true`,
+      ),
+    enabled: !!counterpartyId,
   });
 
-  const selectedTypeCode = form.watch('paymentTypeCode');
-  const selectedBeneId = form.watch('beneficiaryAccountId');
-  const selectedCounterpartyId = form.watch('counterpartyId');
-  const selectedType = paymentTypes.find((pt) => pt.code === selectedTypeCode);
-  const outgoing = selectedType?.direction === 'OUTGOING';
-  const isVendorPayment = selectedTypeCode === 'VENDOR_PAYMENT';
-  const needsCounterparty =
-    selectedTypeCode === 'VENDOR_PAYMENT' ||
-    selectedTypeCode === 'INCOMING_RECEIPT' ||
-    selectedTypeCode === 'CHAIRMAN';
-  const needsEmployee =
-    selectedTypeCode === 'PAYROLL' ||
-    selectedTypeCode === 'REIMBURSEMENT' ||
-    selectedTypeCode === 'FNF';
+  // Role IDs the current user holds (user.roles are role codes; maker roles
+  // on a payment type are stored as role IDs).
+  const heldRoleIds = new Set(
+    (roles ?? []).filter((r) => user?.roles?.includes(r.code)).map((r) => r.id),
+  );
+  // A payment type is creatable if the user holds any of its maker roles
+  // (multi-select makerRoleIds, or the legacy single makerRole).
+  const paymentTypeOptions = (paymentTypes?.data ?? [])
+    .filter((p) => {
+      if (!p.isActive) return false;
+      const ids = p.makerRoleIds?.length ? p.makerRoleIds : p.makerRoleId ? [p.makerRoleId] : [];
+      if (ids.some((id) => heldRoleIds.has(id))) return true;
+      return !!p.makerRole?.code && !!user?.roles?.includes(p.makerRole.code);
+    })
+    .map((p) => ({ label: `${p.code} — ${p.name}`, value: p.id }));
 
-  const filteredBeneficiaryAccounts = beneficiaryAccounts.filter((b) => {
-    if (b.status !== 'ACTIVE') return false;
-    if (selectedCounterpartyId && b.counterpartyId)
-      return b.counterpartyId === selectedCounterpartyId;
-    return true;
-  });
+  const selectedBeneficiary = (beneficiaries?.data ?? []).find((b) => b.id === beneficiaryAccountId);
 
-  const selectedBene = beneficiaryAccounts.find((b) => b.id === selectedBeneId);
-  const isSanctioned =
-    !!selectedBene && sanctionedCountryCodes.has(selectedBene.countryCode.toUpperCase());
+  // When a beneficiary account is selected, auto-set the currency to match it.
+  useEffect(() => {
+    if (selectedBeneficiary?.currencyId) {
+      setValue('currencyId', selectedBeneficiary.currencyId, { shouldValidate: true });
+    }
+  }, [selectedBeneficiary?.currencyId, setValue]);
 
-  const requiredDocs = selectedType?.documentPolicy?.filter((d) => d.required) ?? [];
-
-  // Dynamic step numbering
-  let step = 1;
-  const recipientStep = (needsCounterparty || needsEmployee || outgoing) ? step++ + 1 : null;
-  const invoiceStep = isVendorPayment ? step++ + 1 : null;
+  const { fields, append, remove } = useFieldArray({ control, name: 'documents' });
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
+      <div className="space-y-2">
+        <Label htmlFor="paymentTypeId">Payment type <span className="text-destructive">*</span></Label>
+        <Select id="paymentTypeId"
+          placeholder={paymentTypeOptions.length === 0 ? 'No payment types available for your role' : 'Select payment type'}
+          disabled={paymentTypeOptions.length === 0}
+          options={paymentTypeOptions}
+          {...register('paymentTypeId')} />
+        {errors.paymentTypeId && <p className="text-xs text-destructive">{errors.paymentTypeId.message}</p>}
+      </div>
 
-      {/* Section 1 — Payment Classification */}
-      <Card className="p-5">
-        <SectionHeader
-          step={1}
-          title="Payment Classification"
-          description="Select the payment type and the company initiating the payment"
-        />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">
-              Payment Type<RequiredMark />
-            </Label>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              {...form.register('paymentTypeCode')}
-            >
-              <option value="">Select payment type…</option>
-              {paymentTypes
-                .filter((pt) => pt.isActive)
-                .map((pt) => (
-                  <option key={pt.code} value={pt.code}>
-                    {pt.name}
-                  </option>
-                ))}
-            </select>
-            <FieldError message={form.formState.errors.paymentTypeCode?.message} />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">
-              Legal Entity<RequiredMark />
-            </Label>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              {...form.register('legalEntityId')}
-            >
-              <option value="">Select company…</option>
-              {legalEntities.map((le) => (
-                <option key={le.id} value={le.id}>
-                  {le.name} ({le.code})
-                </option>
-              ))}
-            </select>
-            <FieldError message={form.formState.errors.legalEntityId?.message} />
-          </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="counterpartyId">Counterparty</Label>
+          <Select id="counterpartyId" placeholder="Select (vendor payments)"
+            options={[{ label: '— None —', value: '' }, ...(counterparties?.data ?? []).map((c) => ({ label: c.legalName ?? c.id, value: c.id }))]}
+            {...register('counterpartyId')} />
         </div>
-      </Card>
-
-      {/* Section 2 — Recipient */}
-      {(needsCounterparty || needsEmployee || outgoing) && (
-        <Card className="p-5">
-          <SectionHeader
-            step={2}
-            title="Recipient"
-            description="Specify who will receive this payment and the destination account"
-          />
-          <div className="space-y-4">
-            {needsCounterparty && (
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">Counterparty</Label>
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  {...form.register('counterpartyId')}
-                >
-                  <option value="">No counterparty</option>
-                  {counterparties.filter((c) => c.isActive).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {needsEmployee && (
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">Employee</Label>
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  {...form.register('employeeId')}
-                >
-                  <option value="">Select employee…</option>
-                  {employees.filter((e) => e.isActive).map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.fullName} ({e.employeeCode})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {outgoing && (
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">
-                  Beneficiary Account<RequiredMark />
-                  <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                    from verified master
-                  </span>
-                </Label>
-                {isVendorPayment && selectedCounterpartyId && (
-                  <p className="text-xs text-muted-foreground">
-                    Showing accounts linked to the selected counterparty only.
-                  </p>
-                )}
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  {...form.register('beneficiaryAccountId')}
-                >
-                  <option value="">Select beneficiary account…</option>
-                  {filteredBeneficiaryAccounts.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.accountHolderName} — {b.accountNumber}
-                      {b.bank ? ` · ${b.bank.shortName ?? b.bank.name}` : ''}
-                      {' · '}{b.currency?.code ?? b.currencyId}
-                      {b.counterparty ? ` · ${b.counterparty.name}` : ''}
-                      {b.employee ? ` · ${b.employee.fullName}` : ''}
-                    </option>
-                  ))}
-                </select>
-                {filteredBeneficiaryAccounts.length === 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    {selectedCounterpartyId
-                      ? 'No active beneficiary accounts for this counterparty. Add one under Masters → Beneficiary Accounts.'
-                      : 'No active beneficiary accounts yet. Add one under Masters → Beneficiary Accounts.'}
-                  </p>
-                )}
-                {isSanctioned && (
-                  <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                    <span>
-                      <strong>Sanctioned country alert:</strong> This beneficiary&apos;s country ({selectedBene?.countryCode}) is on the sanctioned list. All approvers will need to acknowledge this flag before the payment can proceed.
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {/* Section — Invoice Details (VENDOR_PAYMENT only) */}
-      {isVendorPayment && (
-        <Card className="p-5">
-          <SectionHeader
-            step={invoiceStep ?? 3}
-            title="Invoice Details"
-            description="Reference information from the supplier invoice"
-          />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">
-                Invoice Number<RequiredMark />
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">alphanumeric, no spaces</span>
-              </Label>
-              <Input
-                placeholder="e.g. INV-2024-00123"
-                {...form.register('invoiceNumber')}
-              />
-              <FieldError message={form.formState.errors.invoiceNumber?.message} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">
-                Due Date<RequiredMark />
-              </Label>
-              <Input type="date" {...form.register('dueDate')} />
-              <FieldError message={form.formState.errors.dueDate?.message} />
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* Section — Amount & Purpose */}
-      <Card className="p-5">
-        <SectionHeader
-          step={invoiceStep ? (invoiceStep + 1) : (recipientStep ? 3 : 2)}
-          title="Amount & Purpose"
-          description="Enter the payment amount and a brief description"
-        />
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">
-                Currency<RequiredMark />
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">ISO 4217</span>
-              </Label>
-              <Input
-                placeholder="e.g. AED"
-                maxLength={3}
-                className="uppercase tracking-widest font-mono"
-                {...form.register('currencyCode')}
-              />
-              <FieldError message={form.formState.errors.currencyCode?.message} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">
-                Amount<RequiredMark />
-              </Label>
-              <Input
-                placeholder="e.g. 5,000.00"
-                {...form.register('amount')}
-              />
-              <FieldError message={form.formState.errors.amount?.message} />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">Purpose / Description</Label>
-            <Textarea
-              placeholder="Briefly describe the purpose of this payment…"
-              rows={3}
-              className="resize-none"
-              {...form.register('purposeDescription')}
-            />
-          </div>
+        <div className="space-y-2">
+          <Label htmlFor="beneficiaryAccountId">Destination beneficiary</Label>
+          <Select id="beneficiaryAccountId"
+            placeholder={counterpartyId ? 'Select payable account' : 'Pick a counterparty first'}
+            disabled={!counterpartyId}
+            options={[
+              { label: '— None —', value: '' },
+              ...(beneficiaries?.data ?? []).map((b) => ({
+                label: `${b.accountHolderName} · ${b.accountNumber}${b.country?.isSanctioned ? ' (sanctioned country)' : ''}`,
+                value: b.id,
+              })),
+            ]}
+            {...register('beneficiaryAccountId')} />
+          <p className="text-xs text-muted-foreground">§4.1 — only verified, payable accounts of the selected counterparty.</p>
         </div>
-      </Card>
+      </div>
 
-      {/* Section — Supporting Documents */}
-      <Card className="p-5">
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold">
-              <FileText className="h-3.5 w-3.5" />
-            </div>
-            <div>
-              <p className="font-semibold text-sm leading-tight">Supporting Documents</p>
-              {requiredDocs.length > 0 ? (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Required: {requiredDocs.map((d) => d.label).join(', ')}
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Attach any supporting files (PDF or Word)
-                </p>
-              )}
-            </div>
-          </div>
+      <div className="space-y-2">
+        <Label htmlFor="sourceAccountId">Pay from (source bank account)</Label>
+        <Select id="sourceAccountId"
+          placeholder={currencyId ? 'Select source account' : 'Pick a currency first'}
+          disabled={!currencyId}
+          options={[
+            { label: '— None —', value: '' },
+            ...(sourceAccounts?.data ?? [])
+              .filter((a) => a.isActive && a.currencyId === currencyId)
+              .map((a) => {
+                const bankLabel = a.bankNickname || a.bank?.name || a.bankName || 'Bank';
+                return {
+                  label: `${bankLabel} · ${a.accountNumber}`,
+                  value: a.id,
+                };
+              }),
+          ]}
+          {...register('sourceAccountId')} />
+        <p className="text-xs text-muted-foreground">From the bank-accounts master. Only active accounts in the request currency are listed; the Maker may change this at release time.</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
+          <Select id="currencyId" placeholder="Select"
+            options={(currencies?.data ?? [])
+              .filter((c) => !selectedBeneficiary || c.id === selectedBeneficiary.currencyId)
+              .map((c) => ({ label: c.code ? `${c.code} — ${c.name ?? ''}` : (c.name ?? c.id), value: c.id }))}
+            {...register('currencyId')} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="amount">Amount <span className="text-destructive">*</span></Label>
+          <Input id="amount" inputMode="decimal" placeholder="0.0000" {...register('amount')} />
+          {errors.amount && <p className="text-xs text-destructive">{errors.amount.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="dueDate">Due date</Label>
+          <Input id="dueDate" type="date" {...register('dueDate')} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="invoiceNumber">Invoice number</Label>
+          <Input id="invoiceNumber" placeholder="INV-2026-0001" {...register('invoiceNumber')} />
+          {errors.invoiceNumber && <p className="text-xs text-destructive">{errors.invoiceNumber.message}</p>}
+          <p className="text-xs text-muted-foreground">§4.1 — alphanumeric only; spaces are not permitted.</p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="purposeDescription">Purpose</Label>
+          <Textarea id="purposeDescription" rows={2} {...register('purposeDescription')} />
+        </div>
+      </div>
+
+      {showDocuments && (
+      <div className="rounded-md border p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium">Documents <span className="text-destructive">*</span></p>
           <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() =>
-              addDoc({
-                documentCode: selectedType?.documentPolicy?.[docFields.length]?.code ?? '',
-                documentLabel: selectedType?.documentPolicy?.[docFields.length]?.label ?? '',
-                fileName: '',
-                fileUrl: '',
-              })
-            }
+            type="button" size="sm" variant="outline"
+            onClick={() => {
+              append({ documentCode: '', documentLabel: '', fileName: '', fileUrl: '' });
+              setDocUploadStates((prev) => [...prev, { status: 'idle', error: '' }]);
+              setDocExtractions((prev) => [...prev, null]);
+            }}
           >
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Add document
+            <Plus className="mr-1 h-3 w-3" /> Add document
           </Button>
         </div>
-
-        {docFields.length === 0 ? (
-          <div className="rounded-md border-2 border-dashed border-muted-foreground/20 py-8 text-center">
-            <Paperclip className="mx-auto h-6 w-6 text-muted-foreground/40 mb-2" />
-            <p className="text-sm text-muted-foreground">No documents attached yet</p>
-            <p className="text-xs text-muted-foreground/70 mt-0.5">Click "Add document" to attach files</p>
-          </div>
+        <p className="text-xs text-muted-foreground">§4.1 — attach the documents required by the selected payment type (invoice, PO, GRN, etc.). At least one document is required.</p>
+        {errors.documents?.message && (
+          <p className="text-xs text-destructive">{errors.documents.message}</p>
+        )}
+        {fields.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No documents attached yet.</p>
         ) : (
-          <div className="space-y-2">
-            {docFields.map((field, idx) => (
-              <div
-                key={field.id}
-                className="grid grid-cols-12 gap-2 items-end rounded-md border bg-muted/20 p-3"
-              >
-                <div className="col-span-2 space-y-1">
-                  <Label className="text-xs text-muted-foreground">Code</Label>
-                  <Input
-                    className="h-8 text-xs"
-                    placeholder="invoice"
-                    {...form.register(`documents.${idx}.documentCode`)}
-                  />
-                </div>
-                <div className="col-span-3 space-y-1">
-                  <Label className="text-xs text-muted-foreground">Label</Label>
-                  <Input
-                    className="h-8 text-xs"
-                    placeholder="Invoice copy"
-                    {...form.register(`documents.${idx}.documentLabel`)}
-                  />
-                </div>
-                <div className="col-span-6 space-y-1">
-                  <Label className="text-xs text-muted-foreground">File (PDF / Word)</Label>
-                  {form.watch(`documents.${idx}.fileName`) ? (
-                    <div className="flex h-8 items-center gap-1.5 rounded-md border bg-background px-2 text-xs">
-                      <Paperclip className="h-3 w-3 shrink-0 text-primary" />
-                      <span className="flex-1 truncate text-foreground font-medium">
-                        {form.watch(`documents.${idx}.fileName`)}
-                      </span>
-                      <button
-                        type="button"
-                        className="shrink-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => {
-                          form.setValue(`documents.${idx}.fileName`, '');
-                          form.setValue(`documents.${idx}.fileUrl`, '');
-                          form.setValue(`documents.${idx}.mimeType`, '');
-                        }}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+          <div className="space-y-3">
+            {fields.map((f, idx) => {
+              const upState = docUploadStates[idx] ?? { status: 'idle', error: '' };
+              const docFileName = watch(`documents.${idx}.fileName`);
+              return (
+                <div key={f.id} className="rounded-md border p-2 space-y-2">
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                    <div>
+                      <Label className="text-xs">Code</Label>
+                      <Input placeholder="INVOICE" {...register(`documents.${idx}.documentCode`)} />
                     </div>
-                  ) : (
-                    <label className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-dashed px-2 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors">
-                      <Paperclip className="h-3 w-3 shrink-0" />
-                      <span>{uploadingDocIdx === idx ? 'Uploading…' : 'Choose PDF or Word file…'}</span>
-                      <input
-                        type="file"
-                        accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        className="sr-only"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          setUploadingDocIdx(idx);
-                          try {
-                            const result = await api.upload(file);
-                            form.setValue(`documents.${idx}.fileName`, result.fileName, { shouldValidate: true });
-                            form.setValue(`documents.${idx}.fileUrl`, result.url, { shouldValidate: true });
-                            form.setValue(`documents.${idx}.mimeType`, file.type);
-                          } catch {
-                            notify.error('Upload failed');
-                          } finally {
-                            setUploadingDocIdx(-1);
-                            e.target.value = '';
-                          }
-                        }}
-                      />
-                    </label>
+                    <div>
+                      <Label className="text-xs">Label</Label>
+                      <Input placeholder="Invoice PDF" {...register(`documents.${idx}.documentLabel`)} />
+                    </div>
+                    <Button
+                      type="button" size="icon" variant="ghost"
+                      onClick={() => {
+                        remove(idx);
+                        setDocUploadStates((prev) => prev.filter((_, i) => i !== idx));
+                        setDocExtractions((prev) => prev.filter((_, i) => i !== idx));
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+
+                  {/* File upload */}
+                  <input type="hidden" {...register(`documents.${idx}.fileName`)} />
+                  <input type="hidden" {...register(`documents.${idx}.fileUrl`)} />
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    className="hidden"
+                    ref={(el) => { fileInputRefs.current[idx] = el; }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleDocUpload(idx, file);
+                    }}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button" variant="outline" size="sm"
+                      disabled={upState.status === 'uploading'}
+                      onClick={() => fileInputRefs.current[idx]?.click()}
+                    >
+                      <Upload className="h-3.5 w-3.5 mr-1.5" />
+                      {upState.status === 'done' ? 'Replace file' : 'Choose file'}
+                    </Button>
+                    {upState.status === 'uploading' && (
+                      <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…
+                      </span>
+                    )}
+                    {upState.status === 'done' && (
+                      <span className="flex items-center gap-1 text-sm text-emerald-600">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> {docFileName}
+                      </span>
+                    )}
+                    {upState.status === 'idle' && (
+                      <span className="text-sm text-muted-foreground">No file selected</span>
+                    )}
+                  </div>
+                  {upState.status === 'error' && (
+                    <p className="text-xs text-destructive">{upState.error}</p>
                   )}
-                  {(form.formState.errors.documents?.[idx]?.fileName ||
-                    form.formState.errors.documents?.[idx]?.fileUrl) && (
-                    <p className="text-xs text-destructive">File required</p>
-                  )}
+
+                  {/* Warn-only invoice auto-read cross-check (PDF invoices). */}
+                  {(() => {
+                    const ext = docExtractions[idx];
+                    const code = watch(`documents.${idx}.documentCode`) ?? '';
+                    if (!ext || !/inv/i.test(code)) return null;
+                    if (!ext.readable) {
+                      return (
+                        <div className="rounded-md border border-muted bg-muted/40 p-2 text-xs text-muted-foreground flex items-start gap-1.5">
+                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>{ext.reason ?? 'Could not auto-read this invoice. Please verify manually.'}</span>
+                        </div>
+                      );
+                    }
+                    const rows = compareInvoice(ext, {
+                      amount: watch('amount'),
+                      invoiceNumber: watch('invoiceNumber'),
+                    });
+                    if (rows.length === 0) {
+                      return (
+                        <div className="rounded-md border border-muted bg-muted/40 p-2 text-xs text-muted-foreground">
+                          Invoice read, but no amount or invoice number could be identified to compare.
+                        </div>
+                      );
+                    }
+                    const anyMismatch = rows.some((r) => r.status === 'mismatch');
+                    return (
+                      <div className={`rounded-md border p-2 text-xs space-y-1 ${anyMismatch ? 'border-amber-400 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}>
+                        <p className="font-medium flex items-center gap-1.5">
+                          {anyMismatch
+                            ? <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                            : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
+                          {anyMismatch ? 'Invoice does not match entered values' : 'Invoice matches entered values'}
+                        </p>
+                        {rows.map((r) => (
+                          <div key={r.label} className="flex items-center justify-between gap-2">
+                            <span className="text-muted-foreground">{r.label}</span>
+                            <span className="flex items-center gap-2">
+                              <span>entered: <b>{r.entered}</b></span>
+                              <span>invoice: <b>{r.extracted}</b></span>
+                              {r.status === 'match'
+                                ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
+                            </span>
+                          </div>
+                        ))}
+                        <p className="text-[11px] text-muted-foreground pt-1">
+                          Auto-read is advisory and may be inaccurate — it does not block submission.
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </div>
-                <div className="col-span-1 flex justify-end">
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8 hover:bg-destructive/10"
-                    onClick={() => removeDoc(idx)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
-      </Card>
-
-      {/* Submit */}
-      <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-5 py-4">
-        <p className="text-sm text-muted-foreground">
-          The request will be saved as a <strong>Draft</strong> and can be reviewed before submission.
-        </p>
-        <Button type="submit" disabled={submitting} className="min-w-32">
-          {submitting ? 'Saving…' : 'Save as Draft'}
-        </Button>
       </div>
+      )}
+
+      <DialogFooter>
+        <Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</Button>
+      </DialogFooter>
     </form>
   );
 }

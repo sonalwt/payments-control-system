@@ -130,9 +130,15 @@ export function friendlyError(err: unknown): string {
 
   // Approval matrix errors
   if (lower.includes('no published approval matrix'))
-    return `No approval matrix is configured for this payment type. Ask your administrator to create and publish one under Masters → Approval Matrices.`;
+    return `No approval matrix is configured for this payment type. Ask your administrator to create and publish one under Payment Types & Approvals.`;
   if (lower.includes('no band') && lower.includes('matrix') && lower.includes('covers'))
-    return 'The payment amount falls outside the bands defined in the approval matrix. Ask your administrator to update the matrix bands under Masters → Approval Matrices.';
+    return 'The payment amount falls outside the bands defined in the approval matrix. Ask your administrator to update the matrix bands under Payment Types & Approvals.';
+  // Matrix band-shape validation raised while *saving* a matrix — show the
+  // real cause rather than the payment-amount message below.
+  if (lower.includes('maxamount') && lower.includes('minamount'))
+    return "A band's maximum amount must be greater than its minimum amount. Check the band ranges in the matrix.";
+  if (lower.includes('open-ended band'))
+    return 'Only one open-ended band (a band with no maximum amount) is allowed per matrix.';
 
   if (lower.includes('cooling') && lower.includes('period'))
     return 'This account is still within its cooling-off period. Use Force Activate to override, or wait for it to expire.';
@@ -185,8 +191,8 @@ export function friendlyError(err: unknown): string {
   if (lower.includes('entity') && lower.includes('not found'))
     return 'The record you are trying to access no longer exists. It may have been deleted.';
   if (lower.includes('no approval') || lower.includes('approval matrix'))
-    return 'No approval matrix is configured for this payment type. Ask your administrator to set one up under Masters → Approval Matrices.';
-  if (lower.includes('amount') && (lower.includes('band') || lower.includes('range')))
+    return 'No approval matrix is configured for this payment type. Ask your administrator to set one up under Payment Types & Approvals.';
+  if (lower.includes('payment amount') && (lower.includes('band') || lower.includes('range')))
     return 'The payment amount is outside the configured approval bands. Ask your administrator to update the matrix.';
   if (lower.includes('status') && lower.includes('draft'))
     return 'This action can only be performed on a Draft request.';
@@ -223,5 +229,110 @@ export const api = {
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: (file: File) =>
     uploadRequest<{ url: string; fileName: string }>('/uploads/file', file),
+  /**
+   * Best-effort, local read of an invoice PDF for cross-checking against the
+   * entered values. Advisory only — the file is not stored by this call.
+   */
+  extractInvoice: (file: File) =>
+    uploadRequest<ExtractedInvoice>('/uploads/extract-invoice', file),
+  /**
+   * Best-effort, local read of a bank remittance / SWIFT / MT103 copy for
+   * cross-checking the entered reference + amount. Advisory only; not stored.
+   */
+  extractRemittance: (file: File) =>
+    uploadRequest<ExtractedRemittance>('/uploads/extract-remittance', file),
   postForm: <T>(path: string, formData: FormData) => formRequest<T>(path, formData),
 };
+
+/** Fields read off an uploaded invoice (warn-only cross-check). */
+export interface ExtractedInvoice {
+  readable: boolean;
+  reason?: string;
+  invoiceNumber: string | null;
+  amount: string | null;
+}
+
+/** Fields read off an uploaded remittance / SWIFT / MT103 copy. */
+export interface ExtractedRemittance {
+  readable: boolean;
+  reason?: string;
+  referenceNumber: string | null;
+  amount: string | null;
+}
+
+// ── Stored-file viewing & downloading ──────────────────────────────────────
+// Files live in a private S3 bucket. The backend mints a short-lived presigned
+// URL on demand; the SPA never touches a public object URL. The presign call is
+// realm-specific (staff vs. employee), so it is injected as `PresignFn`.
+
+/** Asks the backend for a short-lived presigned URL for a stored file. */
+export type PresignFn = (
+  fileUrl: string,
+  opts?: { download?: boolean; fileName?: string },
+) => Promise<string>;
+
+/** Staff-realm presign (uses the staff token). */
+export const presignFileUrl: PresignFn = async (fileUrl, opts) => {
+  const params = new URLSearchParams({ url: fileUrl });
+  if (opts?.download) params.set('download', '1');
+  if (opts?.fileName) params.set('fileName', opts.fileName);
+  const res = await api.get<{ url: string }>(`/uploads/presign?${params.toString()}`);
+  return res.url;
+};
+
+/**
+ * Resolve a stored file reference to a URL the browser can open directly
+ * (iframe src, new tab, download). Local files (served by the backend at
+ * `/uploads/...`) are used as-is; private S3 objects need a short-lived
+ * presigned URL. This lets file viewing work in both dev (local disk) and
+ * production (S3) without the caller knowing where the file lives.
+ */
+export async function resolveViewableUrl(
+  fileUrl: string,
+  presign: PresignFn = presignFileUrl,
+  opts?: { download?: boolean; fileName?: string },
+): Promise<string> {
+  if (fileUrl.startsWith('/uploads/') || fileUrl.startsWith(BACKEND_ORIGIN)) {
+    return resolveFileUrl(fileUrl);
+  }
+  return presign(fileUrl, opts);
+}
+
+/**
+ * Open a stored file inline in a new tab. The blank tab is opened synchronously
+ * (inside the click gesture) to avoid popup blockers, then redirected to the
+ * resolved URL once it resolves.
+ */
+export async function viewFile(fileUrl: string, presign: PresignFn = presignFileUrl): Promise<void> {
+  // Open the tab synchronously (inside the click gesture) so it isn't blocked.
+  // Can't pass 'noopener' here — that returns null and we'd lose the handle —
+  // so sever the opener manually to avoid reverse-tabnabbing.
+  const w = window.open('', '_blank');
+  if (w) { try { w.opener = null; } catch { /* ignore */ } }
+  try {
+    const url = await resolveViewableUrl(fileUrl, presign);
+    if (w) w.location.href = url;
+    else window.open(url, '_blank', 'noopener');
+  } catch {
+    if (w) w.close();
+  }
+}
+
+/**
+ * Force a direct download of a stored file. The presigned URL carries
+ * `Content-Disposition: attachment` from S3, so navigating to it saves the file
+ * (with its original name) rather than opening it — no blob/CORS needed.
+ */
+export async function downloadFile(
+  fileUrl: string,
+  fileName?: string,
+  presign: PresignFn = presignFileUrl,
+): Promise<void> {
+  const url = await resolveViewableUrl(fileUrl, presign, { download: true, fileName });
+  const a = document.createElement('a');
+  a.href = url;
+  if (fileName) a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}

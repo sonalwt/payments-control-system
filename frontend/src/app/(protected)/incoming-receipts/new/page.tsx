@@ -41,6 +41,7 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
   const [currencyCode, setCurrencyCode] = useState('');
   const [amount, setAmount] = useState('');
   const [purpose, setPurpose] = useState('');
+  const [receivedFromAccount, setReceivedFromAccount] = useState('');
   const [docs, setDocs] = useState<DocDraft[]>([]);
   const [uploading, setUploading] = useState(false);
 
@@ -56,13 +57,12 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
     queryKey: ['currencies-all'],
     queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=100'),
   });
+  // Group-own bank accounts. The list endpoint only whitelists page/limit/
+  // search, and bank accounts aren't linked to a legal entity, so we fetch all
+  // and filter active ones client-side (passing ?legalEntityId 400s).
   const accounts = useQuery({
-    queryKey: ['bank-accounts', legalEntityId],
-    enabled: !!legalEntityId,
-    queryFn: () =>
-      api.get<Paginated<BankAccount>>(
-        `/bank-accounts?legalEntityId=${legalEntityId}&page=1&limit=100`,
-      ),
+    queryKey: ['bank-accounts-all'],
+    queryFn: () => api.get<Paginated<BankAccount>>('/bank-accounts?page=1&limit=200'),
   });
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,8 +74,8 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
       setDocs((d) => [
         ...d,
         {
-          documentCode: 'DEBIT_NOTE',
-          documentLabel: 'Debit Note / Final Invoice',
+          documentCode: 'SUPPORTING_DOC',
+          documentLabel: 'Supporting Document',
           fileName,
           fileUrl: url,
           fileSizeBytes: file.size,
@@ -100,6 +100,7 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
         expectedAmount: amount,
         expectedCurrencyCode: currencyCode.toUpperCase(),
         purposeDescription: purpose || undefined,
+        receivedFromAccount: receivedFromAccount || undefined,
         documents: docs.length > 0 ? docs : undefined,
       }),
     onSuccess: (ir) => {
@@ -119,9 +120,7 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
     parseFloat(amount) > 0 &&
     docs.length > 0;
 
-  const accountOpts = (accounts.data?.data ?? []).filter(
-    (a) => a.isActive && a.accountType === 'CURRENT',
-  );
+  const accountOpts = (accounts.data?.data ?? []).filter((a) => a.isActive);
 
   return (
     <div className="space-y-4">
@@ -203,7 +202,7 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
               {(currencies.data?.data ?? [])
                 .filter((c) => c.isActive)
                 .map((c) => (
-                  <option key={c.id} value={c.code}>
+                  <option key={c.id} value={c.code ?? ''}>
                     {c.code} — {c.name}
                   </option>
                 ))}
@@ -211,23 +210,37 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
           </div>
 
           <div className="md:col-span-2">
-            <Label htmlFor="receive-from">Receive-from Account *</Label>
+            <Label htmlFor="receive-from">Receive-to Account *</Label>
             <select
               id="receive-from"
               className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
               value={receiveFromAccountId}
               onChange={(e) => setReceiveFromAccountId(e.target.value)}
-              disabled={!legalEntityId}
             >
-              <option value="">{legalEntityId ? 'Select…' : 'Pick a legal entity first'}</option>
+              <option value="">Select…</option>
               {accountOpts.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.nickname} — {a.accountNumber} ({a.currency?.code ?? '—'})
+                  {a.bankNickname ?? a.bankName ?? 'Account'} — {a.accountNumber} ({a.currency?.code ?? '—'})
                 </option>
               ))}
             </select>
             <p className="mt-1 text-xs text-muted-foreground">
               The group bank account expected to receive this credit.
+            </p>
+          </div>
+
+          <div className="md:col-span-2">
+            <Label htmlFor="received-from-account">Received-from Account</Label>
+            <Input
+              id="received-from-account"
+              value={receivedFromAccount}
+              onChange={(e) => setReceivedFromAccount(e.target.value)}
+              className="mt-1"
+              placeholder="Counterparty account / IBAN (optional)"
+              maxLength={200}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Optional — the counterparty bank account the credit is expected from.
             </p>
           </div>
 
@@ -243,7 +256,7 @@ export default function NewIncomingReceiptPage(): React.ReactElement {
           </div>
 
           <div className="md:col-span-2">
-            <Label>Debit Note / Final Invoice *</Label>
+            <Label>Supporting Document *</Label>
             <div className="mt-1 flex items-center gap-3">
               <input
                 type="file"

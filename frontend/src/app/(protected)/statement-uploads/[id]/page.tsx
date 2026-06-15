@@ -8,11 +8,13 @@ import {
   ArrowLeft,
   CheckCircle2,
   Download,
+  Eye,
   PlayCircle,
   RefreshCw,
   Unlink,
 } from 'lucide-react';
-import { api, friendlyError, resolveFileUrl } from '@/lib/api';
+import { api, downloadFile, friendlyError, viewFile } from '@/lib/api';
+import { formatDateMedium } from '@/lib/datetime';
 import type {
   StatementLine,
   StatementLineMatchStatus,
@@ -52,8 +54,7 @@ function fmtAmount(v: string | number | null | undefined, currency?: string): st
 }
 
 function fmtDate(d: string | null | undefined): string {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString(undefined, { dateStyle: 'medium' });
+  return formatDateMedium(d);
 }
 
 const MATCH_STYLE: Record<StatementLineMatchStatus, string> = {
@@ -175,12 +176,16 @@ export default function StatementUploadDetailPage(): React.ReactElement {
               </Button>
             </Link>
             {data?.fileUrl && (
-              <a href={resolveFileUrl(data.fileUrl)} target="_blank" rel="noopener noreferrer">
-                <Button variant="outline" size="sm">
+              <>
+                <Button variant="outline" size="sm" onClick={() => { void viewFile(data.fileUrl); }}>
+                  <Eye className="mr-1 h-4 w-4" />
+                  View
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { void downloadFile(data.fileUrl); }}>
                   <Download className="mr-1 h-4 w-4" />
                   Download
                 </Button>
-              </a>
+              </>
             )}
             {data && ingestionStatus === 'UPLOADED' && (
               <Button
@@ -212,11 +217,11 @@ export default function StatementUploadDetailPage(): React.ReactElement {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <SummaryCard
           label="Opening"
-          value={fmtAmount(data?.openingBalance, data?.bankAccount?.currency?.code)}
+          value={fmtAmount(data?.openingBalance, data?.bankAccount?.currency?.code ?? undefined)}
         />
         <SummaryCard
           label="Closing"
-          value={fmtAmount(data?.closingBalance, data?.bankAccount?.currency?.code)}
+          value={fmtAmount(data?.closingBalance, data?.bankAccount?.currency?.code ?? undefined)}
         />
         <SummaryCard label="Matched" value={String(data?.matchedCount ?? 0)} tone="emerald" />
         <SummaryCard label="Candidate" value={String(data?.candidateCount ?? 0)} tone="amber" />

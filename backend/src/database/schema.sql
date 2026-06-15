@@ -258,11 +258,16 @@ CREATE TABLE payment_types (
     is_confidential           BOOLEAN NOT NULL DEFAULT FALSE,
     mobile_initiation_only    BOOLEAN NOT NULL DEFAULT FALSE,
     allows_cross_currency     BOOLEAN NOT NULL DEFAULT TRUE,
+    -- When TRUE, employees may raise this type themselves via the
+    -- passwordless employee portal (allow-list; see employee_login_otps).
+    employee_self_service     BOOLEAN NOT NULL DEFAULT FALSE,
     -- Forward reference; matrix lives in Section 1.5
     approval_matrix_ref       UUID,
+    -- Legal entity this payment type belongs to (required). A request's
+    -- legal entity is derived from its payment type.
+    legal_entity_id           UUID NOT NULL REFERENCES legal_entities(id) ON DELETE RESTRICT,
     -- Document-attachment policy: array of
     --   { code, label, required, amountThresholdMinor?, currencyCode? }
-    document_policy           JSONB NOT NULL DEFAULT '[]'::jsonb,
     -- Field-level configuration: array of
     --   { key, label, visible, required, readOnly, sortOrder, helpText? }
     field_config              JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -287,6 +292,7 @@ CREATE TABLE payment_types (
 CREATE INDEX idx_payment_types_code        ON payment_types(code);
 CREATE INDEX idx_payment_types_active      ON payment_types(is_active) WHERE deleted_at IS NULL;
 CREATE INDEX idx_payment_types_deleted_at  ON payment_types(deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX idx_payment_types_legal_entity_id ON payment_types(legal_entity_id) WHERE deleted_at IS NULL;
 
 CREATE TRIGGER trg_payment_types_touch
     BEFORE UPDATE ON payment_types
@@ -299,17 +305,11 @@ INSERT INTO payment_types(
     code, name, description, direction,
     requires_approval_chain, is_batch_based, is_confidential,
     mobile_initiation_only, allows_cross_currency,
-    document_policy, field_config, is_system
+    field_config, is_system
 ) VALUES
     ('VENDOR_PAYMENT',  'Vendor Payment',
         'Outgoing supplier-invoice settlement.', 'OUTGOING',
         TRUE, FALSE, FALSE, FALSE, TRUE,
-        '[
-            {"code":"INVOICE_PDF","label":"Invoice PDF","required":true},
-            {"code":"PURCHASE_ORDER","label":"Purchase Order","required":false},
-            {"code":"GRN","label":"Goods Receipt Note / Service Acceptance","required":false},
-            {"code":"COUNTERPARTY_SNAPSHOT","label":"Counterparty Master Snapshot","required":true}
-         ]'::jsonb,
         '[
             {"key":"counterpartyId","label":"Counterparty","visible":true,"required":true,"readOnly":false,"sortOrder":10},
             {"key":"invoiceNumber","label":"Invoice Number","visible":true,"required":true,"readOnly":false,"sortOrder":20,"helpText":"Alphanumeric, no spaces"},
@@ -324,10 +324,6 @@ INSERT INTO payment_types(
         'Bulk salary payments uploaded by HR.', 'OUTGOING',
         TRUE, TRUE, FALSE, FALSE, FALSE,
         '[
-            {"code":"PAYSLIP","label":"Payslip (per employee)","required":true},
-            {"code":"PAYROLL_REGISTER","label":"Payroll Register","required":true}
-         ]'::jsonb,
-        '[
             {"key":"employeeId","label":"Employee","visible":true,"required":true,"readOnly":false,"sortOrder":10},
             {"key":"netAmount","label":"Net Pay","visible":true,"required":true,"readOnly":false,"sortOrder":20},
             {"key":"grossAmount","label":"Gross Pay","visible":true,"required":true,"readOnly":false,"sortOrder":30},
@@ -340,10 +336,6 @@ INSERT INTO payment_types(
         'Employee out-of-pocket claim.', 'OUTGOING',
         TRUE, FALSE, FALSE, FALSE, TRUE,
         '[
-            {"code":"CLAIM_FORM","label":"Reimbursement Claim Form","required":true},
-            {"code":"RECEIPTS","label":"Supporting Receipts","required":true}
-         ]'::jsonb,
-        '[
             {"key":"employeeId","label":"Employee","visible":true,"required":true,"readOnly":false,"sortOrder":10},
             {"key":"amount","label":"Amount","visible":true,"required":true,"readOnly":false,"sortOrder":20},
             {"key":"currencyId","label":"Currency","visible":true,"required":true,"readOnly":false,"sortOrder":30},
@@ -354,10 +346,6 @@ INSERT INTO payment_types(
     ('FNF',             'Full-and-Final Settlement',
         'End-of-service settlement raised by HR.', 'OUTGOING',
         TRUE, FALSE, FALSE, FALSE, TRUE,
-        '[
-            {"code":"SETTLEMENT_LETTER","label":"Settlement Letter","required":true},
-            {"code":"FNF_COMPUTATION","label":"FnF Computation Sheet","required":true}
-         ]'::jsonb,
         '[
             {"key":"employeeId","label":"Employee","visible":true,"required":true,"readOnly":false,"sortOrder":10},
             {"key":"lastWorkingDay","label":"Last Working Day","visible":true,"required":true,"readOnly":false,"sortOrder":20},
@@ -370,9 +358,6 @@ INSERT INTO payment_types(
         'Inbound amount expected from a counterparty.', 'INCOMING',
         FALSE, FALSE, FALSE, FALSE, FALSE,
         '[
-            {"code":"DEBIT_NOTE","label":"Debit Note / Final Invoice","required":true}
-         ]'::jsonb,
-        '[
             {"key":"counterpartyId","label":"Counterparty","visible":true,"required":true,"readOnly":false,"sortOrder":10},
             {"key":"expectedAmount","label":"Expected Amount","visible":true,"required":true,"readOnly":false,"sortOrder":20},
             {"key":"currencyId","label":"Currency","visible":true,"required":true,"readOnly":false,"sortOrder":30},
@@ -383,9 +368,6 @@ INSERT INTO payment_types(
     ('CHAIRMAN',        'Chairman Payment',
         'Confidential chairman-initiated payment. Mobile initiation only.', 'OUTGOING',
         FALSE, FALSE, TRUE, TRUE, TRUE,
-        '[
-            {"code":"AUTHORISATION_NOTE","label":"Chairman Authorisation Note","required":true}
-         ]'::jsonb,
         '[
             {"key":"beneficiaryAccountId","label":"Destination Beneficiary Account","visible":true,"required":true,"readOnly":false,"sortOrder":10},
             {"key":"amount","label":"Amount","visible":true,"required":true,"readOnly":false,"sortOrder":20},
@@ -519,27 +501,20 @@ CREATE TABLE approval_matrices (
     -- payment_types.id so a payment-type version change does not orphan
     -- the matrix.
     payment_type_code     VARCHAR(50)  NOT NULL,
-    version               INT          NOT NULL,
-    -- DRAFT: editable, not used for resolution.
-    -- PUBLISHED: immutable, used for resolution within its effective window.
-    -- SUPERSEDED: closed out by a newer published version.
-    status                VARCHAR(20)  NOT NULL DEFAULT 'DRAFT',
     effective_from        DATE         NOT NULL,
     effective_to          DATE,
-    published_at          TIMESTAMPTZ,
-    published_by          UUID,
     is_active             BOOLEAN      NOT NULL DEFAULT TRUE,
+    tt_mode               VARCHAR(20)  NOT NULL DEFAULT 'ONLINE_TT',
     created_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
     deleted_at            TIMESTAMPTZ,
     created_by            UUID,
     updated_by            UUID,
-    CONSTRAINT chk_approval_matrix_status     CHECK (status IN ('DRAFT','PUBLISHED','SUPERSEDED')),
     CONSTRAINT chk_approval_matrix_effective  CHECK (effective_to IS NULL OR effective_to >= effective_from),
-    CONSTRAINT uq_approval_matrix_pt_version  UNIQUE (payment_type_code, version)
+    CONSTRAINT chk_approval_matrix_tt_mode    CHECK (tt_mode IN ('ONLINE_TT','OFFLINE_TT')),
+    CONSTRAINT uq_approval_matrix_pt_name      UNIQUE (payment_type_code, name)
 );
 CREATE INDEX idx_am_payment_type ON approval_matrices(payment_type_code) WHERE deleted_at IS NULL;
-CREATE INDEX idx_am_status       ON approval_matrices(status)            WHERE deleted_at IS NULL;
 CREATE INDEX idx_am_effective    ON approval_matrices(effective_from)    WHERE deleted_at IS NULL;
 CREATE INDEX idx_am_deleted_at   ON approval_matrices(deleted_at)        WHERE deleted_at IS NULL;
 
@@ -862,9 +837,11 @@ CREATE TABLE payment_requests (
     id                          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     request_number              VARCHAR(30) NOT NULL UNIQUE,
     payment_type_code           VARCHAR(30) NOT NULL,
-    legal_entity_id             UUID        NOT NULL REFERENCES legal_entities(id) ON DELETE RESTRICT,
     counterparty_id             UUID        REFERENCES counterparties(id) ON DELETE RESTRICT,
     employee_id                 UUID        REFERENCES employees(id) ON DELETE RESTRICT,
+    -- Set when an employee raised the request via the self-service portal
+    -- (created_by stays NULL in that case, as it references a user).
+    raised_by_employee_id       UUID        REFERENCES employees(id) ON DELETE SET NULL,
     currency_code               CHAR(3)     NOT NULL,
     amount                      DECIMAL(20,4) NOT NULL,
     amount_minor                BIGINT      NOT NULL,
@@ -880,8 +857,18 @@ CREATE TABLE payment_requests (
     approved_at                 TIMESTAMPTZ,
     paid_at                     TIMESTAMPTZ,
     matrix_id                   UUID,
-    matrix_version              INTEGER,
     current_step_order          INTEGER,
+    -- Treasury Team execution (post final-approval)
+    tt_mode                     VARCHAR(20),
+    treasury_reference_number   VARCHAR(100),
+    swift_copy_url              VARCHAR(500),
+    treasury_maker_by           UUID,
+    treasury_maker_at           TIMESTAMPTZ,
+    treasury_checker_by         UUID,
+    treasury_checker_at         TIMESTAMPTZ,
+    treasury_authoriser_by      UUID,
+    treasury_authoriser_at      TIMESTAMPTZ,
+    completed_at                TIMESTAMPTZ,
     rejection_reason            TEXT,
     cancellation_reason         TEXT,
     maker_notes                 TEXT,
@@ -891,8 +878,8 @@ CREATE TABLE payment_requests (
     created_by                  UUID,
     updated_by                  UUID,
     CONSTRAINT chk_pr_status CHECK (status IN (
-        'DRAFT','PENDING_APPROVAL','APPROVED',
-        'AWAITING_PAYMENT_CONFIRMATION','PAID',
+        'DRAFT','PENDING_APPROVAL',
+        'TREASURY_MAKER','TREASURY_CHECKER','TREASURY_AUTHORISER','COMPLETED',
         'REJECTED','WITHDRAWN','CANCELLED'
     )),
     CONSTRAINT chk_pr_currency CHECK (currency_code ~ '^[A-Z]{3}$'),
@@ -901,7 +888,6 @@ CREATE TABLE payment_requests (
 
 CREATE INDEX idx_payment_requests_deleted    ON payment_requests(deleted_at)        WHERE deleted_at IS NULL;
 CREATE INDEX idx_payment_requests_status     ON payment_requests(status)            WHERE deleted_at IS NULL;
-CREATE INDEX idx_payment_requests_entity     ON payment_requests(legal_entity_id)   WHERE deleted_at IS NULL;
 CREATE INDEX idx_payment_requests_type       ON payment_requests(payment_type_code) WHERE deleted_at IS NULL;
 CREATE INDEX idx_payment_requests_cp         ON payment_requests(counterparty_id)   WHERE counterparty_id IS NOT NULL;
 CREATE INDEX idx_payment_requests_emp        ON payment_requests(employee_id)       WHERE employee_id IS NOT NULL;
@@ -1064,3 +1050,22 @@ CREATE TABLE IF NOT EXISTS employee_bank_account_changes (
 );
 
 CREATE INDEX idx_prd_request ON payment_request_documents(payment_request_id);
+
+-- -----------------------------------------------------------------------
+-- employee_login_otps
+-- Passwordless login for the employee self-service portal. A short-lived,
+-- single-use 6-digit code is emailed to the employee's work_email; only
+-- its hash is stored here. No password is ever persisted for employees.
+-- -----------------------------------------------------------------------
+CREATE TABLE employee_login_otps (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id  UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    code_hash    VARCHAR(255) NOT NULL,
+    expires_at   TIMESTAMPTZ  NOT NULL,
+    consumed_at  TIMESTAMPTZ,
+    attempts     INT          NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_employee_login_otps_employee
+    ON employee_login_otps(employee_id, expires_at);

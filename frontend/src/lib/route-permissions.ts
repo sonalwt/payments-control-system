@@ -1,5 +1,5 @@
 /**
- * Centralised route → role mapping for Sections 1–8 protected pages.
+ * Centralised route → role mapping.
  *
  * The `AppShell` consults this map on every navigation. If the user does not
  * hold one of the listed roles, the page is replaced with a "no permission"
@@ -8,16 +8,7 @@
  * Keep aligned with backend @Roles() decorators in:
  *   backend/src/modules/<area>/<area>.controller.ts
  */
-import {
-  ADMIN_ROLES,
-  BANKING_ROLES,
-  BENEFICIARY_VIEW_ROLES,
-  HR_WORKFLOW_ROLES,
-  MASTER_DATA_READ_ROLES,
-  PAYMENT_REQUEST_VIEW_ROLES,
-  RECONCILIATION_VIEW_ROLES,
-  type RoleCode,
-} from './roles';
+import { RoleCode } from './roles';
 
 interface RouteRule {
   /** Path prefix (matched with `startsWith(prefix)` or exact equality). */
@@ -26,50 +17,68 @@ interface RouteRule {
   roles: readonly RoleCode[];
 }
 
+// Roles allowed to read shared master data (counterparties, employees on
+// payment forms, beneficiaries, etc.). SUPER_ADMIN plus the four payment
+// workflow roles.
+const OPERATIONAL_READ: RoleCode[] = [
+  RoleCode.SUPER_ADMIN,
+  RoleCode.INITIATOR,
+  RoleCode.CHECKER,
+  RoleCode.APPROVER_1,
+  RoleCode.APPROVER_2,
+];
+
 /**
  * Order matters — longer / more-specific prefixes must come BEFORE their
  * parents so they win the prefix match.
  */
 const RULES: RouteRule[] = [
-  // §1.1 — Organisation hierarchy (admin only)
-  { prefix: '/groups', roles: ADMIN_ROLES },
-  { prefix: '/legal-entities', roles: ADMIN_ROLES },
-  { prefix: '/countries', roles: ADMIN_ROLES },
-  { prefix: '/business-units', roles: ADMIN_ROLES },
-  { prefix: '/departments', roles: ADMIN_ROLES },
-  { prefix: '/users', roles: ADMIN_ROLES },
-  { prefix: '/user-roles', roles: ADMIN_ROLES },
+  // Organisation hierarchy & identity admin — SUPER_ADMIN only
+  { prefix: '/audit-logs', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/groups', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/legal-entities', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/countries', roles: [RoleCode.SUPER_ADMIN] },
 
-  // §1.2 — §1.6 — Master data lookups (broad read access; backend gates writes)
-  { prefix: '/payment-types', roles: MASTER_DATA_READ_ROLES },
-  { prefix: '/counterparties', roles: MASTER_DATA_READ_ROLES },
-  { prefix: '/employees', roles: MASTER_DATA_READ_ROLES },
-  { prefix: '/approval-matrices', roles: MASTER_DATA_READ_ROLES },
-  { prefix: '/sanctioned-countries', roles: MASTER_DATA_READ_ROLES },
+  { prefix: '/users', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/user-roles', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/employees', roles: [RoleCode.SUPER_ADMIN] },
 
-  // §2 — Currency, FX, banks, accounts
-  { prefix: '/currencies', roles: BANKING_ROLES },
-  { prefix: '/fx-rates', roles: BANKING_ROLES },
-  { prefix: '/banks', roles: BANKING_ROLES },
-  { prefix: '/bank-accounts', roles: BANKING_ROLES },
+  // Lookup masters — read access for everyone in the payment flow
+  { prefix: '/payment-types', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/counterparties', roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY] },
+  { prefix: '/approval-matrices', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/sanctioned-countries', roles: OPERATIONAL_READ },
 
-  // §3, §4, §7 — payment & receipt workflows
-  { prefix: '/payment-requests', roles: PAYMENT_REQUEST_VIEW_ROLES },
-  { prefix: '/incoming-receipts', roles: PAYMENT_REQUEST_VIEW_ROLES },
+  // Currencies / banking masters — SUPER_ADMIN only
+  { prefix: '/currencies', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/fx-rates', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/banks', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/bank-accounts', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/account-types', roles: [RoleCode.SUPER_ADMIN] },
 
-  // §5 — HR-led workflows
-  { prefix: '/payroll-batches', roles: HR_WORKFLOW_ROLES },
-  { prefix: '/employee-bank-account-changes', roles: HR_WORKFLOW_ROLES },
-  { prefix: '/reimbursements', roles: HR_WORKFLOW_ROLES },
-  { prefix: '/fnf-settlements', roles: HR_WORKFLOW_ROLES },
+  // Counterparty banks & bank accounts — SUPER_ADMIN + COUNTERPARTY
+  { prefix: '/counterparty/banks', roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY] },
+  { prefix: '/counterparty/bank-accounts', roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY] },
 
-  // §6 — Beneficiary master
-  { prefix: '/beneficiary-accounts', roles: BENEFICIARY_VIEW_ROLES },
+  // Payment & receipt workflows — payment-requests is open to every
+  // authenticated user; the backend enforces maker eligibility on submit
+  // based on the payment type's maker_role_id.
+  { prefix: '/incoming-receipts', roles: OPERATIONAL_READ },
 
-  // §8 — Statement upload & reconciliation
-  { prefix: '/statement-uploads', roles: RECONCILIATION_VIEW_ROLES },
-  { prefix: '/reconciliation-exceptions', roles: RECONCILIATION_VIEW_ROLES },
-  { prefix: '/exception-reports', roles: RECONCILIATION_VIEW_ROLES },
+  // HR-led workflows — SUPER_ADMIN only (no HR roles in the current taxonomy)
+  { prefix: '/payroll-batches', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/employee-bank-account-changes', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/reimbursements', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/fnf-settlements', roles: [RoleCode.SUPER_ADMIN] },
+
+  // Beneficiary master — operational read roles plus the KYC Team, who
+  // verify/approve beneficiary change requests on this page.
+  { prefix: '/beneficiary-accounts', roles: [...OPERATIONAL_READ, RoleCode.KYC_TEAM] },
+
+  // Statement upload & reconciliation
+  { prefix: '/statement-uploads', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/reconciliation-exceptions', roles: [RoleCode.SUPER_ADMIN] },
+  { prefix: '/exception-reports', roles: [RoleCode.SUPER_ADMIN] },
 ];
 
 /**
