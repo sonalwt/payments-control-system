@@ -281,6 +281,15 @@ export class ReconciliationService {
       order: { lineIndex: 'ASC' },
     });
 
+    // §8.2 — the account's tiered bank charges. A debit on the statement is the
+    // payment amount *plus* whatever charge the bank levied, so the matcher must
+    // consider the charge-inclusive amount as well as the net payment amount.
+    const account = await em.findOne(BankAccount, {
+      where: { id: upload.bankAccountId },
+      relations: ['chargeBands'],
+    });
+    const chargeBands = account?.chargeBands ?? [];
+
     // Records already reserved by preserved (manually-confirmed) matches.
     const reservedPayments = new Set<string>(
       lines.map((l) => l.matchedPaymentRequestId).filter((x): x is string => !!x),
@@ -304,12 +313,16 @@ export class ReconciliationService {
         const best = pickBest(
           completedPayments
             .filter((p) => !reservedPayments.has(p.id))
-            .map((p) => ({
-              id: p.id,
-              amount: Number(p.amount),
-              ref: p.bankReference ?? p.treasuryReferenceNumber ?? null,
-              date: (p.valueDate as string | null) ?? toDate(p.completedAt) ?? toDate(p.paidAt),
-            })),
+            .map((p) => {
+              const amount = Number(p.amount);
+              return {
+                id: p.id,
+                amount,
+                charge: computeBankCharge(amount, chargeBands),
+                ref: p.bankReference ?? p.treasuryReferenceNumber ?? null,
+                date: (p.valueDate as string | null) ?? toDate(p.completedAt) ?? toDate(p.paidAt),
+              };
+            }),
           lineAmount,
           line.bankReference,
           line.valueDate,
@@ -461,6 +474,8 @@ export class ReconciliationService {
 interface Candidate {
   id: string;
   amount: number;
+  /** Bank charge the bank adds on top of `amount` for this account (0 if none). */
+  charge?: number;
   ref: string | null;
   date: string | null;
 }
@@ -487,24 +502,33 @@ function pickBest(
 ): MatchPick | null {
   let best: MatchPick | null = null;
   for (const c of candidates) {
-    const amountMatch = Math.abs(c.amount - lineAmount) < AMOUNT_EPSILON;
+    const charge = c.charge ?? 0;
+    const grossAmount = c.amount + charge;
+    const netMatch = Math.abs(c.amount - lineAmount) < AMOUNT_EPSILON;
+    // The statement debit may include the bank's charge on top of the payment.
+    const grossMatch = charge > 0 && Math.abs(grossAmount - lineAmount) < AMOUNT_EPSILON;
+    const amountMatch = netMatch || grossMatch;
     if (!amountMatch) continue;
+    // When only the charge-inclusive amount lines up, say so in the reason.
+    const chargeNote = !netMatch && grossMatch
+      ? ` (incl. bank charge ${charge.toFixed(2)})`
+      : '';
     const refMatch = !!lineRef && !!c.ref && normaliseRef(lineRef) === normaliseRef(c.ref);
     const days = c.date ? dayDiff(lineDate, c.date) : Number.POSITIVE_INFINITY;
     const dateClose = days <= DATE_WINDOW_DAYS;
 
     let pick: MatchPick;
     if (refMatch && amountMatch) {
-      pick = { id: c.id, status: 'MATCHED', score: 1.0, reason: 'Exact amount and bank reference match' };
+      pick = { id: c.id, status: 'MATCHED', score: 1.0, reason: `Exact amount and bank reference match${chargeNote}` };
     } else if (amountMatch && dateClose) {
       pick = {
         id: c.id,
         status: 'CANDIDATE',
         score: 0.6,
-        reason: `Amount match with value date within ${DATE_WINDOW_DAYS} days`,
+        reason: `Amount match with value date within ${DATE_WINDOW_DAYS} days${chargeNote}`,
       };
     } else {
-      pick = { id: c.id, status: 'CANDIDATE', score: 0.5, reason: 'Amount match only' };
+      pick = { id: c.id, status: 'CANDIDATE', score: 0.5, reason: `Amount match only${chargeNote}` };
     }
     if (!best || pick.score > best.score) best = pick;
   }
@@ -513,6 +537,24 @@ function pickBest(
 
 function normaliseRef(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * §8.2 — bank charge for a payment of `amount` on an account, derived from its
+ * tiered charge bands. The band whose [minAmount, maxAmount) range contains the
+ * amount sets the percentage; an open-ended band (maxAmount = null) covers
+ * everything at or above its min. Returns 0 when no band applies.
+ */
+function computeBankCharge(
+  amount: number,
+  bands: Array<{ minAmount: number; maxAmount?: number | null; percentage: number }>,
+): number {
+  if (!bands.length || !(amount > 0)) return 0;
+  const band = bands.find(
+    (b) => amount >= b.minAmount && (b.maxAmount == null || amount < b.maxAmount),
+  );
+  if (!band) return 0;
+  return Number((amount * (band.percentage / 100)).toFixed(4));
 }
 
 function toDate(d: Date | string | null | undefined): string | null {
