@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { LoggerModule } from 'nestjs-pino';
 
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -11,6 +12,7 @@ import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
 import s3Config from './config/s3.config';
 import mailConfig from './config/mail.config';
+import fxConfig from './config/fx.config';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -35,14 +37,16 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { EmployeeAuthModule } from './modules/employee-auth/employee-auth.module';
 import { EmployeePortalModule } from './modules/employee-portal/employee-portal.module';
+import { FxRatesModule } from './modules/fx-rates/fx-rates.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, jwtConfig, s3Config, mailConfig],
+      load: [appConfig, databaseConfig, jwtConfig, s3Config, mailConfig, fxConfig],
       cache: true,
     }),
+    ScheduleModule.forRoot(),
     LoggerModule.forRoot({
       pinoHttp: {
         transport:
@@ -80,6 +84,7 @@ import { EmployeePortalModule } from './modules/employee-portal/employee-portal.
     AuditModule,
     EmployeeAuthModule,
     EmployeePortalModule,
+    FxRatesModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })

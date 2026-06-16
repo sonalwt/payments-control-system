@@ -17,18 +17,27 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[\r\n"\\]/g, '').trim() || 'download';
 }
 
+/** Normalise a key by removing any leading slashes (e.g. "/uploads/x" -> "uploads/x"). */
+function stripLeadingSlashes(s: string): string {
+  return s.replace(/^\/+/, '');
+}
+
 @Injectable()
 export class S3Service {
   private readonly client: S3Client;
   private readonly bucket: string;
   private readonly region: string;
   private readonly endpoint: string | undefined;
+  /** Base URL for the backend's own static /uploads mount (local-dev fallback). */
+  private readonly localBaseUrl: string;
 
   constructor(private readonly config: ConfigService) {
     const s3 = config.getOrThrow<S3Config>('s3');
     this.bucket = s3.bucket;
     this.region = s3.region;
     this.endpoint = s3.endpoint;
+    const port = config.get<number>('app.port') ?? 4000;
+    this.localBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://localhost:${port}`;
 
     this.client = new S3Client({
       region: this.region,
@@ -66,14 +75,18 @@ export class S3Service {
   /** Derive the object key from a stored file URL produced by uploadFile(). */
   keyFromUrl(url: string): string {
     const marker = `/${this.bucket}/`;
-    const idx = url.indexOf(marker);
-    if (idx !== -1) return url.slice(idx + marker.length);
+    // Only meaningful when a bucket is configured ('//' would match everything).
+    if (this.bucket) {
+      const idx = url.indexOf(marker);
+      if (idx !== -1) return stripLeadingSlashes(url.slice(idx + marker.length));
+    }
     // Virtual-hosted style: https://<bucket>.s3.<region>.amazonaws.com/<key>
     try {
       const u = new URL(url);
-      return u.pathname.replace(/^\//, '');
+      return stripLeadingSlashes(u.pathname);
     } catch {
-      return url;
+      // Relative path stored without a host, e.g. "/uploads/file.pdf".
+      return stripLeadingSlashes(url);
     }
   }
 
@@ -88,6 +101,14 @@ export class S3Service {
     opts: { download?: boolean; fileName?: string } = {},
   ): Promise<string> {
     const key = this.keyFromUrl(url);
+
+    // Local dev: no S3 bucket configured. The file is served from the backend's
+    // own static /uploads mount, so hand back a direct URL to it instead of a
+    // (meaningless) S3-signed link.
+    if (!this.bucket) {
+      return `${this.localBaseUrl}/${key}`;
+    }
+
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,

@@ -6,6 +6,7 @@ import { formatDateTime } from '@/lib/datetime';
 import type { PresignFn } from '@/lib/api';
 import type { PaymentRequest, PaymentRequestDocument } from '@/types/domain';
 import { FileActions } from '@/components/shared/file-actions';
+import { useFilePreview } from '@/components/shared/use-file-preview';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -134,6 +135,7 @@ export function PaymentRequestDetailView({
   presign,
 }: Props): React.ReactElement {
   const isConfidential = pr.paymentType?.isConfidential ?? false;
+  const { openPreview, preview, isOpen } = useFilePreview(presign);
   return (
     <div>
       <div className="mb-4 flex items-center gap-2">
@@ -217,7 +219,7 @@ export function PaymentRequestDetailView({
                     <FileText className="h-4 w-4 text-muted-foreground" />
                     <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.documentCode}</code>
                     <span>{d.documentLabel ?? d.fileName}</span>
-                    <FileActions className="ml-auto" fileUrl={d.fileUrl} fileName={d.fileName} presign={presign} />
+                    <FileActions className="ml-auto" fileUrl={d.fileUrl} fileName={d.fileName} presign={presign} onView={openPreview} />
                     {documentActions?.(d)}
                   </li>
                 ))}
@@ -226,6 +228,13 @@ export function PaymentRequestDetailView({
             {documentsFooter}
           </CardContent>
         </Card>
+
+        {/* Inline document preview — spans full width, above the approval chain */}
+        {isOpen && (
+          <div className="order-2 col-span-3">
+            {preview}
+          </div>
+        )}
 
         {/* Approval chain */}
         <Card className="order-3 col-span-3">

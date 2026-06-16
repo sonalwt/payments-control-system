@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   BadgeCheck, Banknote, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard, Database, FileSearch, FileType2, FolderTree, Globe2, Handshake,
-  Landmark, ListChecks, LogOut, Receipt, ScrollText, ShieldCheck, Users2, Wallet2,
+  Landmark, ListChecks, LogOut, Receipt, ScrollText, ShieldCheck, TrendingUp, Users2, Wallet2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -36,6 +36,7 @@ const NAV_GROUPS: NavGroup[] = [
     roles: [RoleCode.SUPER_ADMIN],
     items: [
       { href: '/currencies',     label: 'Currencies',     icon: Coins },
+      { href: '/fx-rates',       label: 'FX Rates',       icon: TrendingUp },
       { href: '/countries',      label: 'Countries',      icon: Globe2 },
       { href: '/legal-entities', label: 'Legal Entities', icon: Building2 },
       { href: '/user-roles',     label: 'Roles',          icon: ShieldCheck },
