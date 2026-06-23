@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { AlertTriangle, CheckCircle2, Eye, FileText, Loader2, Plus, Search, ShieldAlert, Upload, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Eye, FileText, Loader2, Pencil, Plus, Search, ShieldAlert, Upload, XCircle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/datetime';
 import { FileActions } from '@/components/shared/file-actions';
@@ -220,6 +220,266 @@ function AddChangeRequestForm({
           <Label htmlFor="iban">IBAN</Label>
           <Input id="iban" {...register('iban')} />
         </div>
+      </div>
+
+      <div className="rounded-md border p-3 space-y-3">
+        <p className="text-sm font-medium">Supporting documents (SoW §6.2 — both required)</p>
+        <div className="grid grid-cols-2 gap-4">
+          {/* Cancelled cheque / bank letter */}
+          <div className="space-y-2">
+            <Label>Cancelled cheque / bank letter <span className="text-destructive">*</span></Label>
+            <input type="hidden" {...register('docCancelledChequeUrl')} />
+            <input type="hidden" {...register('docCancelledChequeFileName')} />
+            <input
+              ref={chequeFileRef}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleUpload(file, setChequeStatus, setChequeError, 'docCancelledChequeUrl', 'docCancelledChequeFileName');
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={chequeStatus === 'uploading'}
+                onClick={() => chequeFileRef.current?.click()}
+              >
+                <Upload className="h-3.5 w-3.5 mr-1.5" />
+                {chequeStatus === 'done' ? 'Replace' : 'Choose file'}
+              </Button>
+              {chequeStatus === 'uploading' && (
+                <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…
+                </span>
+              )}
+              {chequeStatus === 'done' && (
+                <span className="flex items-center gap-1 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {chequeFileName}
+                </span>
+              )}
+              {chequeStatus === 'idle' && (
+                <span className="text-sm text-muted-foreground">No file selected</span>
+              )}
+            </div>
+            {chequeStatus === 'error' && <p className="text-xs text-destructive">{chequeError}</p>}
+            {errors.docCancelledChequeUrl && chequeStatus !== 'done' && (
+              <p className="text-xs text-destructive">{errors.docCancelledChequeUrl.message}</p>
+            )}
+          </div>
+
+          {/* Counterparty letter */}
+          <div className="space-y-2">
+            <Label>Counterparty letter <span className="text-destructive">*</span></Label>
+            <input type="hidden" {...register('docCounterpartyLetterUrl')} />
+            <input type="hidden" {...register('docCounterpartyLetterFileName')} />
+            <input
+              ref={letterFileRef}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleUpload(file, setLetterStatus, setLetterError, 'docCounterpartyLetterUrl', 'docCounterpartyLetterFileName');
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={letterStatus === 'uploading'}
+                onClick={() => letterFileRef.current?.click()}
+              >
+                <Upload className="h-3.5 w-3.5 mr-1.5" />
+                {letterStatus === 'done' ? 'Replace' : 'Choose file'}
+              </Button>
+              {letterStatus === 'uploading' && (
+                <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…
+                </span>
+              )}
+              {letterStatus === 'done' && (
+                <span className="flex items-center gap-1 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {letterFileName}
+                </span>
+              )}
+              {letterStatus === 'idle' && (
+                <span className="text-sm text-muted-foreground">No file selected</span>
+              )}
+            </div>
+            {letterStatus === 'error' && <p className="text-xs text-destructive">{letterError}</p>}
+            {errors.docCounterpartyLetterUrl && letterStatus !== 'done' && (
+              <p className="text-xs text-destructive">{errors.docCounterpartyLetterUrl.message}</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <DialogFooter>
+        <Button type="submit" disabled={submitting}>{submitting ? 'Submitting…' : 'Submit for verification'}</Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Modify Change Request — EDIT an existing beneficiary account.
+// Like ADD, the change flows through maker-checker verification with
+// supporting documents; the underlying account is only updated on approval.
+// ---------------------------------------------------------------------
+
+const modifySchema = z.object({
+  accountHolderName: z.string().min(2).max(200),
+  accountNumber: z.string().min(2).max(60),
+  bankId: z.string().uuid('Select a bank'),
+  currencyId: z.string().uuid('Select a currency'),
+  countryId: z.string().uuid('Select a country'),
+  branchName: z.string().max(120).optional().or(z.literal('')),
+  swiftBic: z.string().max(11).optional().or(z.literal('')),
+  iban: z.string().max(34).optional().or(z.literal('')),
+  accountDirection: z.enum(['PAY_TO', 'RECEIVE_FROM', 'BOTH']),
+  // §6.2 supporting documents — minimum one
+  docCancelledChequeUrl: z.string().min(1, 'Cancelled cheque / bank letter URL required'),
+  docCancelledChequeFileName: z.string().min(1),
+  docCounterpartyLetterUrl: z.string().min(1, 'Counterparty letter URL required'),
+  docCounterpartyLetterFileName: z.string().min(1),
+});
+type ModifyFormData = z.infer<typeof modifySchema>;
+
+function EditChangeRequestForm({
+  account, onSubmit, submitting,
+}: { account: BeneficiaryAccount; onSubmit: (d: ModifyFormData) => void; submitting?: boolean }): React.ReactElement {
+  const {
+    register, handleSubmit, watch, setValue, formState: { errors },
+  } = useForm<ModifyFormData>({
+    resolver: zodResolver(modifySchema),
+    defaultValues: {
+      accountHolderName: account.accountHolderName,
+      accountNumber: account.accountNumber,
+      bankId: account.bankId,
+      currencyId: account.currencyId,
+      countryId: account.countryId,
+      branchName: account.branchName ?? '',
+      swiftBic: account.swiftBic ?? '',
+      iban: account.iban ?? '',
+      accountDirection: account.accountDirection,
+    },
+  });
+
+  const [chequeStatus, setChequeStatus] = useState<UploadStatus>('idle');
+  const [chequeError, setChequeError] = useState('');
+  const chequeFileRef = useRef<HTMLInputElement>(null);
+
+  const [letterStatus, setLetterStatus] = useState<UploadStatus>('idle');
+  const [letterError, setLetterError] = useState('');
+  const letterFileRef = useRef<HTMLInputElement>(null);
+
+  const chequeFileName = watch('docCancelledChequeFileName');
+  const letterFileName = watch('docCounterpartyLetterFileName');
+
+  async function handleUpload(
+    file: File,
+    setStatus: (s: UploadStatus) => void,
+    setError: (e: string) => void,
+    urlField: 'docCancelledChequeUrl' | 'docCounterpartyLetterUrl',
+    nameField: 'docCancelledChequeFileName' | 'docCounterpartyLetterFileName',
+  ): Promise<void> {
+    setStatus('uploading');
+    setError('');
+    try {
+      const result = await api.upload(file);
+      setValue(urlField, result.url, { shouldValidate: true });
+      setValue(nameField, result.fileName, { shouldValidate: true });
+      setStatus('done');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+      setStatus('error');
+    }
+  }
+
+  const { data: banks } = useQuery({
+    queryKey: ['banks-all'],
+    queryFn: () => api.get<Paginated<Bank>>('/banks?page=1&limit=200'),
+  });
+  const { data: currencies } = useQuery({
+    queryKey: ['currencies-all'],
+    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
+  });
+  const { data: countries } = useQuery({
+    queryKey: ['countries-all'],
+    queryFn: () => api.get<Paginated<Country>>('/countries?page=1&limit=300'),
+  });
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
+      <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+        Owner: <span className="font-medium text-foreground">
+          {account.counterparty?.legalName ?? account.employee?.fullName ?? '—'}
+        </span>{' '}
+        ({account.counterpartyId ? 'Counterparty' : account.employeeId ? 'Employee' : 'Unassigned'}).
+        The owner cannot be reassigned via a modification.
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="accountHolderName">Account holder <span className="text-destructive">*</span></Label>
+          <Input id="accountHolderName" {...register('accountHolderName')} />
+          {errors.accountHolderName && <p className="text-xs text-destructive">{errors.accountHolderName.message}</p>}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="accountNumber">Account number <span className="text-destructive">*</span></Label>
+          <Input id="accountNumber" {...register('accountNumber')} />
+          {errors.accountNumber && <p className="text-xs text-destructive">{errors.accountNumber.message}</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="bankId">Bank <span className="text-destructive">*</span></Label>
+          <Select id="bankId" placeholder="Select bank"
+            options={(banks?.data ?? []).map((b) => ({ label: b.name, value: b.id }))}
+            {...register('bankId')} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
+          <Select id="currencyId" placeholder="Select currency"
+            options={(currencies?.data ?? []).map((c) => ({ label: c.code ? `${c.code} — ${c.name ?? ''}` : (c.name ?? c.id), value: c.id }))}
+            {...register('currencyId')} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="countryId">Country <span className="text-destructive">*</span></Label>
+          <Select id="countryId" placeholder="Select country"
+            options={(countries?.data ?? []).map((c) => ({
+              label: c.isSanctioned ? `${c.countryName} (sanctioned)` : c.countryName,
+              value: c.id,
+            }))}
+            {...register('countryId')} />
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="branchName">Branch name</Label>
+          <Input id="branchName" {...register('branchName')} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="swiftBic">SWIFT / BIC</Label>
+          <Input id="swiftBic" {...register('swiftBic')} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="iban">IBAN</Label>
+          <Input id="iban" {...register('iban')} />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="accountDirection">Direction <span className="text-destructive">*</span></Label>
+        <Select id="accountDirection" options={[
+          { label: 'Pay-to (outgoing)', value: 'PAY_TO' },
+          { label: 'Receive-from (incoming)', value: 'RECEIVE_FROM' },
+          { label: 'Both', value: 'BOTH' },
+        ]} {...register('accountDirection')} />
       </div>
 
       <div className="rounded-md border p-3 space-y-3">
@@ -646,6 +906,7 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
   const [crStatus, setCrStatus] = useState<string>('');
   const [addOpen, setAddOpen] = useState(false);
   const [viewing, setViewing] = useState<BeneficiaryAccount | null>(null);
+  const [editing, setEditing] = useState<BeneficiaryAccount | null>(null);
   const [verifying, setVerifying] = useState<BeneficiaryAccountChangeRequest | null>(null);
   const [approving, setApproving] = useState<BeneficiaryAccountChangeRequest | null>(null);
   const [rejecting, setRejecting] = useState<BeneficiaryAccountChangeRequest | null>(null);
@@ -697,6 +958,35 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [CR_KEY] });
       setAddOpen(false);
+      notify.success('Change request submitted for verification');
+    },
+    onError: (e: Error) => notify.error('Submit failed', e),
+  });
+
+  const modifyMut = useMutation({
+    mutationFn: ({ accountId, d }: { accountId: string; d: ModifyFormData }) =>
+      api.post('/beneficiary-accounts/change-requests', {
+        changeType: 'MODIFY' as const,
+        beneficiaryAccountId: accountId,
+        proposedData: {
+          accountHolderName: d.accountHolderName,
+          accountNumber: d.accountNumber,
+          bankId: d.bankId,
+          branchName: d.branchName || undefined,
+          swiftBic: d.swiftBic || undefined,
+          iban: d.iban || undefined,
+          currencyId: d.currencyId,
+          countryId: d.countryId,
+          accountDirection: d.accountDirection,
+        },
+        documents: [
+          { code: 'CANCELLED_CHEQUE', label: 'Cancelled cheque / bank letter', fileName: d.docCancelledChequeFileName, fileUrl: d.docCancelledChequeUrl },
+          { code: 'COUNTERPARTY_LETTER', label: 'Counterparty letter', fileName: d.docCounterpartyLetterFileName, fileUrl: d.docCounterpartyLetterUrl },
+        ],
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [CR_KEY] });
+      setEditing(null);
       notify.success('Change request submitted for verification');
     },
     onError: (e: Error) => notify.error('Submit failed', e),
@@ -819,9 +1109,14 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="outline" onClick={() => setViewing(b)}>
-                      <Eye className="mr-1 h-4 w-4" /> View
-                    </Button>
+                    <div className="inline-flex items-center gap-1 whitespace-nowrap">
+                      <Button size="sm" variant="outline" onClick={() => setViewing(b)}>
+                        <Eye className="mr-1 h-4 w-4" /> View
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setEditing(b)}>
+                        <Pencil className="mr-1 h-4 w-4" /> Edit
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               );
@@ -925,6 +1220,23 @@ export default function BeneficiaryAccountsPage(): React.ReactElement {
         open={!!viewing}
         onOpenChange={(o) => !o && setViewing(null)}
       />
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Edit beneficiary account</DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              §6.2 — submits a modification change request for independent verification. Changes apply only after approval.
+            </p>
+          </DialogHeader>
+          {editing && (
+            <EditChangeRequestForm
+              account={editing}
+              submitting={modifyMut.isPending}
+              onSubmit={(d) => modifyMut.mutate({ accountId: editing.id, d })}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
       <VerifyDialog
         open={!!verifying}
         onOpenChange={(o) => !o && setVerifying(null)}

@@ -290,6 +290,7 @@ export interface PaymentType extends AuditFields {
   isBatchBased: boolean;
   isConfidential: boolean;
   mobileInitiationOnly: boolean;
+  employeeSelfService: boolean;
   allowsCrossCurrency: boolean;
   approvalMatrixRef?: string | null;
   fieldConfig: FieldConfigItem[];

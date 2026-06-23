@@ -149,6 +149,7 @@ export default function IncomingReceiptsPage(): React.ReactElement {
             <TableRow>
               <TableHead>Receipt #</TableHead>
               <TableHead>Counterparty</TableHead>
+              <TableHead>Bank Account</TableHead>
               <TableHead>Expected</TableHead>
               <TableHead>Received</TableHead>
               <TableHead>Inward Ref</TableHead>
@@ -160,14 +161,14 @@ export default function IncomingReceiptsPage(): React.ReactElement {
           <TableBody>
             {list.isLoading && (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             )}
             {!list.isLoading && data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
                   No incoming receipts yet.
                 </TableCell>
               </TableRow>
@@ -183,6 +184,21 @@ export default function IncomingReceiptsPage(): React.ReactElement {
                   </Link>
                 </TableCell>
                 <TableCell>{r.counterparty?.name ?? '—'}</TableCell>
+                <TableCell>
+                  {r.receiveFromAccount ? (
+                    <div>
+                      <div className="text-sm">
+                        {r.receiveFromAccount.bank?.name ?? r.receiveFromAccount.bankName ?? '—'}
+                      </div>
+                      <div className="font-mono text-xs text-muted-foreground">
+                        {r.receiveFromAccount.accountNumber}
+                        {r.receiveFromAccount.currency?.code ? ` · ${r.receiveFromAccount.currency.code}` : ''}
+                      </div>
+                    </div>
+                  ) : (
+                    '—'
+                  )}
+                </TableCell>
                 <TableCell>
                   {r.expectedAmount} {r.expectedCurrencyCode}
                 </TableCell>

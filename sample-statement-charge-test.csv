@@ -1,5 +1,0 @@
-Value Date,Reference,Debit,Credit,Narrative
-2026-06-09,UNKNOWN-DR-1,777.77,,Vendor payment incl. bank charge
-2026-06-09,,1020.00,,Vendor payment incl. bank charge
-2026-06-09,,10200.00,,Large vendor payment incl. bank charge
-2026-06-09,,555.55,,Unknown debit - should not match

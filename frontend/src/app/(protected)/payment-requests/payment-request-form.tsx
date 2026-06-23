@@ -13,6 +13,7 @@ import type {
   BeneficiaryAccount,
   Counterparty,
   Currency,
+  LegalEntity,
   Paginated,
   PaymentType,
   Role,
@@ -170,8 +171,10 @@ export function PaymentRequestForm({
   }
 
   const counterpartyId = watch('counterpartyId');
-  const currencyId = watch('currencyId');
-  const beneficiaryAccountId = watch('beneficiaryAccountId');
+  const sourceAccountId = watch('sourceAccountId');
+  // Legal entity is a UI filter for the source bank-account list (not stored
+  // on the request — the chosen bank account already implies the entity).
+  const [legalEntityId, setLegalEntityId] = useState('');
 
   const { user } = useAuth();
 
@@ -190,6 +193,10 @@ export function PaymentRequestForm({
   const { data: currencies } = useQuery({
     queryKey: ['currencies-all'],
     queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
+  });
+  const { data: legalEntities } = useQuery({
+    queryKey: ['legal-entities-all'],
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
   });
   // Group-own bank accounts (master) — pool of source accounts from which
   // the payment will be released. Cross-currency release is blocked, so the
@@ -225,14 +232,42 @@ export function PaymentRequestForm({
     })
     .map((p) => ({ label: `${p.code} — ${p.name}`, value: p.id }));
 
-  const selectedBeneficiary = (beneficiaries?.data ?? []).find((b) => b.id === beneficiaryAccountId);
+  // §4.3 — the source bank account is picked by first choosing its owning
+  // legal entity; the currency is then derived from the chosen account.
+  const accounts = sourceAccounts?.data ?? [];
+  const selectedSource = accounts.find((a) => a.id === sourceAccountId);
+  // Only offer legal entities that actually own at least one active bank
+  // account — otherwise the bank-account list would come up empty.
+  const entityIdsWithAccounts = new Set(
+    accounts.filter((a) => a.isActive && a.legalEntityId).map((a) => a.legalEntityId),
+  );
+  const legalEntityOptions = (legalEntities?.data ?? [])
+    .filter((le) => le.isActive && entityIdsWithAccounts.has(le.id))
+    .map((le) => ({ label: `${le.code} — ${le.name}`, value: le.id }));
+  const bankAccountOptions = accounts
+    .filter((a) => a.isActive && a.legalEntityId === legalEntityId)
+    .map((a) => ({
+      label: `${a.bank?.name ?? a.bankName ?? 'Bank'} · ${a.accountNumber} · ${a.currency?.code ?? ''}`,
+      value: a.id,
+    }));
+  const selectedCurrencyCode =
+    selectedSource?.currency?.code ??
+    (currencies?.data ?? []).find((c) => c.id === selectedSource?.currencyId)?.code ??
+    '';
 
-  // When a beneficiary account is selected, auto-set the currency to match it.
+  // Edit mode: preselect the legal entity from the existing source account.
   useEffect(() => {
-    if (selectedBeneficiary?.currencyId) {
-      setValue('currencyId', selectedBeneficiary.currencyId, { shouldValidate: true });
+    if (!legalEntityId && selectedSource?.legalEntityId) {
+      setLegalEntityId(selectedSource.legalEntityId);
     }
-  }, [selectedBeneficiary?.currencyId, setValue]);
+  }, [selectedSource?.legalEntityId, legalEntityId]);
+
+  // Currency is derived from the chosen source bank account (shown read-only).
+  useEffect(() => {
+    if (selectedSource?.currencyId) {
+      setValue('currencyId', selectedSource.currencyId, { shouldValidate: true });
+    }
+  }, [selectedSource?.currencyId, setValue]);
 
   const { fields, append, remove } = useFieldArray({ control, name: 'documents' });
 
@@ -246,6 +281,36 @@ export function PaymentRequestForm({
           options={paymentTypeOptions}
           {...register('paymentTypeId')} />
         {errors.paymentTypeId && <p className="text-xs text-destructive">{errors.paymentTypeId.message}</p>}
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
+          <Select id="legalEntityId" placeholder="Select legal entity"
+            options={legalEntityOptions}
+            value={legalEntityId}
+            onChange={(e) => {
+              setLegalEntityId(e.target.value);
+              setValue('sourceAccountId', '', { shouldValidate: true });
+              setValue('currencyId', '', { shouldValidate: true });
+            }} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="sourceAccountId">Bank account <span className="text-destructive">*</span></Label>
+          <Select id="sourceAccountId"
+            placeholder={legalEntityId ? 'Select bank account' : 'Pick a legal entity first'}
+            disabled={!legalEntityId}
+            options={bankAccountOptions}
+            {...register('sourceAccountId')} />
+          <p className="text-xs text-muted-foreground">Bank accounts of the selected legal entity.</p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="currencyDisplay">Currency</Label>
+          <input type="hidden" {...register('currencyId')} />
+          <Input id="currencyDisplay" value={selectedCurrencyCode} readOnly disabled
+            placeholder="From bank account" />
+          {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -272,36 +337,7 @@ export function PaymentRequestForm({
         </div>
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="sourceAccountId">Pay from (source bank account)</Label>
-        <Select id="sourceAccountId"
-          placeholder={currencyId ? 'Select source account' : 'Pick a currency first'}
-          disabled={!currencyId}
-          options={[
-            { label: '— None —', value: '' },
-            ...(sourceAccounts?.data ?? [])
-              .filter((a) => a.isActive && a.currencyId === currencyId)
-              .map((a) => {
-                const bankLabel = a.bankNickname || a.bank?.name || a.bankName || 'Bank';
-                return {
-                  label: `${bankLabel} · ${a.accountNumber}`,
-                  value: a.id,
-                };
-              }),
-          ]}
-          {...register('sourceAccountId')} />
-        <p className="text-xs text-muted-foreground">From the bank-accounts master. Only active accounts in the request currency are listed; the Maker may change this at release time.</p>
-      </div>
-
-      <div className="grid grid-cols-3 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
-          <Select id="currencyId" placeholder="Select"
-            options={(currencies?.data ?? [])
-              .filter((c) => !selectedBeneficiary || c.id === selectedBeneficiary.currencyId)
-              .map((c) => ({ label: c.code ? `${c.code} — ${c.name ?? ''}` : (c.name ?? c.id), value: c.id }))}
-            {...register('currencyId')} />
-        </div>
+      <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="amount">Amount <span className="text-destructive">*</span></Label>
           <Input id="amount" inputMode="decimal" placeholder="0.0000" {...register('amount')} />

@@ -29,6 +29,7 @@ import { PaymentTypesModule } from './modules/payment-types/payment-types.module
 import { PaymentCategoriesModule } from './modules/payment-categories/payment-categories.module';
 import { CounterpartiesModule } from './modules/counterparties/counterparties.module';
 import { ApprovalMatricesModule } from './modules/approval-matrices/approval-matrices.module';
+import { ApprovalDelegationsModule } from './modules/approval-delegations/approval-delegations.module';
 import { BeneficiaryAccountsModule } from './modules/beneficiary-accounts/beneficiary-accounts.module';
 import { PaymentRequestsModule } from './modules/payment-requests/payment-requests.module';
 import { IncomingReceiptsModule } from './modules/incoming-receipts/incoming-receipts.module';
@@ -76,6 +77,7 @@ import { FxRatesModule } from './modules/fx-rates/fx-rates.module';
     PaymentCategoriesModule,
     CounterpartiesModule,
     ApprovalMatricesModule,
+    ApprovalDelegationsModule,
     BeneficiaryAccountsModule,
     PaymentRequestsModule,
     IncomingReceiptsModule,

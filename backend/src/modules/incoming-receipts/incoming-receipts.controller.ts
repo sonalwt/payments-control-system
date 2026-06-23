@@ -37,13 +37,7 @@ import {
 @ApiTags('Incoming Receipts')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(
-  RoleCode.SUPER_ADMIN,
-  RoleCode.INITIATOR,
-  RoleCode.CHECKER,
-  RoleCode.APPROVER_1,
-  RoleCode.APPROVER_2,
-)
+@Roles(RoleCode.SUPER_ADMIN)
 @Controller('incoming-receipts')
 export class IncomingReceiptsController {
   constructor(private readonly service: IncomingReceiptsService) {}

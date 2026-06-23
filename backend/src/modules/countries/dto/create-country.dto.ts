@@ -4,7 +4,6 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
   Length,
 } from 'class-validator';
 
@@ -26,10 +25,6 @@ export class CreateCountryDto {
   @IsNotEmpty()
   @Length(2, 10)
   code!: string;
-
-  @ApiProperty({ description: 'Currency master UUID' })
-  @IsUUID()
-  currencyId!: string;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()
