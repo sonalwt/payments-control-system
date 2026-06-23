@@ -105,12 +105,15 @@ ON CONFLICT (name) WHERE deleted_at IS NULL DO NOTHING;
 -- ---------------------------------------------------------------------
 INSERT INTO payment_types (
     code, name, description, direction, requires_approval_chain, is_system,
-    payment_category_id, maker_role_id, checker_role_id
+    payment_category_id, maker_role_id, checker_role_id, legal_entity_id
 )
 SELECT v.code, v.name, v.description, v.direction, TRUE, TRUE,
        (SELECT id FROM payment_categories WHERE name = v.category   AND deleted_at IS NULL),
        (SELECT id FROM roles              WHERE code = v.maker_code AND deleted_at IS NULL),
-       (SELECT id FROM roles              WHERE code = v.checker_code AND deleted_at IS NULL)
+       (SELECT id FROM roles              WHERE code = v.checker_code AND deleted_at IS NULL),
+       -- legal_entity_id is now required; default seeded types to the oldest
+       -- legal entity (same rule the legal-entity migration uses to backfill).
+       (SELECT id FROM legal_entities ORDER BY created_at, id LIMIT 1)
 FROM (VALUES
     ('TRADE_PAYMENT',        'Trade Payment',                 'Trade payments — section 5.1.',                                  'OUTGOING', 'Trade Payments',       'OPS_TEAM',     'ACCOUNTS_TEAM'),
     ('TRAVEL_DESK',          'Travel Desk Payment',           'Non-trade travel desk payments — section 5.2.',                  'OUTGOING', 'Non-Trade Payments',   NULL,           NULL),

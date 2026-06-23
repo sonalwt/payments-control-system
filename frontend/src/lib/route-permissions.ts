@@ -60,10 +60,8 @@ const RULES: RouteRule[] = [
   { prefix: '/counterparty/banks', roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY] },
   { prefix: '/counterparty/bank-accounts', roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY] },
 
-  // Payment & receipt workflows — payment-requests is open to every
-  // authenticated user; the backend enforces maker eligibility on submit
-  // based on the payment type's maker_role_id.
-  { prefix: '/incoming-receipts', roles: OPERATIONAL_READ },
+  // Incoming receipts — SUPER_ADMIN only.
+  { prefix: '/incoming-receipts', roles: [RoleCode.SUPER_ADMIN] },
 
   // HR-led workflows — SUPER_ADMIN only (no HR roles in the current taxonomy)
   { prefix: '/payroll-batches', roles: [RoleCode.SUPER_ADMIN] },

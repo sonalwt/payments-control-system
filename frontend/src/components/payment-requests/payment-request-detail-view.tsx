@@ -255,6 +255,14 @@ export function PaymentRequestDetailView({
                     step.decision === 'REJECTED' ? 'bg-rose-50 ring-rose-200' :
                     isActive ? 'bg-amber-50 ring-amber-200' :
                     'bg-muted ring-border';
+                  // A leave delegate decided a step assigned to someone else.
+                  const onBehalf =
+                    step.approverType === 'USER' &&
+                    step.decidedBy &&
+                    step.approverUserId &&
+                    step.decidedBy !== step.approverUserId
+                      ? ` on behalf of ${step.approverUser?.fullName ?? step.approverUserId}`
+                      : '';
                   return (
                     <li key={step.id} className={`rounded-md px-3 py-2 ring-1 ${ringStyle}`}>
                       <div className="flex items-center justify-between">
@@ -273,7 +281,7 @@ export function PaymentRequestDetailView({
                       </div>
                       {step.decidedAt && (
                         <div className="mt-1 text-xs text-muted-foreground">
-                          {step.decidedByUser?.fullName ?? '—'} · {formatDateTime(step.decidedAt)}
+                          {step.decidedByUser?.fullName ?? '—'}{onBehalf} · {formatDateTime(step.decidedAt)}
                         </div>
                       )}
                       {step.comments && (
@@ -332,7 +340,7 @@ export function PaymentRequestDetailView({
                       {step.order === 1 && pr.swiftCopyUrl && (
                         <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                           <span>SWIFT / MT103 copy</span>
-                          <FileActions fileUrl={pr.swiftCopyUrl} fileName="swift-mt103" presign={presign} />
+                          <FileActions fileUrl={pr.swiftCopyUrl} fileName="swift-mt103" presign={presign} onView={openPreview} />
                         </div>
                       )}
                     </li>

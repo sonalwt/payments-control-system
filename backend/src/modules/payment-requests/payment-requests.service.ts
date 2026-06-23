@@ -38,6 +38,7 @@ import { Counterparty } from '../counterparties/counterparty.entity';
 import { BankAccount } from '../bank-accounts/bank-account.entity';
 import { Country } from '../countries/country.entity';
 import { UserRole } from '../users/user-role.entity';
+import { ApprovalDelegation } from '../approval-delegations/approval-delegation.entity';
 import { PaymentType } from '../payment-types/payment-type.entity';
 import { User } from '../users/user.entity';
 import { Role } from '../roles/role.entity';
@@ -127,12 +128,18 @@ export class PaymentRequestsService {
     return this.dataSource.transaction(async (em) => {
       const paymentType = await em.findOne(PaymentType, {
         where: { id: dto.paymentTypeId },
-        select: ['id', 'isConfidential', 'isActive', 'effectiveFrom', 'effectiveTo'],
+        select: ['id', 'isConfidential', 'isActive', 'employeeSelfService', 'effectiveFrom', 'effectiveTo'],
       });
-      // Employees may raise any active, non-confidential type — this mirrors
-      // PaymentTypesService.findEmployeeSelectable, which populates the portal
-      // dropdown. (Confidential/chairman types are never employee-initiated.)
-      if (!paymentType || !paymentType.isActive || paymentType.isConfidential) {
+      // Employees may only raise types whose maker is the employee, i.e. those
+      // flagged employee_self_service — this mirrors the portal dropdown
+      // (PaymentTypesService.findEmployeeSelectable). Confidential/chairman types
+      // are never employee-initiated.
+      if (
+        !paymentType ||
+        !paymentType.isActive ||
+        paymentType.isConfidential ||
+        !paymentType.employeeSelfService
+      ) {
         throw new ForbiddenException('This payment type is not available for self-service.');
       }
       const today = dubaiToday();
@@ -351,6 +358,30 @@ export class PaymentRequestsService {
         )`);
       }
 
+      // (2b) Delegated visibility: while a delegator is on leave, their
+      //      delegate sees the delegator's currently-pending approval step
+      //      (USER-pinned, or a ROLE the delegator holds) as if it were theirs.
+      const delegatedAwaiting = `(pr.status = 'PENDING_APPROVAL' AND EXISTS (
+        SELECT 1 FROM payment_request_approvals praDg
+        JOIN approval_delegations dg
+          ON dg.delegate_user_id = :viewerId
+         AND dg.deleted_at IS NULL
+         AND CURRENT_DATE BETWEEN dg.start_date AND dg.end_date
+         AND (dg.payment_type_id IS NULL OR dg.payment_type_id = pr.payment_type_id)
+        WHERE praDg.payment_request_id = pr.id
+          AND praDg.step_order = pr.current_step_order
+          AND praDg.decision = 'PENDING'
+          AND (
+            praDg.approver_user_id = dg.delegator_user_id
+            OR EXISTS (
+              SELECT 1 FROM user_roles urDg
+              WHERE urDg.user_id = dg.delegator_user_id
+                AND urDg.role_id = praDg.approver_role_id
+            )
+          )
+      ))`;
+      orClauses.push(delegatedAwaiting);
+
       // (3) Treasury visibility: a treasury maker / checker / authoriser sees
       //     the requests currently awaiting their stage (the maker stage is
       //     split by the request's TT mode), plus any treasury stage they have
@@ -414,6 +445,8 @@ export class PaymentRequestsService {
               AND praA.approver_user_id = :viewerId
           ))`);
         }
+        // Requests awaiting a delegator the viewer is currently covering.
+        aw.push(delegatedAwaiting);
         // Matrix-pinned stage roles awaiting this viewer.
         aw.push(`(
           (pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NOT NULL AND EXISTS (
@@ -535,6 +568,31 @@ export class PaymentRequestsService {
    * - Sets sanction_warning if the beneficiary's country is sanctioned.
    * - Freezes counterparty + beneficiary snapshots.
    */
+  /**
+   * Resolve the active approval matrix for a payment type. A payment type now
+   * has a single (currency-agnostic) matrix — currency is no longer chosen when
+   * configuring it. We still prefer a matrix whose currency matches the request
+   * (for any legacy currency-specific matrices) and otherwise fall back to the
+   * payment type's most recent active matrix, so non-USD requests (e.g. an SGD
+   * reimbursement) resolve instead of failing with "no matrix found".
+   */
+  private findActiveMatrix(
+    em: EntityManager,
+    paymentTypeId: string,
+    currencyId: string,
+  ): Promise<ApprovalMatrix | null> {
+    return em
+      .createQueryBuilder(ApprovalMatrix, 'm')
+      .where('m.payment_type_id = :pt', { pt: paymentTypeId })
+      .andWhere('m.is_active = true')
+      .andWhere('m.deleted_at IS NULL')
+      // Currency match (if any) wins; otherwise newest active matrix.
+      .orderBy('CASE WHEN m.currency_id = :ccy THEN 0 ELSE 1 END', 'ASC')
+      .addOrderBy('m.created_at', 'DESC')
+      .setParameter('ccy', currencyId)
+      .getOne();
+  }
+
   // actorId is the acting user, or null when an employee submits their own
   // self-service request (employees are not users; see submitForEmployee).
   async submit(id: string, actorId: string | null): Promise<PaymentRequest> {
@@ -604,14 +662,7 @@ export class PaymentRequestsService {
       // snapshotted so only its holders can act. NULL → global
       // TREASURY_AUTHORISER role.
       if (paymentType?.isConfidential) {
-        const matrix = await em
-          .createQueryBuilder(ApprovalMatrix, 'm')
-          .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
-          .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
-          .andWhere('m.is_active = true')
-          .andWhere('m.deleted_at IS NULL')
-          .orderBy('m.created_at', 'DESC')
-          .getOne();
+        const matrix = await this.findActiveMatrix(em, pr.paymentTypeId, pr.currencyId);
 
         pr.status = 'TREASURY_AUTHORISER';
         pr.submittedAt = new Date();
@@ -650,18 +701,11 @@ export class PaymentRequestsService {
         );
       } else {
         // No checker — snapshot the matrix immediately and seed steps 1..N.
-        const matrix = await em
-          .createQueryBuilder(ApprovalMatrix, 'm')
-          .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
-          .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
-          .andWhere('m.is_active = true')
-          .andWhere('m.deleted_at IS NULL')
-          .orderBy('m.created_at', 'DESC')
-          .getOne();
+        const matrix = await this.findActiveMatrix(em, pr.paymentTypeId, pr.currencyId);
         if (!matrix) {
           throw new BadRequestException(
-            'No active approval matrix found for this payment type and currency. ' +
-              'Please configure an approval matrix for this currency under Payment Types & Approvals before submitting.',
+            'No active approval matrix found for this payment type. ' +
+              'Please configure an approval matrix under Payment Types & Approvals before submitting.',
           );
         }
 
@@ -746,19 +790,8 @@ export class PaymentRequestsService {
         throw new BadRequestException('Active step has already been decided.');
       }
 
-      // Authorisation: USER step requires exact match; ROLE step requires actor to hold the role.
-      if (step.approverType === 'USER') {
-        if (step.approverUserId !== actorId) {
-          throw new ForbiddenException('This step is assigned to a different user.');
-        }
-      } else if (step.approverType === 'ROLE') {
-        const has = await em.count(UserRole, {
-          where: { userId: actorId, roleId: step.approverRoleId ?? '' },
-        });
-        if (!has) {
-          throw new ForbiddenException('You do not hold the required role for this step.');
-        }
-      }
+      // Authorisation: the assigned approver, or an active leave delegate of theirs.
+      await this.assertCanActOnStep(em, step, actorId, pr.paymentTypeId);
 
       step.decision = 'APPROVED';
       step.decidedBy = actorId;
@@ -768,20 +801,13 @@ export class PaymentRequestsService {
 
       if (!pr.matrixId) {
         // ── Phase 1: checker just approved — now check the approval matrix ──
-        const matrix = await em
-          .createQueryBuilder(ApprovalMatrix, 'm')
-          .where('m.payment_type_id = :pt', { pt: pr.paymentTypeId })
-          .andWhere('m.currency_id = :ccy', { ccy: pr.currencyId })
-          .andWhere('m.is_active = true')
-          .andWhere('m.deleted_at IS NULL')
-          .orderBy('m.created_at', 'DESC')
-          .getOne();
+        const matrix = await this.findActiveMatrix(em, pr.paymentTypeId, pr.currencyId);
 
         if (!matrix) {
           // No active matrix — block the approval.
           throw new BadRequestException(
-            'No active approval matrix found for this payment type and currency. ' +
-            'Please configure an approval matrix for this currency under Payment Types & Approvals before approving.',
+            'No active approval matrix found for this payment type. ' +
+            'Please configure an approval matrix under Payment Types & Approvals before approving.',
           );
         }
 
@@ -904,18 +930,8 @@ export class PaymentRequestsService {
       });
       if (!step) throw new BadRequestException('No active step found.');
 
-      if (step.approverType === 'USER') {
-        if (step.approverUserId !== actorId) {
-          throw new ForbiddenException('This step is assigned to a different user.');
-        }
-      } else if (step.approverType === 'ROLE') {
-        const has = await em.count(UserRole, {
-          where: { userId: actorId, roleId: step.approverRoleId ?? '' },
-        });
-        if (!has) {
-          throw new ForbiddenException('You do not hold the required role for this step.');
-        }
-      }
+      // Authorisation: the assigned approver, or an active leave delegate of theirs.
+      await this.assertCanActOnStep(em, step, actorId, pr.paymentTypeId);
 
       step.decision = 'REJECTED';
       step.decidedBy = actorId;
@@ -1476,6 +1492,53 @@ export class PaymentRequestsService {
     );
   }
 
+  /**
+   * Authorises an actor to decide a pending approval step: either the assigned
+   * approver (USER match or ROLE holder), or an active leave delegate of the
+   * step's assignee (delegation covering today, Dubai calendar).
+   */
+  private async assertCanActOnStep(
+    em: EntityManager,
+    step: PaymentRequestApproval,
+    actorId: string,
+    paymentTypeId: string,
+  ): Promise<void> {
+    if (step.approverType === 'USER') {
+      if (step.approverUserId === actorId) return;
+    } else if (step.approverType === 'ROLE') {
+      const has = await em.count(UserRole, {
+        where: { userId: actorId, roleId: step.approverRoleId ?? '' },
+      });
+      if (has) return;
+    }
+
+    // Fallback: is the actor an active delegate of the step's assignee?
+    // The delegation must cover this request's payment type (null = all types).
+    const delegations = await em
+      .createQueryBuilder(ApprovalDelegation, 'dg')
+      .where('dg.delegate_user_id = :actorId', { actorId })
+      .andWhere('CURRENT_DATE BETWEEN dg.start_date AND dg.end_date')
+      .andWhere('(dg.payment_type_id IS NULL OR dg.payment_type_id = :ptId)', {
+        ptId: paymentTypeId,
+      })
+      .getMany();
+    if (delegations.length) {
+      const delegatorIds = delegations.map((d) => d.delegatorUserId);
+      if (step.approverType === 'USER') {
+        if (step.approverUserId && delegatorIds.includes(step.approverUserId)) return;
+      } else if (step.approverRoleId) {
+        const cnt = await em
+          .createQueryBuilder(UserRole, 'ur')
+          .where('ur.user_id IN (:...ids)', { ids: delegatorIds })
+          .andWhere('ur.role_id = :rid', { rid: step.approverRoleId })
+          .getCount();
+        if (cnt > 0) return;
+      }
+    }
+
+    throw new ForbiddenException('You are not authorised to act on this step.');
+  }
+
   private async loadOne(id: string, repo: Repository<PaymentRequest>): Promise<PaymentRequest> {
     const pr = await repo
       .createQueryBuilder('pr')
@@ -1488,6 +1551,13 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('beneficiaryAccount.bank', 'beneficiaryBank')
       .leftJoinAndSelect('beneficiaryAccount.country', 'beneficiaryCountry')
       .leftJoinAndSelect('pr.sourceAccount', 'sourceAccount')
+      // Maker (initiator) of the request — same mapping used by findAll().
+      .leftJoinAndMapOne(
+        'pr.createdByUser',
+        User,
+        'createdByUser',
+        'createdByUser.id = pr.created_by',
+      )
       .leftJoinAndSelect('pr.approvals', 'approval')
       .leftJoinAndSelect('approval.approverUser', 'approverUser')
       .leftJoinAndSelect('approval.approverRole', 'approverRole')

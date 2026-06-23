@@ -144,6 +144,9 @@ export class IncomingReceiptsService {
       .createQueryBuilder('r')
       .leftJoinAndSelect('r.counterparty', 'counterparty')
       .leftJoinAndSelect('r.legalEntity', 'legalEntity')
+      .leftJoinAndSelect('r.receiveFromAccount', 'receiveFromAccount')
+      .leftJoinAndSelect('receiveFromAccount.bank', 'receiveFromAccountBank')
+      .leftJoinAndSelect('receiveFromAccount.currency', 'receiveFromAccountCurrency')
       .orderBy('r.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -266,6 +269,10 @@ export class IncomingReceiptsService {
       }
 
       r.receiveFromAccountId = dto.receiveFromAccountId;
+      // Keep the loaded relation in sync with the FK we just set; otherwise the
+      // stale receiveFromAccount relation (from loadOne) overrides the scalar on
+      // save and the receipt records a different account than the one credited.
+      r.receiveFromAccount = account;
       r.inwardBankReference = dto.inwardBankReference;
       r.receivedAmount = dto.receivedAmount;
       r.receivedCurrencyCode = dto.receivedCurrencyCode.toUpperCase();

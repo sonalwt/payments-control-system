@@ -37,10 +37,13 @@ export class PaymentTypesService {
       isBatchBased: dto.isBatchBased ?? false,
       isConfidential: dto.isConfidential ?? false,
       mobileInitiationOnly: dto.mobileInitiationOnly ?? false,
+      employeeSelfService: dto.employeeSelfService ?? false,
       allowsCrossCurrency: dto.allowsCrossCurrency ?? true,
       fieldConfig: dto.fieldConfig ?? [],
       paymentCategoryId: dto.paymentCategoryId ?? null,
-      legalEntityId: dto.legalEntityId,
+      // Optional for confidential (chairman-style) types; the DTO enforces it
+      // for everything else.
+      legalEntityId: dto.legalEntityId ?? null,
       makerRoleIds: dto.makerRoleIds ?? (dto.makerRoleId ? [dto.makerRoleId] : []),
       // Keep the legacy single "primary" maker role in sync with the first entry.
       makerRoleId: dto.makerRoleIds?.[0] ?? dto.makerRoleId ?? null,
@@ -111,6 +114,8 @@ export class PaymentTypesService {
       .createQueryBuilder('pt')
       .where('pt.is_active = true')
       .andWhere('pt.is_confidential = false')
+      // Only types whose maker is the employee (employee self-service allow-list).
+      .andWhere('pt.employee_self_service = true')
       .andWhere('pt.effective_from <= :today', { today })
       .andWhere('(pt.effective_to IS NULL OR pt.effective_to >= :today)', { today })
       .orderBy('pt.name', 'ASC');

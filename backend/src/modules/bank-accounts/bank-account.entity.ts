@@ -4,6 +4,7 @@ import { Currency } from '../currencies/currency.entity';
 import { AccountType } from '../account-types/account-type.entity';
 import { Bank } from '../banks/bank.entity';
 import { Counterparty } from '../counterparties/counterparty.entity';
+import { LegalEntity } from '../legal-entities/legal-entity.entity';
 import { BankAccountChargeBand } from './bank-account-charge-band.entity';
 
 @Entity({ name: 'bank_accounts' })
@@ -19,6 +20,16 @@ export class BankAccount extends BaseEntity {
   // bank master existed. New records should use bankId.
   @Column({ name: 'bank_name', type: 'varchar', length: 150, nullable: true })
   bankName?: string | null;
+
+  // Account name = the owning group legal entity. bank_nickname is kept as a
+  // denormalised copy of the legal entity name so existing display/search code
+  // (which reads bankNickname) continues to work.
+  @Column({ name: 'legal_entity_id', type: 'uuid', nullable: true })
+  legalEntityId?: string | null;
+
+  @ManyToOne(() => LegalEntity, { nullable: true })
+  @JoinColumn({ name: 'legal_entity_id' })
+  legalEntity?: LegalEntity | null;
 
   @Column({ name: 'bank_nickname', type: 'varchar', length: 100, nullable: true })
   bankNickname?: string | null;
@@ -39,6 +50,39 @@ export class BankAccount extends BaseEntity {
 
   @Column({ name: 'account_number', type: 'varchar', length: 50 })
   accountNumber!: string;
+
+  // Holder of the account (often a group legal entity), free text from the
+  // bank-account master sheet.
+  @Column({ name: 'account_holder_name', type: 'varchar', length: 200, nullable: true })
+  accountHolderName?: string | null;
+
+  // Correspondent-banking / contact details captured on the master sheet.
+  @Column({ name: 'swift_bic', type: 'varchar', length: 20, nullable: true })
+  swiftBic?: string | null;
+
+  @Column({ name: 'iban', type: 'varchar', length: 60, nullable: true })
+  iban?: string | null;
+
+  @Column({ name: 'bank_address', type: 'text', nullable: true })
+  bankAddress?: string | null;
+
+  @Column({ name: 'correspondent_bank', type: 'text', nullable: true })
+  correspondentBank?: string | null;
+
+  @Column({ name: 'correspondent_swift', type: 'varchar', length: 20, nullable: true })
+  correspondentSwift?: string | null;
+
+  @Column({ name: 'contact_name', type: 'varchar', length: 150, nullable: true })
+  contactName?: string | null;
+
+  @Column({ name: 'contact_phone', type: 'varchar', length: 40, nullable: true })
+  contactPhone?: string | null;
+
+  @Column({ name: 'contact_phone_alt', type: 'varchar', length: 40, nullable: true })
+  contactPhoneAlt?: string | null;
+
+  @Column({ name: 'contact_email', type: 'varchar', length: 150, nullable: true })
+  contactEmail?: string | null;
 
   @Column({ name: 'branch_name', type: 'varchar', length: 150, nullable: true })
   branchName?: string | null;

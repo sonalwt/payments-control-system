@@ -76,12 +76,14 @@ export class PaymentType extends BaseEntity {
   @JoinColumn({ name: 'payment_category_id' })
   paymentCategory?: PaymentCategory | null;
 
-  @Column({ name: 'legal_entity_id', type: 'uuid' })
-  legalEntityId!: string;
+  // Optional: confidential (chairman-style) types are not tied to a legal
+  // entity. Required for all non-confidential types (enforced in the DTO).
+  @Column({ name: 'legal_entity_id', type: 'uuid', nullable: true })
+  legalEntityId?: string | null;
 
   @ManyToOne(() => LegalEntity, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'legal_entity_id' })
-  legalEntity?: LegalEntity;
+  legalEntity?: LegalEntity | null;
 
   // Maker roles — a payment type may have several maker roles; any user
   // holding one of them can create requests for this type. `maker_role_ids`

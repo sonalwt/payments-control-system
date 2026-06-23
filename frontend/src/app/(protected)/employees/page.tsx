@@ -50,6 +50,7 @@ function EmployeeDetails({ employee: e }: { employee: Employee }): React.ReactEl
         } />
         <Field label="Full name" value={e.fullName} />
         <Field label="Work email" value={e.workEmail} />
+        <Field label="Legal entity" value={e.legalEntity ? `${e.legalEntity.code} — ${e.legalEntity.name}` : null} />
         <Field label="Country of employment" value={e.countryOfEmployment ? `${e.countryOfEmployment.code} — ${e.countryOfEmployment.countryName}` : null} />
         <Field label="Start date" value={e.startDate} />
         <Field label="End date" value={e.endDate} />
@@ -70,7 +71,7 @@ function normalize(d: EmployeeFormData) {
     employeeCode: d.employeeCode,
     fullName: d.fullName,
     workEmail: d.workEmail,
-    countryOfEmploymentId: d.countryOfEmploymentId,
+    legalEntityId: d.legalEntityId,
     startDate: blank(d.startDate),
     endDate: blank(d.endDate),
     nationalId: blank(d.nationalId),
@@ -130,8 +131,8 @@ export default function EmployeesPage(): React.ReactElement {
             <ImportCsvDialog
               entityName="Employees"
               endpoint="/employees/import"
-              sampleHeaders={['employee_code', 'full_name', 'work_email', 'country_code', 'start_date', 'mobile_number', 'compensation_band', 'is_active']}
-              sampleRows={[['EMP001', 'John Smith', 'john.smith@company.com', 'GB', '2024-01-15', '+44 7700 900000', 'BAND-A', 'true']]}
+              sampleHeaders={['employee_code', 'full_name', 'work_email', 'legal_entity_code', 'start_date', 'mobile_number', 'compensation_band', 'is_active']}
+              sampleRows={[['EMP001', 'John Smith', 'john.smith@company.com', 'RWCORP-UK', '2024-01-15', '+44 7700 900000', 'BAND-A', 'true']]}
               onSuccess={() => void qc.invalidateQueries({ queryKey: [KEY] })}
             />
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -157,7 +158,7 @@ export default function EmployeesPage(): React.ReactElement {
               <TableHead>Code</TableHead>
               <TableHead>Full name</TableHead>
               <TableHead>Work email</TableHead>
-              <TableHead>Country</TableHead>
+              <TableHead>Legal entity</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-36 text-right">Actions</TableHead>
             </TableRow>
@@ -170,7 +171,7 @@ export default function EmployeesPage(): React.ReactElement {
                 <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{e.employeeCode}</code></TableCell>
                 <TableCell className="font-medium">{e.fullName}</TableCell>
                 <TableCell className="text-muted-foreground">{e.workEmail ?? '—'}</TableCell>
-                <TableCell>{e.countryOfEmployment ? `${e.countryOfEmployment.code} — ${e.countryOfEmployment.countryName}` : '—'}</TableCell>
+                <TableCell>{e.legalEntity ? `${e.legalEntity.code} — ${e.legalEntity.name}` : '—'}</TableCell>
                 <TableCell>
                   <span
                     className={

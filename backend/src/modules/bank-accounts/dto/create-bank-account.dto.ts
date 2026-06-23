@@ -41,7 +41,12 @@ export class CreateBankAccountDto {
   @IsUUID()
   bankId!: string;
 
-  @ApiPropertyOptional({ example: 'HDFC – Main Operating' })
+  @ApiPropertyOptional({ description: 'Owning legal entity UUID — used as the account name (group accounts).' })
+  @IsOptional()
+  @IsUUID()
+  legalEntityId?: string;
+
+  @ApiPropertyOptional({ example: 'HDFC – Main Operating', description: 'Free-text account name (counterparty accounts). Group accounts derive this from the legal entity.' })
   @IsOptional()
   @IsString()
   @Length(0, 100)

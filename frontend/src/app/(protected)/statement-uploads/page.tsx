@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Plus, Trash2, UploadCloud } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatDateMedium } from '@/lib/datetime';
-import type { BankAccount, LegalEntity, Paginated, StatementUpload } from '@/types/domain';
+import type { BankAccount, Paginated, StatementUpload } from '@/types/domain';
 import { FileActions } from '@/components/shared/file-actions';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -74,7 +74,6 @@ export default function StatementUploadsPage(): React.ReactElement {
   const qc = useQueryClient();
   const notify = useNotify();
 
-  const [filterEntityId, setFilterEntityId] = useState('');
   const [filterAccountId, setFilterAccountId] = useState('');
   const [page, setPage] = useState(1);
 
@@ -98,14 +97,6 @@ export default function StatementUploadsPage(): React.ReactElement {
     setFormFileName('');
     setFormNotes('');
   }
-
-  // Legal entities for filter. The list endpoint only whitelists page/limit/
-  // search query params (forbidNonWhitelisted), so we filter active ones
-  // client-side rather than passing an unsupported ?isActive param (which 400s).
-  const { data: entitiesData } = useQuery({
-    queryKey: ['legal-entities-all'],
-    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=100'),
-  });
 
   // Bank accounts for the form dropdown. Same constraint — pass only
   // page/limit and filter active accounts client-side.
@@ -151,7 +142,6 @@ export default function StatementUploadsPage(): React.ReactElement {
     onError: (e: Error) => notify.error('Delete failed', e),
   });
 
-  const entities = (entitiesData?.data ?? []).filter((e) => e.isActive);
   const accounts = (accountsData?.data ?? []).filter((a) => a.isActive);
   const uploads = uploadsData?.data ?? [];
   const totalPages = uploadsData?.totalPages ?? 1;
@@ -186,22 +176,6 @@ export default function StatementUploadsPage(): React.ReactElement {
                 <DialogTitle>Upload Bank Statement</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label>Legal Entity (filter accounts)</Label>
-                  <select
-                    className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                    value={filterEntityId}
-                    onChange={(e) => {
-                      setFilterEntityId(e.target.value);
-                      setFormAccountId('');
-                    }}
-                  >
-                    <option value="">— all entities —</option>
-                    {entities.map((e) => (
-                      <option key={e.id} value={e.id}>{e.name}</option>
-                    ))}
-                  </select>
-                </div>
                 <div className="space-y-1.5">
                   <Label>Bank Account *</Label>
                   <select
@@ -322,23 +296,6 @@ export default function StatementUploadsPage(): React.ReactElement {
       <Card className="p-4">
         <div className="flex flex-wrap items-end gap-4">
           <div className="space-y-1">
-            <Label className="text-xs">Legal Entity</Label>
-            <select
-              className="h-9 rounded-md border bg-background px-2 text-sm"
-              value={filterEntityId}
-              onChange={(e) => {
-                setFilterEntityId(e.target.value);
-                setFilterAccountId('');
-                setPage(1);
-              }}
-            >
-              <option value="">All entities</option>
-              {entities.map((e) => (
-                <option key={e.id} value={e.id}>{e.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1">
             <Label className="text-xs">Bank Account</Label>
             <select
               className="h-9 rounded-md border bg-background px-2 text-sm"
@@ -353,12 +310,11 @@ export default function StatementUploadsPage(): React.ReactElement {
               ))}
             </select>
           </div>
-          {(filterEntityId || filterAccountId) && (
+          {filterAccountId && (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => {
-                setFilterEntityId('');
                 setFilterAccountId('');
                 setPage(1);
               }}

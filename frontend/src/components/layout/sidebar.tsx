@@ -66,7 +66,7 @@ const NAV_GROUPS: NavGroup[] = [
     // to access matrices and create payment requests they're eligible for.
     items: [
       { href: '/payment-requests',     label: 'Payment Requests',     icon: CreditCard },
-      { href: '/incoming-receipts',    label: 'Incoming Receipts',    icon: Receipt },
+      { href: '/incoming-receipts',    label: 'Incoming Receipts',    icon: Receipt, roles: [RoleCode.SUPER_ADMIN] },
     ],
   },
   {
@@ -173,7 +173,9 @@ export function Sidebar(): React.ReactElement {
               </button>
               {open && (
                 <div className="mt-1 space-y-1 border-l border-border pl-3 ml-4">
-                  {group.items.map((item) => {
+                  {group.items
+                    .filter((item) => !item.roles || hasAnyRole(user?.roles, item.roles))
+                    .map((item) => {
                     const Icon = item.icon;
                     const active = isActive(pathname, item.href);
                     return (

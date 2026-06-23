@@ -1,6 +1,6 @@
 'use client';
 
-import { useForm, useFieldArray, Control } from 'react-hook-form';
+import { useForm, useFieldArray, Control, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
@@ -30,7 +30,10 @@ import { DialogFooter } from '@/components/ui/dialog';
 // one save); this form just presents and validates them as one unit.
 
 const stepSchema = z.object({
-  approverUserId: z.string().uuid('Select an approver user'),
+  // Lenient at the base level so the (hidden) placeholder band on a confidential
+  // type doesn't block submit. A real approver is enforced in the superRefine
+  // for the approval-chain path only.
+  approverUserId: z.string().uuid('Select an approver user').optional().or(z.literal('')),
   isOptional: z.boolean().optional(),
 });
 
@@ -49,7 +52,9 @@ export const paymentTypeMasterSchema = z
     name: z.string().min(2).max(100),
     description: z.string().optional().or(z.literal('')),
     paymentCategoryId: z.string().uuid().optional().or(z.literal('')),
-    legalEntityId: z.string().uuid('Select a legal entity'),
+    // Optional for confidential (chairman-style) types; required otherwise
+    // (enforced in the superRefine below).
+    legalEntityId: z.string().uuid('Select a legal entity').optional().or(z.literal('')),
     makerRoleIds: z.array(z.string().uuid()).default([]),
     checkerRoleId: z.string().uuid().optional().or(z.literal('')),
     direction: z.enum(['OUTGOING', 'INCOMING']),
@@ -57,6 +62,7 @@ export const paymentTypeMasterSchema = z
     isBatchBased: z.boolean().optional(),
     isConfidential: z.boolean().optional(),
     mobileInitiationOnly: z.boolean().optional(),
+    employeeSelfService: z.boolean().optional(),
     allowsCrossCurrency: z.boolean().optional(),
     isActive: z.boolean().optional(),
 
@@ -72,18 +78,33 @@ export const paymentTypeMasterSchema = z
     bands: z.array(bandSchema).optional().default([]),
   })
   .superRefine((d, ctx) => {
+    // Legal entity is required unless the type is confidential (chairman-style).
+    if (!d.isConfidential && !d.legalEntityId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['legalEntityId'], message: 'Select a legal entity' });
+    }
+
     const usesMatrix = d.requiresApprovalChain || d.isConfidential;
     if (!usesMatrix) return;
 
     if (!d.matrixName) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['matrixName'], message: 'Matrix name is required' });
-    if (!d.currencyId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['currencyId'], message: 'Select a currency' });
     if (!d.effectiveFrom) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['effectiveFrom'], message: 'Required' });
 
     if (d.isConfidential) {
       if (!d.treasuryAuthoriserRoleId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['treasuryAuthoriserRoleId'], message: 'Select a treasury authoriser role' });
     } else {
       // requiresApprovalChain
-      if (!d.bands || d.bands.length < 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bands'], message: 'At least one band is required' });
+      if (!d.bands || d.bands.length < 1) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bands'], message: 'At least one band is required' });
+      } else {
+        // Every step in every band must name a real approver user.
+        d.bands.forEach((b, bi) => {
+          (b.steps ?? []).forEach((s, si) => {
+            if (!s.approverUserId) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bands', bi, 'steps', si, 'approverUserId'], message: 'Select an approver user' });
+            }
+          });
+        });
+      }
       if (!d.treasuryMakerRoleId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['treasuryMakerRoleId'], message: 'Select a treasury maker role' });
       if (!d.treasuryCheckerRoleId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['treasuryCheckerRoleId'], message: 'Select a treasury checker role' });
       if (!d.treasuryAuthoriserRoleId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['treasuryAuthoriserRoleId'], message: 'Select a treasury authoriser role' });
@@ -100,7 +121,7 @@ export interface PaymentTypeMasterSubmit {
     name: string;
     description?: string;
     paymentCategoryId?: string;
-    legalEntityId: string;
+    legalEntityId?: string;
     makerRoleIds: string[];
     checkerRoleId?: string;
     direction: 'OUTGOING' | 'INCOMING';
@@ -108,6 +129,7 @@ export interface PaymentTypeMasterSubmit {
     isBatchBased?: boolean;
     isConfidential?: boolean;
     mobileInitiationOnly?: boolean;
+    employeeSelfService?: boolean;
     allowsCrossCurrency?: boolean;
     isActive?: boolean;
   };
@@ -138,12 +160,14 @@ interface Props {
 
 // ── Band / step editor (inline) ───────────────────────────────────────────────
 function StepRow({
+  control,
   bandIdx,
   stepIdx,
   userOptions,
   register,
   onRemove,
 }: {
+  control: Control<PaymentTypeMasterFormData>;
   bandIdx: number;
   stepIdx: number;
   userOptions: { label: string; value: string }[];
@@ -155,10 +179,23 @@ function StepRow({
     <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2 rounded border p-2">
       <div>
         <Label className="text-xs">Approver</Label>
-        <Select
-          placeholder="Select approver user"
-          options={userOptions}
-          {...register(`bands.${bandIdx}.steps.${stepIdx}.approverUserId`)}
+        {/* Controlled so the saved value still shows once the (async) user
+            options load — an uncontrolled <select> would fall back to the
+            first option. */}
+        <Controller
+          control={control}
+          name={`bands.${bandIdx}.steps.${stepIdx}.approverUserId`}
+          render={({ field }) => (
+            <Select
+              placeholder="Select approver user"
+              options={userOptions}
+              value={field.value ?? ''}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              name={field.name}
+              ref={field.ref}
+            />
+          )}
         />
       </div>
       <label className="mb-2 flex items-center gap-1 text-xs">
@@ -214,7 +251,7 @@ function BandSection({
         ) : (
           <div className="space-y-2">
             {stepArr.fields.map((f, i) => (
-              <StepRow key={f.id} bandIdx={bandIdx} stepIdx={i} userOptions={userOptions} register={register} onRemove={() => stepArr.remove(i)} />
+              <StepRow key={f.id} control={control} bandIdx={bandIdx} stepIdx={i} userOptions={userOptions} register={register} onRemove={() => stepArr.remove(i)} />
             ))}
           </div>
         )}
@@ -247,6 +284,7 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
       isBatchBased: paymentType?.isBatchBased ?? false,
       isConfidential: paymentType?.isConfidential ?? false,
       mobileInitiationOnly: paymentType?.mobileInitiationOnly ?? false,
+      employeeSelfService: paymentType?.employeeSelfService ?? false,
       allowsCrossCurrency: paymentType?.allowsCrossCurrency ?? true,
       isActive: paymentType?.isActive ?? true,
 
@@ -291,7 +329,15 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
     queryKey: ['currencies-all'],
     queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
   });
-  const currencyOptions = (currencies?.data ?? []).filter((c) => c.isActive).map((c) => ({ label: c.code ? `${c.code} — ${c.name}` : c.name, value: c.id }));
+  const activeCurrencies = (currencies?.data ?? []).filter((c) => c.isActive);
+  // Currency is no longer chosen in the form — matrices default to the org's
+  // USD currency (every matrix is USD; request→matrix routing matches on it).
+  // Falls back to an existing matrix's currency, then the first active currency.
+  const defaultCurrencyId =
+    matrix?.currencyId ??
+    activeCurrencies.find((c) => c.code === 'USD')?.id ??
+    activeCurrencies[0]?.id ??
+    '';
 
   const { data: users } = useQuery({
     queryKey: ['users-with-approver-role'],
@@ -311,7 +357,7 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
       name: d.name,
       description: d.description || undefined,
       paymentCategoryId: d.paymentCategoryId || undefined,
-      legalEntityId: d.legalEntityId,
+      legalEntityId: d.legalEntityId || undefined,
       makerRoleIds: d.makerRoleIds ?? [],
       checkerRoleId: d.checkerRoleId || undefined,
       direction: d.direction,
@@ -319,6 +365,7 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
       isBatchBased: d.isBatchBased,
       isConfidential: d.isConfidential,
       mobileInitiationOnly: d.mobileInitiationOnly,
+      employeeSelfService: d.employeeSelfService,
       allowsCrossCurrency: d.allowsCrossCurrency,
       isActive: d.isActive,
     };
@@ -327,7 +374,7 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
     if (usesMatrix) {
       matrixPayload = {
         name: d.matrixName as string,
-        currencyId: d.currencyId as string,
+        currencyId: d.currencyId || defaultCurrencyId,
         ttMode: (d.ttMode ?? 'ONLINE_TT') as 'ONLINE_TT' | 'OFFLINE_TT',
         treasuryMakerRoleId: d.isConfidential ? undefined : d.treasuryMakerRoleId || undefined,
         treasuryCheckerRoleId: d.isConfidential ? undefined : d.treasuryCheckerRoleId || undefined,
@@ -341,7 +388,7 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
           : (d.bands ?? []).map((b) => ({
               minAmount: Number(b.minAmount),
               maxAmount: b.maxAmount === '' || b.maxAmount == null ? null : Number(b.maxAmount),
-              steps: b.steps.map((s) => ({ approverType: 'USER' as const, approverUserId: s.approverUserId, isOptional: s.isOptional ?? false })),
+              steps: b.steps.map((s) => ({ approverType: 'USER' as const, approverUserId: s.approverUserId ?? '', isOptional: s.isOptional ?? false })),
             })),
       };
     }
@@ -382,8 +429,18 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
           </div>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
-          <Select id="legalEntityId" placeholder="Select legal entity" options={legalEntityOptions} {...register('legalEntityId')} />
+          <Label htmlFor="legalEntityId">
+            Legal entity {!isConfidential && <span className="text-destructive">*</span>}
+          </Label>
+          <Select
+            id="legalEntityId"
+            placeholder={isConfidential ? 'Select legal entity (optional)' : 'Select legal entity'}
+            options={isConfidential ? [{ label: '— None —', value: '' }, ...legalEntityOptions] : legalEntityOptions}
+            {...register('legalEntityId')}
+          />
+          {isConfidential && (
+            <p className="text-xs text-muted-foreground">Optional for confidential (chairman-style) payment types.</p>
+          )}
           {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
         </div>
 
@@ -458,6 +515,10 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
               <span>Mobile initiation only</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('employeeSelfService')} />
+              <span>Employee self-service (maker is employee)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('allowsCrossCurrency')} />
               <span>Allows cross-currency</span>
             </label>
@@ -482,17 +543,10 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
 
         {usesMatrix && (
           <>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="matrixName">Matrix name <span className="text-destructive">*</span></Label>
-                <Input id="matrixName" placeholder="Trade Payments — USD" {...register('matrixName')} />
-                {errors.matrixName && <p className="text-xs text-destructive">{errors.matrixName.message}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
-                <Select id="currencyId" placeholder="Select currency" options={currencyOptions} {...register('currencyId')} />
-                {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="matrixName">Matrix name <span className="text-destructive">*</span></Label>
+              <Input id="matrixName" placeholder="Trade Payments" {...register('matrixName')} />
+              {errors.matrixName && <p className="text-xs text-destructive">{errors.matrixName.message}</p>}
             </div>
 
             {!isConfidential && (

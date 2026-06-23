@@ -19,7 +19,9 @@ import {
 import {
   parseStatementCsv,
   StatementParseError,
+  type ParsedStatementLine,
 } from './statement-csv.parser';
+import { parseStatementPdf } from './statement-pdf.parser';
 import { BankAccount } from '../bank-accounts/bank-account.entity';
 import { PaymentRequest } from '../payment-requests/payment-request.entity';
 import { IncomingReceipt } from '../incoming-receipts/incoming-receipt.entity';
@@ -57,9 +59,11 @@ export class ReconciliationService {
   }
 
   /**
-   * §8.1 / §8.2 — parse the uploaded CSV into statement lines, then (by
-   * default) run the auto-matcher. Parse failures are persisted on the upload
-   * as PARSE_FAILED so the operator can see the cause.
+   * §8.1 / §8.2 — parse the uploaded statement (CSV or PDF) into statement
+   * lines, then (by default) run the auto-matcher. Parse failures are persisted
+   * on the upload as PARSE_FAILED so the operator can see the cause; PDF parses
+   * are best-effort and any uncertainty is surfaced as a review note on the
+   * upload (the upload's `ingestionError` doubles as that flag).
    */
   async ingestCsv(uploadId: string, dto: IngestDto, actorId: string): Promise<StatementUpload> {
     return this.dataSource.transaction(async (em) => {
@@ -70,18 +74,18 @@ export class ReconciliationService {
       });
       const currencyCode = account?.currency?.code ?? '';
 
-      if ((upload.ingestionFormat ?? detectFormat(upload.fileUrl)) !== 'CSV') {
+      const format = upload.ingestionFormat ?? detectFormat(upload.fileUrl);
+      if (format !== 'CSV' && format !== 'PDF') {
         upload.ingestionStatus = 'PARSE_FAILED';
         upload.ingestionError =
-          'Only CSV statements can be auto-parsed in this scope. PDF statements require the OCR layer (§8.1).';
+          'Unsupported statement file type. Upload a CSV or PDF bank statement.';
         await em.save(upload);
         return this.loadUpload(em, uploadId);
       }
 
-      let content: string;
+      let buf: Buffer;
       try {
-        const buf = await this.s3.getFile(upload.fileUrl);
-        content = buf.toString('utf8');
+        buf = await this.s3.getFile(upload.fileUrl);
       } catch (err) {
         upload.ingestionStatus = 'PARSE_FAILED';
         upload.ingestionError = `Could not read the uploaded file: ${
@@ -92,7 +96,18 @@ export class ReconciliationService {
       }
 
       try {
-        const parsed = parseStatementCsv(content);
+        let parsed: ParsedStatementLine[];
+        let warnings: string[] = [];
+        if (format === 'PDF') {
+          const result = await parseStatementPdf(buf, {
+            openingBalance: Number(upload.openingBalance),
+            closingBalance: Number(upload.closingBalance),
+          });
+          parsed = result.lines;
+          warnings = result.warnings;
+        } else {
+          parsed = parseStatementCsv(buf.toString('utf8'));
+        }
         // Replace any prior lines for an idempotent re-ingest.
         await em.delete(ReconciliationException, { statementUploadId: uploadId });
         await em.delete(StatementLine, { statementUploadId: uploadId });
@@ -118,8 +133,12 @@ export class ReconciliationService {
 
         upload.rowCount = lines.length;
         upload.ingestionStatus = 'PARSED';
-        upload.ingestionError = null;
-        upload.ingestionFormat = 'CSV';
+        // Best-effort PDF parses surface any uncertainty as a review note so the
+        // operator can sanity-check the flagged upload (lines are still created).
+        upload.ingestionError = warnings.length
+          ? `REVIEW (best-effort PDF parse): ${warnings.join(' ')}`
+          : null;
+        upload.ingestionFormat = format;
         await em.save(upload);
 
         if (dto.runAutoMatch !== false) {
