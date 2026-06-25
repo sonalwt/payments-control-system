@@ -50,9 +50,6 @@ export class RolesService {
 
   async remove(id: string): Promise<void> {
     const role = await this.findOne(id);
-    if (role.isSystem) {
-      throw new BadRequestException('System roles cannot be deleted');
-    }
     await this.repo.softRemove(role);
   }
 

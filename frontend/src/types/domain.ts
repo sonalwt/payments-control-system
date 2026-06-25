@@ -926,3 +926,27 @@ export interface EmployeeBankAccountChange extends AuditFields {
   rejectedAt?: string | null;
   rejectionReason?: string | null;
 }
+
+export interface PrMessageAttachment {
+  url: string;
+  fileName: string;
+}
+
+export interface PrMessage {
+  id: string;
+  paymentRequestId: string;
+  senderId: string;
+  recipientId: string | null;
+  message: string;
+  attachments: PrMessageAttachment[];
+  createdAt: string;
+  sender: { id: string; fullName: string; email: string };
+  recipient?: { id: string; fullName: string; email: string } | null;
+}
+
+export interface PrParticipant {
+  id: string;
+  fullName: string;
+  email: string;
+  role: string;
+}

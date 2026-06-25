@@ -34,6 +34,7 @@ import {
 import { useNotify } from '@/hooks/use-notify';
 import { useAuth } from '@/hooks/use-auth';
 import { PaymentRequestDetailView } from '@/components/payment-requests/payment-request-detail-view';
+import { PaymentRequestChat } from '@/components/payment-requests/payment-request-chat';
 
 // ---------------------------------------------------------------------
 // Dialog forms
@@ -421,6 +422,8 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         documentActions={documentActions}
         documentsFooter={documentsFooter}
       />
+
+      <PaymentRequestChat paymentRequestId={id} />
 
       {/* Dialogs --------------------------------------------------- */}
       <ApproveDialog open={approveOpen} onOpenChange={setApproveOpen}

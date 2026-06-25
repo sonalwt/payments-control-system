@@ -16,10 +16,12 @@ import {
   ArrowRight,
   Hourglass,
   AlertTriangle,
+  MessageCircle,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { hourInDubai } from '@/lib/datetime';
 import { useAuth } from '@/hooks/use-auth';
+import { usePrMessageSummary, type PrMessageInfo } from '@/hooks/use-pr-message-summary';
 import type {
   Paginated,
   Group,
@@ -129,11 +131,31 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
-function PrRow({ pr }: { pr: PaymentRequest }) {
+function MsgBadge({ info }: { info: PrMessageInfo | null }) {
+  if (!info) return null;
+  return (
+    <span
+      title={`${info.count} chat message${info.count !== 1 ? 's' : ''}${info.isNew ? ' — new' : ''}`}
+      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+        info.isNew
+          ? 'bg-indigo-100 text-indigo-700'
+          : 'bg-slate-100 text-slate-500'
+      }`}
+    >
+      <MessageCircle className="h-2.5 w-2.5" />
+      {info.isNew ? 'NEW' : info.count}
+    </span>
+  );
+}
+
+function PrRow({ pr, msgInfo }: { pr: PaymentRequest; msgInfo?: PrMessageInfo | null }) {
   return (
     <li className="flex items-center gap-3 py-2 border-b last:border-0">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{pr.requestNumber}</p>
+        <p className="text-sm font-medium truncate flex items-center gap-1.5">
+          {pr.requestNumber}
+          <MsgBadge info={msgInfo ?? null} />
+        </p>
         <p className="text-xs text-muted-foreground">
           {pr.paymentType?.code ?? '—'} · {pr.currency?.code ?? '—'}{' '}
           {Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -171,6 +193,7 @@ function NeedsAttention(): React.ReactElement | null {
         '/payment-requests?awaitingAction=true&page=1&limit=8',
       ),
   });
+  const getMsgInfo = usePrMessageSummary();
   const rows = data?.data ?? [];
   if (rows.length === 0) return null;
   return (
@@ -186,7 +209,10 @@ function NeedsAttention(): React.ReactElement | null {
           {rows.map((pr) => (
             <li key={pr.id} className="flex items-center gap-3 border-b py-2 last:border-0">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{pr.requestNumber}</p>
+                <p className="truncate text-sm font-medium flex items-center gap-1.5">
+                  {pr.requestNumber}
+                  <MsgBadge info={getMsgInfo(pr.id)} />
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {pr.paymentType?.code ?? '—'} · {pr.currency?.code ?? '—'}{' '}
                   {Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -304,6 +330,7 @@ function AdminDashboard() {
       ),
   });
 
+  const getMsgInfo = usePrMessageSummary();
   const bankAccountCount = useCount<BankAccount>('/bank-accounts');
 
   return (
@@ -353,7 +380,7 @@ function AdminDashboard() {
           <Card className="p-4">
             <ul>
               {pendingList.data.map((pr) => (
-                <PrRow key={pr.id} pr={pr} />
+                <PrRow key={pr.id} pr={pr} msgInfo={getMsgInfo(pr.id)} />
               ))}
             </ul>
           </Card>
@@ -417,6 +444,7 @@ function InitiatorDashboard() {
   const pendingApproval = usePrCount('PENDING_APPROVAL');
   const approved = usePrCount('TREASURY_MAKER');
   const paid = usePrCount('COMPLETED');
+  const getMsgInfo = usePrMessageSummary();
 
   const { data: myDrafts } = useQuery({
     queryKey: ['dashboard-my-drafts'],
@@ -449,7 +477,7 @@ function InitiatorDashboard() {
           <Card className="p-4">
             <ul>
               {myDrafts.data.map((pr) => (
-                <PrRow key={pr.id} pr={pr} />
+                <PrRow key={pr.id} pr={pr} msgInfo={getMsgInfo(pr.id)} />
               ))}
             </ul>
           </Card>
@@ -463,6 +491,7 @@ function MakerCheckerDashboard({ role }: { role: 'PAYMENTS_MAKER' | 'PAYMENTS_CH
   const approved = usePrCount('TREASURY_MAKER');
   const awaitingPayment = usePrCount('TREASURY_CHECKER');
   const paid = usePrCount('COMPLETED');
+  const getMsgInfo = usePrMessageSummary();
 
   const { data: readyList } = useQuery({
     queryKey: ['dashboard-ready-to-release'],
@@ -504,7 +533,7 @@ function MakerCheckerDashboard({ role }: { role: 'PAYMENTS_MAKER' | 'PAYMENTS_CH
           <Card className="p-4">
             <ul>
               {readyList.data.map((pr) => (
-                <PrRow key={pr.id} pr={pr} />
+                <PrRow key={pr.id} pr={pr} msgInfo={getMsgInfo(pr.id)} />
               ))}
             </ul>
           </Card>
