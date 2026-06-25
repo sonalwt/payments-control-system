@@ -5,7 +5,6 @@ import { FileText, XCircle } from 'lucide-react';
 import { formatDateTime } from '@/lib/datetime';
 import type { PaymentRequestRejection, PaymentRequestRejectionSnapshot } from '@/types/domain';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { FileActions } from '@/components/shared/file-actions';
 
@@ -87,9 +86,10 @@ function SnapshotDetails({ s }: { s: PaymentRequestRejectionSnapshot }): React.R
 
 /**
  * Append-only rejection history for a payment request — preserved across
- * resubmissions and visible to anyone who can view the request. Each entry has
- * a "View details" button that opens a popup with the snapshot of the request's
- * details at the moment it was rejected. Renders nothing when there's no history.
+ * resubmissions and visible to anyone who can view the request. Rendered as a
+ * compact button (placed in the page header) that opens a dialog listing every
+ * rejection; each entry can drill into the snapshot of the request's details at
+ * the moment it was rejected. Renders nothing when there's no history.
  */
 export function RejectionHistory({
   rejections,
@@ -98,44 +98,27 @@ export function RejectionHistory({
   rejections?: PaymentRequestRejection[] | null;
   className?: string;
 }): React.ReactElement | null {
+  const [listOpen, setListOpen] = useState(false);
   const [selected, setSelected] = useState<PaymentRequestRejection | null>(null);
 
   if (!rejections || rejections.length === 0) return null;
 
   return (
-    <Card className={className}>
-      <CardHeader><CardTitle>Rejection history</CardTitle></CardHeader>
-      <CardContent className="text-sm">
-        <ol className="space-y-2">
-          {rejections.map((r) => (
-            <li key={r.id} className="rounded-md bg-rose-50 px-3 py-2 ring-1 ring-rose-200">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <XCircle className="h-4 w-4 text-rose-600" />
-                  <span className="font-medium">Rejection #{r.attemptNo}</span>
-                  <span className="text-xs uppercase tracking-wide text-muted-foreground">{stageLabelOf(r)}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">{formatDateTime(r.rejectedAt)}</span>
-                  {r.snapshot && (
-                    <Button type="button" size="sm" variant="outline" onClick={() => setSelected(r)}>
-                      View details
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {r.rejectedByUser?.fullName ?? '—'}
-              </div>
-              {r.reason && <div className="mt-1 text-xs whitespace-pre-wrap">{r.reason}</div>}
-            </li>
-          ))}
-        </ol>
-      </CardContent>
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className={`border-rose-200 text-rose-700 hover:bg-rose-50 ${className ?? ''}`}
+        onClick={() => setListOpen(true)}
+      >
+        <XCircle className="mr-1 h-4 w-4 text-rose-600" />
+        Rejection history ({rejections.length})
+      </Button>
 
-      <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+      <Dialog open={listOpen} onOpenChange={(o) => { if (!o) { setListOpen(false); setSelected(null); } }}>
         <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
-          {selected && (
+          {selected ? (
             <>
               <DialogHeader>
                 <DialogTitle>
@@ -153,10 +136,44 @@ export function RejectionHistory({
               {selected.snapshot
                 ? <SnapshotDetails s={selected.snapshot} />
                 : <p className="text-sm text-muted-foreground">No snapshot was captured for this rejection.</p>}
+              <div>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setSelected(null)}>
+                  ← Back to history
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader><DialogTitle>Rejection history</DialogTitle></DialogHeader>
+              <ol className="space-y-2 text-sm">
+                {rejections.map((r) => (
+                  <li key={r.id} className="rounded-md bg-rose-50 px-3 py-2 ring-1 ring-rose-200">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <XCircle className="h-4 w-4 text-rose-600" />
+                        <span className="font-medium">Rejection #{r.attemptNo}</span>
+                        <span className="text-xs uppercase tracking-wide text-muted-foreground">{stageLabelOf(r)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{formatDateTime(r.rejectedAt)}</span>
+                        {r.snapshot && (
+                          <Button type="button" size="sm" variant="outline" onClick={() => setSelected(r)}>
+                            View details
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {r.rejectedByUser?.fullName ?? '—'}
+                    </div>
+                    {r.reason && <div className="mt-1 text-xs whitespace-pre-wrap">{r.reason}</div>}
+                  </li>
+                ))}
+              </ol>
             </>
           )}
         </DialogContent>
       </Dialog>
-    </Card>
+    </>
   );
 }

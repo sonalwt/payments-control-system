@@ -129,6 +129,8 @@ interface Props {
   documentActions?: (doc: PaymentRequestDocument) => React.ReactNode;
   /** Add-document UI rendered at the foot of the Documents card (admin only). */
   documentsFooter?: React.ReactNode;
+  /** Comment/chat section rendered just before the approval chain (admin only). */
+  commentSection?: React.ReactNode;
   /** Realm-specific presign for file view/download (defaults to staff realm). */
   presign?: PresignFn;
 }
@@ -139,6 +141,7 @@ export function PaymentRequestDetailView({
   actions,
   documentActions,
   documentsFooter,
+  commentSection,
   presign,
 }: Props): React.ReactElement {
   const isConfidential = pr.paymentType?.isConfidential ?? false;
@@ -163,6 +166,8 @@ export function PaymentRequestDetailView({
             <AlertTriangle className="h-3 w-3" /> Anomaly detected
           </span>
         )}
+        {/* Append-only rejection history — opens in a dialog from this button. */}
+        <RejectionHistory rejections={pr.rejections} className="ml-auto" />
       </div>
       <PageHeader
         title={pr.paymentType?.name ?? 'Payment request'}
@@ -243,8 +248,11 @@ export function PaymentRequestDetailView({
           </div>
         )}
 
+        {/* Comment / group chat — sits just above the approval chain. */}
+        {commentSection && <div className="order-3 col-span-3">{commentSection}</div>}
+
         {/* Approval chain */}
-        <Card className="order-3 col-span-3">
+        <Card className="order-4 col-span-3">
           <CardHeader><CardTitle>Approval chain</CardTitle></CardHeader>
           <CardContent className="text-sm">
             {isConfidential ? (
@@ -302,13 +310,9 @@ export function PaymentRequestDetailView({
           </CardContent>
         </Card>
 
-        {/* Rejection history — append-only, preserved across resubmissions
-            (including after reopen). Visible to anyone who can view the request. */}
-        <RejectionHistory rejections={pr.rejections} className="order-last col-span-3" />
-
         {/* Treasury Team chain */}
         {(pr.ttMode || isConfidential) && (
-          <Card className="order-4 col-span-3">
+          <Card className="order-5 col-span-3">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 Treasury Team chain

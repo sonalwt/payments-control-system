@@ -309,7 +309,7 @@ export function PaymentRequestChat({ paymentRequestId }: Props) {
   const canSend = (text.trim() || pendingFiles.some((p) => p.url)) && !stillUploading && !isSending;
 
   return (
-    <div className="mt-6 border rounded-xl shadow-sm bg-white overflow-hidden">
+    <div className="border rounded-xl shadow-sm bg-white overflow-hidden">
       {/* ── Header ── */}
       <button
         type="button"

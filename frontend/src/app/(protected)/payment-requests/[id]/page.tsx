@@ -482,9 +482,8 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         actions={actions}
         documentActions={documentActions}
         documentsFooter={documentsFooter}
+        commentSection={<PaymentRequestChat paymentRequestId={id} />}
       />
-
-      <PaymentRequestChat paymentRequestId={id} />
 
       {/* Dialogs --------------------------------------------------- */}
       <ApproveDialog open={approveOpen} onOpenChange={setApproveOpen}
