@@ -59,21 +59,20 @@ ON CONFLICT (email) DO NOTHING;
 
 -- ---------------------------------------------------------------------
 -- 3) Assign users to roles
---    Admin gets every role so a single login can exercise every flow.
---    Other users get the roles their position in the authority matrix
---    actually demands.
+--    Admin is a platform administrator: it holds only SUPER_ADMIN. Because
+--    admin.is_platform_admin = TRUE the backend already grants SUPER_ADMIN
+--    (and bypasses maker/checker/treasury role checks) implicitly, so it does
+--    NOT need the functional roles — assigning them all would break
+--    segregation of duties (an admin should not also be every Initiator /
+--    Checker / Approver). Other users get the roles their position in the
+--    authority matrix actually demands.
 -- ---------------------------------------------------------------------
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u
 JOIN roles r ON r.code = ANY(
     CASE u.email
-        WHEN 'admin@radiant.com'        THEN ARRAY[
-            'SUPER_ADMIN','INITIATOR','CHECKER','APPROVER_1','APPROVER_2',
-            'OPS_TEAM','ACCOUNTS_TEAM','TREASURY_TEAM','HR_TEAM',
-            'TRADING_TEAM','ABHISHEK_TEAM','AUDIT_TEAM_HEAD','ROHIT_TEAM',
-            'SUBSCRIPTION_APPROVERS'
-        ]
+        WHEN 'admin@radiant.com'        THEN ARRAY['SUPER_ADMIN']
         WHEN 'counterparty@radiant.com' THEN ARRAY['COUNTERPARTY']
         WHEN 'ganesh@radiant.com'       THEN ARRAY['APPROVER_1','APPROVER_2','SUBSCRIPTION_APPROVERS']
         WHEN 'pinkesh@radiant.com'      THEN ARRAY['APPROVER_2']

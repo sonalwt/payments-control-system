@@ -23,10 +23,11 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { api, type ExtractedRemittance } from '@/lib/api';
-import type { PaymentRequest, PaymentRequestDocument } from '@/types/domain';
+import type { BankAccount, Paginated, PaymentRequest, PaymentRequestDocument } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -49,11 +50,20 @@ type ApproveData = z.infer<typeof approveSchema>;
 const rejectSchema = z.object({ comments: z.string().min(5, 'Reason required (min 5 chars)') });
 type RejectData = z.infer<typeof rejectSchema>;
 
-const treasurySubmitSchema = z.object({
-  referenceNumber: z.string().min(1, 'Reference number required'),
-  swiftCopyUrl: z.string().min(1, 'SWIFT / MT103 copy required'),
-});
-type TreasurySubmitData = z.infer<typeof treasurySubmitSchema>;
+// One dialog drives all treasury maker/authoriser steps; which fields are
+// required is configured per use via `need`.
+type TreasuryActionData = {
+  sourceAccountId?: string;
+  referenceNumber?: string;
+  ttDocumentUrl?: string;
+  swiftCopyUrl?: string;
+};
+type TreasuryDocField = 'ttDocumentUrl' | 'swiftCopyUrl';
+interface TreasuryNeed {
+  account?: boolean;
+  reference?: boolean;
+  document?: { field: TreasuryDocField; label: string; autoReadSwift?: boolean };
+}
 
 type RemitRow = { label: string; expected: string; document: string; status: 'match' | 'mismatch' };
 
@@ -96,6 +106,8 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [treasurySubmitOpen, setTreasurySubmitOpen] = useState(false);
+  const [treasuryCheckOpen, setTreasuryCheckOpen] = useState(false);
+  const [treasurySwiftOpen, setTreasurySwiftOpen] = useState(false);
   const [treasuryCompleteOpen, setTreasuryCompleteOpen] = useState(false);
   const [treasuryRejectOpen, setTreasuryRejectOpen] = useState(false);
 
@@ -142,24 +154,62 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onError: (e: Error) => notify.error('Reject failed', e),
   });
   const treasurySubmitMut = useMutation({
-    mutationFn: (d: TreasurySubmitData) => mut('treasury/submit', d),
+    // Step 1: maker selects the source account + uploads the Online TT document.
+    mutationFn: (d: TreasuryActionData) =>
+      mut('treasury/submit', { sourceAccountId: d.sourceAccountId, ttDocumentUrl: d.ttDocumentUrl }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setTreasurySubmitOpen(false); notify.success('Submitted to treasury checker'); },
     onError: (e: Error) => notify.error('Treasury submit failed', e),
   });
+  const treasurySwiftMut = useMutation({
+    // Step 4: maker uploads the SWIFT copy + bank reference. This executes the
+    // payment — the source account is debited here and the request completes.
+    mutationFn: (d: TreasuryActionData) =>
+      mut('treasury/upload-swift', { swiftCopyUrl: d.swiftCopyUrl, referenceNumber: d.referenceNumber }),
+    onSuccess: (updated) => {
+      void qc.invalidateQueries({ queryKey: ['payment-request', id] });
+      void qc.invalidateQueries({ queryKey: ['bank-accounts-source'] });
+      setTreasurySwiftOpen(false);
+      const acct = updated.sourceAccount;
+      if (acct) {
+        const ccy = updated.currency?.code ? `${updated.currency.code} ` : '';
+        const money = (n: number | string): string =>
+          `${ccy}${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const bank = acct.bankNickname ?? 'the source account';
+        notify.success(`Payment completed — ${money(updated.amount)} debited from ${bank}. New balance: ${money(acct.remainingBalance)}`);
+      } else {
+        notify.success('SWIFT copy uploaded — payment completed');
+      }
+    },
+    onError: (e: Error) => notify.error('SWIFT upload failed', e),
+  });
+  const closeMut = useMutation({
+    // Initiator closes an executed payment (AWAITING_CLOSURE) → COMPLETED.
+    mutationFn: () => mut('close', {}),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); notify.success('Payment request closed'); },
+    onError: (e: Error) => notify.error('Close failed', e),
+  });
   const treasuryCheckMut = useMutation({
-    mutationFn: () => mut('treasury/check', {}),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); notify.success('Marked checked'); },
+    mutationFn: (d: { comments?: string }) => mut('treasury/check', d),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setTreasuryCheckOpen(false); notify.success('Marked checked'); },
     onError: (e: Error) => notify.error('Check failed', e),
   });
   const treasuryCompleteMut = useMutation({
-    // Confidential payments capture the reference + SWIFT/MT103 here; the
-    // standard flow already has them from the maker stage and sends nothing.
-    mutationFn: (d?: TreasurySubmitData) => mut('treasury/complete', d ?? {}),
+    // Confidential payments capture the account + reference + SWIFT here; the
+    // standard flow already has the account and sends nothing.
+    mutationFn: (d?: TreasuryActionData) =>
+      mut('treasury/complete', d
+        ? { sourceAccountId: d.sourceAccountId, referenceNumber: d.referenceNumber, swiftCopyUrl: d.swiftCopyUrl }
+        : {}),
     onSuccess: (updated) => {
       void qc.invalidateQueries({ queryKey: ['payment-request', id] });
       void qc.invalidateQueries({ queryKey: ['bank-accounts-source'] });
       setTreasuryCompleteOpen(false);
-      // Notify the authoriser of the resulting bank balance.
+      // Standard flow only approves (no debit yet) → returns to the maker for
+      // the SWIFT copy. Confidential completes + debits here.
+      if (updated.status === 'TREASURY_SWIFT') {
+        notify.success('Approved — sent to the treasury maker to attach the SWIFT copy');
+        return;
+      }
       const acct = updated.sourceAccount;
       if (acct) {
         const ccy = updated.currency?.code ? `${updated.currency.code} ` : '';
@@ -173,7 +223,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         notify.success('Payment completed');
       }
     },
-    onError: (e: Error) => notify.error('Complete failed', e),
+    onError: (e: Error) => notify.error('Approve failed', e),
   });
   const treasuryRejectMut = useMutation({
     mutationFn: (d: RejectData) => mut('treasury/reject', d),
@@ -238,22 +288,21 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const isInitiator = true;  // isMine gates Submit/Withdraw
   const isApprover = true;   // canActOnStep gates Approve/Reject
 
-  // Treasury-stage gating. SUPER_ADMIN may act on any stage (mirrors the
-  // backend bypass). The maker role depends on the request's TT mode.
-  const isSuperAdmin = userRoles.includes('SUPER_ADMIN');
-  // When the matrix pinned a role to a treasury stage (snapshotted onto the
-  // request), gate on that role; otherwise fall back to the global TREASURY_*
-  // roles. The backend enforces this regardless — these are display hints.
+  // Treasury-stage gating. Capability follows the assigned role only — there is
+  // no SUPER_ADMIN bypass (mirrors the backend). When the matrix pinned a role
+  // to a treasury stage (snapshotted onto the request), gate on that role;
+  // otherwise fall back to the global TREASURY_* roles. The backend enforces
+  // this regardless — these are display hints.
   const makerRoleNeeded = pr.ttMode === 'OFFLINE_TT' ? 'TREASURY_MAKER_OFFLINE' : 'TREASURY_MAKER_ONLINE';
-  const canTreasuryMaker = isSuperAdmin || (pr.treasuryMakerRole
+  const canTreasuryMaker = pr.treasuryMakerRole
     ? userRoles.includes(pr.treasuryMakerRole.code)
-    : userRoles.includes(makerRoleNeeded));
-  const canTreasuryChecker = isSuperAdmin || (pr.treasuryCheckerRole
+    : userRoles.includes(makerRoleNeeded);
+  const canTreasuryChecker = pr.treasuryCheckerRole
     ? userRoles.includes(pr.treasuryCheckerRole.code)
-    : userRoles.includes('TREASURY_CHECKER'));
-  const canTreasuryAuthoriser = isSuperAdmin || (pr.treasuryAuthoriserRole
+    : userRoles.includes('TREASURY_CHECKER');
+  const canTreasuryAuthoriser = pr.treasuryAuthoriserRole
     ? userRoles.includes(pr.treasuryAuthoriserRole.code)
-    : userRoles.includes('TREASURY_AUTHORISER'));
+    : userRoles.includes('TREASURY_AUTHORISER');
 
   // Active step authorisation hint: for ROLE-steps any holder can act; for
   // USER-steps only the assigned user. The backend re-checks regardless.
@@ -264,15 +313,17 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         (activeStep.approverType === 'ROLE' && !!activeStep.approverRole?.code && userRoles.includes(activeStep.approverRole.code))
       : false;
 
-  // Insufficient-balance warning, surfaced at the checker step (step 1 of the
-  // approval chain) so the checker can act before the payment proceeds. The
-  // balance is only debited at treasury completion, so this is advisory — it
+  // Insufficient-balance warning. The source account is chosen by the treasury
+  // maker, so this is surfaced from the checker stage onward (TREASURY_CHECKER /
+  // TREASURY_AUTHORISER) once an account is set — letting the checker and
+  // authoriser see a shortfall before the balance is debited at completion. The
+  // maker gets a live version of this inside the submit dialog. Advisory — it
   // never blocks.
   const sourceAcct = pr.sourceAccount;
   const balanceShortfall =
-    pr.status === 'PENDING_APPROVAL' && pr.currentStepOrder === 1 && sourceAcct != null
-      ? Number(sourceAcct.remainingBalance) - Number(pr.amount) < Number(sourceAcct.minimumBalance)
-      : false;
+    sourceAcct != null &&
+    (pr.status === 'TREASURY_CHECKER' || pr.status === 'TREASURY_AUTHORISER' || pr.status === 'TREASURY_SWIFT') &&
+    Number(sourceAcct.remainingBalance) - Number(pr.amount) < Number(sourceAcct.minimumBalance);
 
   // Lifecycle buttons — passed as the header `actions` slot of the shared view.
   const actions = (
@@ -299,6 +350,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
           <RefreshCw className="mr-1 h-4 w-4" /> Resubmit
         </Button>
       )}
+      {pr.status === 'AWAITING_CLOSURE' && isMine && (
+        <Button size="sm" onClick={() => closeMut.mutate()} disabled={closeMut.isPending}>
+          <CheckCircle2 className="mr-1 h-4 w-4" /> Close payment request
+        </Button>
+      )}
       {pr.status === 'PENDING_APPROVAL' && isApprover && canActOnStep && (
         <>
           <Button size="sm" onClick={() => setApproveOpen(true)}>
@@ -312,16 +368,21 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       {pr.status === 'TREASURY_MAKER' && canTreasuryMaker && (
         <>
           <Button size="sm" onClick={() => setTreasurySubmitOpen(true)}>
-            <Send className="mr-1 h-4 w-4" /> Submit treasury info
+            <Send className="mr-1 h-4 w-4" /> Submit Online TT
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setTreasuryRejectOpen(true)}>
             <XCircle className="mr-1 h-4 w-4 text-destructive" /> Reject
           </Button>
         </>
       )}
+      {pr.status === 'TREASURY_SWIFT' && canTreasuryMaker && (
+        <Button size="sm" onClick={() => setTreasurySwiftOpen(true)}>
+          <Upload className="mr-1 h-4 w-4" /> Upload SWIFT copy
+        </Button>
+      )}
       {pr.status === 'TREASURY_CHECKER' && canTreasuryChecker && (
         <>
-          <Button size="sm" onClick={() => treasuryCheckMut.mutate()} disabled={treasuryCheckMut.isPending}>
+          <Button size="sm" onClick={() => setTreasuryCheckOpen(true)} disabled={treasuryCheckMut.isPending}>
             <BadgeCheck className="mr-1 h-4 w-4" /> Mark checked
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setTreasuryRejectOpen(true)}>
@@ -336,7 +397,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
             onClick={() => (isConfidential ? setTreasuryCompleteOpen(true) : treasuryCompleteMut.mutate(undefined))}
             disabled={treasuryCompleteMut.isPending}
           >
-            <CheckCircle2 className="mr-1 h-4 w-4" /> Mark completed
+            <CheckCircle2 className="mr-1 h-4 w-4" /> {isConfidential ? 'Mark completed' : 'Approve'}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setTreasuryRejectOpen(true)}>
             <XCircle className="mr-1 h-4 w-4 text-destructive" /> Reject
@@ -409,7 +470,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
               <p className="text-xs mt-0.5">
                 {bank} ({sourceAcct.accountNumber}) has {money(remaining)} available with a{' '}
                 {money(sourceAcct.minimumBalance)} minimum balance. This {money(pr.amount)} payment would
-                leave {money(projected)}. Review before approving — the balance is debited when treasury completes it.
+                leave {money(projected)}. Review before proceeding — the balance is debited when treasury completes it.
               </p>
             </div>
           </div>
@@ -433,18 +494,40 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       <RejectDialog open={rejectOpen} onOpenChange={setRejectOpen}
         submitting={rejectMut.isPending}
         onSubmit={(d) => rejectMut.mutate(d)} />
-      <TreasurySubmitDialog open={treasurySubmitOpen} onOpenChange={setTreasurySubmitOpen}
+      {/* Step 1 — maker selects account + uploads the Online TT document. */}
+      <TreasuryActionDialog open={treasurySubmitOpen} onOpenChange={setTreasurySubmitOpen}
+        title="Submit Online TT"
+        description="Select the source bank account and upload the generated Online TT document (PDF)."
+        submitLabel="Submit"
+        need={{ account: true, document: { field: 'ttDocumentUrl', label: 'Online TT document' } }}
         submitting={treasurySubmitMut.isPending}
         expectedAmount={pr.amount} currencyCode={pr.currency?.code}
+        legalEntityId={pr.legalEntityId} currencyId={pr.currencyId}
         onSubmit={(d) => treasurySubmitMut.mutate(d)} />
-      <TreasurySubmitDialog open={treasuryCompleteOpen} onOpenChange={setTreasuryCompleteOpen}
+      {/* Step 4 — maker uploads the SWIFT copy + bank reference to finalise. */}
+      <TreasuryActionDialog open={treasurySwiftOpen} onOpenChange={setTreasurySwiftOpen}
+        title="Upload SWIFT copy"
+        description="Attach the SWIFT / MT103 copy received from the bank and enter the bank reference to finalise the payment."
+        submitLabel="Finalise"
+        submittingLabel="Finalising…"
+        need={{ reference: true, document: { field: 'swiftCopyUrl', label: 'SWIFT / MT103 copy', autoReadSwift: true } }}
+        submitting={treasurySwiftMut.isPending}
+        expectedAmount={pr.amount} currencyCode={pr.currency?.code}
+        onSubmit={(d) => treasurySwiftMut.mutate(d)} />
+      {/* Confidential — authoriser captures account + reference + SWIFT and completes. */}
+      <TreasuryActionDialog open={treasuryCompleteOpen} onOpenChange={setTreasuryCompleteOpen}
         title="Complete confidential payment"
-        description="Capture the bank reference number and attach the SWIFT / MT103 copy, then mark the payment completed."
+        description="Select the source bank account, capture the bank reference number and attach the SWIFT / MT103 copy, then mark the payment completed."
         submitLabel="Mark completed"
         submittingLabel="Completing…"
+        need={{ account: true, reference: true, document: { field: 'swiftCopyUrl', label: 'SWIFT / MT103 copy', autoReadSwift: true } }}
         submitting={treasuryCompleteMut.isPending}
         expectedAmount={pr.amount} currencyCode={pr.currency?.code}
+        legalEntityId={pr.legalEntityId} currencyId={pr.currencyId}
         onSubmit={(d) => treasuryCompleteMut.mutate(d)} />
+      <TreasuryCheckDialog open={treasuryCheckOpen} onOpenChange={setTreasuryCheckOpen}
+        submitting={treasuryCheckMut.isPending}
+        onSubmit={(d) => treasuryCheckMut.mutate(d)} />
       <RejectDialog open={treasuryRejectOpen} onOpenChange={setTreasuryRejectOpen}
         submitting={treasuryRejectMut.isPending}
         onSubmit={(d) => treasuryRejectMut.mutate(d)} />
@@ -520,57 +603,116 @@ function RejectDialog({
   );
 }
 
-function TreasurySubmitDialog({
+function TreasuryCheckDialog({
   open, onOpenChange, onSubmit, submitting,
-  title = 'Submit treasury info',
-  description = 'Capture the bank reference number and attach the SWIFT / MT103 copy received from the bank.',
-  submitLabel = 'Submit',
-  submittingLabel = 'Submitting…',
-  expectedAmount,
-  currencyCode,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  onSubmit: (d: TreasurySubmitData) => void;
+  onSubmit: (d: { comments?: string }) => void;
+  submitting?: boolean;
+}) {
+  const { register, handleSubmit, reset } = useForm<{ comments?: string }>();
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Mark checked</DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            Confirm the Online TT document is correct. Add an optional note for the authoriser.
+          </p>
+        </DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="checkComments">Comments</Label>
+            <Textarea id="checkComments" rows={3} placeholder="Optional note…" {...register('comments')} />
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={submitting}>{submitting ? 'Marking…' : 'Mark checked'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TreasuryActionDialog({
+  open, onOpenChange, onSubmit, submitting,
+  title = 'Submit',
+  description,
+  submitLabel = 'Submit',
+  submittingLabel = 'Submitting…',
+  need,
+  expectedAmount,
+  currencyCode,
+  legalEntityId,
+  currencyId,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSubmit: (d: TreasuryActionData) => void;
   submitting?: boolean;
   title?: string;
   description?: string;
   submitLabel?: string;
   submittingLabel?: string;
+  /** Which fields this step requires (account / reference / a document upload). */
+  need: TreasuryNeed;
   /** Approved request amount, cross-checked against the SWIFT/MT103 copy. */
   expectedAmount?: string | null;
   currencyCode?: string | null;
+  /** Request legal entity — the source-account list is filtered to it. */
+  legalEntityId?: string | null;
+  /** Request currency — accounts default to this; the maker may opt into another. */
+  currencyId?: string | null;
 }) {
   const notify = useNotify();
+  const { data: sourceAccounts } = useQuery({
+    queryKey: ['bank-accounts-source'],
+    queryFn: () => api.get<Paginated<BankAccount>>('/bank-accounts?page=1&limit=200'),
+    enabled: open && !!need.account,
+  });
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
   const [fileName, setFileName] = useState('');
+  // Currency override: off → request currency; on → maker picks another currency.
+  const [otherCurrency, setOtherCurrency] = useState(false);
+  const [altCurrencyId, setAltCurrencyId] = useState('');
   // Warn-only auto-read of the uploaded SWIFT/MT103 copy. Advisory; never blocks.
   const [extraction, setExtraction] = useState<ExtractedRemittance | null>(null);
+
+  const docField = need.document?.field;
+  // The step's required fields drive the schema (need is constant per use).
+  const schema = z.object({
+    sourceAccountId: need.account ? z.string().uuid('Select a bank account') : z.string().optional(),
+    referenceNumber: need.reference ? z.string().min(1, 'Reference number required') : z.string().optional(),
+    ttDocumentUrl: docField === 'ttDocumentUrl' ? z.string().min(1, `${need.document!.label} required`) : z.string().optional(),
+    swiftCopyUrl: docField === 'swiftCopyUrl' ? z.string().min(1, `${need.document!.label} required`) : z.string().optional(),
+  });
   const { register, handleSubmit, reset, setValue, watch, formState: { errors } } =
-    useForm<TreasurySubmitData>({ resolver: zodResolver(treasurySubmitSchema) });
+    useForm<TreasuryActionData>({ resolver: zodResolver(schema) });
 
   function resetAll() {
     reset();
     setUploadState('idle');
     setFileName('');
     setExtraction(null);
+    setOtherCurrency(false);
+    setAltCurrencyId('');
     if (fileRef.current) fileRef.current.value = '';
   }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !docField) return;
     setUploadState('uploading');
     setExtraction(null);
     try {
       const result = await api.upload(file);
-      setValue('swiftCopyUrl', result.url, { shouldValidate: true });
+      setValue(docField, result.url, { shouldValidate: true });
       setFileName(result.fileName);
       setUploadState('done');
-      // Fire-and-forget auto-read (PDFs only). Failures are silent — the
-      // cross-check is optional and must not affect the upload.
-      if (file.type === 'application/pdf') {
+      // Fire-and-forget SWIFT auto-read (PDFs only) when this step uses it.
+      if (need.document?.autoReadSwift && file.type === 'application/pdf') {
         api.extractRemittance(file).then(setExtraction).catch(() => { /* best-effort */ });
       }
     } catch (err) {
@@ -579,22 +721,122 @@ function TreasurySubmitDialog({
     }
   }
 
+  // Group-own accounts of the request's legal entity.
+  const legalEntityAccounts = (sourceAccounts?.data ?? []).filter(
+    (a) => a.isActive && (!legalEntityId || a.legalEntityId === legalEntityId),
+  );
+  // Distinct currencies available across those accounts (for the override picker).
+  const currencyOptions = (() => {
+    const seen = new Map<string, string>();
+    for (const a of legalEntityAccounts) {
+      if (a.currencyId && !seen.has(a.currencyId)) {
+        seen.set(a.currencyId, a.currency?.code ?? a.currencyId);
+      }
+    }
+    return Array.from(seen.entries()).map(([value, label]) => ({ value, label }));
+  })();
+  // Currency the source-account list is filtered to: the request currency by
+  // default, or the maker's chosen currency when the override is on.
+  const filterCurrencyId = otherCurrency ? altCurrencyId : (currencyId ?? '');
+  const needsCurrencyChoice = otherCurrency && !altCurrencyId;
+  const effectiveCurrencyCode = otherCurrency
+    ? (currencyOptions.find((c) => c.value === altCurrencyId)?.label ?? '')
+    : (currencyCode ?? '');
+  const bankAccountOptions = needsCurrencyChoice
+    ? []
+    : legalEntityAccounts
+        .filter((a) => !filterCurrencyId || a.currencyId === filterCurrencyId)
+        .map((a) => ({
+          label: `${a.bank?.name ?? a.bankName ?? 'Bank'} · ${a.accountNumber} · ${a.currency?.code ?? ''}`,
+          value: a.id,
+        }));
+
+  // Live insufficient-balance check once the maker selects an account, mirroring
+  // the detail-page banner shown to the checker/authoriser. Advisory — it never
+  // blocks submission; the balance is only debited at treasury completion.
+  const selectedAccount = (sourceAccounts?.data ?? []).find((a) => a.id === watch('sourceAccountId'));
+  const accountShortfall =
+    selectedAccount != null &&
+    Number(selectedAccount.remainingBalance) - Number(expectedAmount ?? 0) <
+      Number(selectedAccount.minimumBalance);
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) resetAll(); onOpenChange(o); }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <p className="text-xs text-muted-foreground">{description}</p>
+          {description && <p className="text-xs text-muted-foreground">{description}</p>}
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          {need.account && (
+          <div className="space-y-2">
+            <Label htmlFor="sourceAccountId">Source bank account <span className="text-destructive">*</span></Label>
+            <div className="rounded-md border bg-muted/30 p-2 space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer text-xs">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-border"
+                  checked={otherCurrency}
+                  onChange={(e) => {
+                    setOtherCurrency(e.target.checked);
+                    setAltCurrencyId('');
+                    setValue('sourceAccountId', '', { shouldValidate: false });
+                  }}
+                />
+                <span>Release in a different currency than the request{currencyCode ? ` (${currencyCode})` : ''}</span>
+              </label>
+              {otherCurrency && (
+                <Select
+                  placeholder={currencyOptions.length === 0 ? 'No currencies available' : 'Select currency'}
+                  options={currencyOptions}
+                  value={altCurrencyId}
+                  onChange={(e) => {
+                    setAltCurrencyId(e.target.value);
+                    setValue('sourceAccountId', '', { shouldValidate: false });
+                  }}
+                />
+              )}
+            </div>
+            <Select id="sourceAccountId"
+              placeholder={needsCurrencyChoice ? 'Select a currency first' : (bankAccountOptions.length === 0 ? 'No matching bank account' : 'Select bank account')}
+              disabled={needsCurrencyChoice}
+              options={bankAccountOptions}
+              {...register('sourceAccountId')} />
+            <p className="text-xs text-muted-foreground">
+              Group-own accounts of the request&apos;s legal entity{effectiveCurrencyCode ? ` in ${effectiveCurrencyCode}` : ''}.
+            </p>
+            {errors.sourceAccountId && <p className="text-xs text-destructive">{errors.sourceAccountId.message}</p>}
+            {accountShortfall && selectedAccount && (() => {
+              const money = (n: number | string): string =>
+                `${currencyCode ? `${currencyCode} ` : ''}${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+              const remaining = Number(selectedAccount.remainingBalance);
+              const projected = remaining - Number(expectedAmount ?? 0);
+              return (
+                <div className="rounded-md border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 flex items-start gap-1.5">
+                  <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-600" />
+                  <span>
+                    <strong>Insufficient balance.</strong> This account has {money(remaining)} available with a{' '}
+                    {money(selectedAccount.minimumBalance)} minimum. This {money(expectedAmount ?? 0)} payment would
+                    leave {money(projected)}. You can still proceed — the balance is debited at completion.
+                  </span>
+                </div>
+              );
+            })()}
+          </div>
+          )}
+          {need.reference && (
           <div className="space-y-2">
             <Label htmlFor="referenceNumber">Reference number <span className="text-destructive">*</span></Label>
             <Input id="referenceNumber" placeholder="e.g. FT26154ABCD" {...register('referenceNumber')} />
             {errors.referenceNumber && <p className="text-xs text-destructive">{errors.referenceNumber.message}</p>}
           </div>
+          )}
+          {need.document && (
           <div className="space-y-2">
-            <Label>SWIFT / MT103 copy <span className="text-destructive">*</span></Label>
-            <input type="hidden" {...register('swiftCopyUrl')} />
+            <Label>{need.document.label} <span className="text-destructive">*</span></Label>
+            {docField === 'ttDocumentUrl'
+              ? <input type="hidden" {...register('ttDocumentUrl')} />
+              : <input type="hidden" {...register('swiftCopyUrl')} />}
             <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => { void handleFile(e); }} />
             <div className="flex items-center gap-2 flex-wrap">
               <Button type="button" size="sm" variant="outline" disabled={uploadState === 'uploading'} onClick={() => fileRef.current?.click()}>
@@ -603,11 +845,12 @@ function TreasurySubmitDialog({
               </Button>
               {uploadState === 'error' && <span className="text-xs text-destructive">Upload failed — try again</span>}
             </div>
-            {errors.swiftCopyUrl && <p className="text-xs text-destructive">{errors.swiftCopyUrl.message}</p>}
+            {docField && errors[docField] && <p className="text-xs text-destructive">{errors[docField]?.message}</p>}
           </div>
+          )}
 
           {/* Warn-only SWIFT/MT103 auto-read cross-check. */}
-          {extraction && (() => {
+          {need.document?.autoReadSwift && extraction && (() => {
             if (!extraction.readable) {
               return (
                 <div className="rounded-md border border-muted bg-muted/40 p-2 text-xs text-muted-foreground flex items-start gap-1.5">

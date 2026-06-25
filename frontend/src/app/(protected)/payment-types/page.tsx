@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Eye, Lock, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { ApprovalMatrix, Paginated, PaymentType, Role } from '@/types/domain';
+import type { ApprovalMatrix, LegalEntity, Paginated, PaymentType, Role } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,7 +35,20 @@ function makerRolesText(pt: PaymentType, roleNameById: Map<string, string>): str
   return pt.makerRole?.name ?? '—';
 }
 
-function PaymentTypeDetails({ pt, makerLabel }: { pt: PaymentType; makerLabel: string }): React.ReactElement {
+/** Resolve a payment type's legal entity IDs to a comma-separated label. */
+function legalEntitiesText(pt: PaymentType, leNameById: Map<string, string>): string {
+  const ids =
+    pt.legalEntityIds && pt.legalEntityIds.length
+      ? pt.legalEntityIds
+      : pt.legalEntityId
+        ? [pt.legalEntityId]
+        : [];
+  const names = ids.map((id) => leNameById.get(id)).filter(Boolean) as string[];
+  if (names.length) return names.join(', ');
+  return pt.legalEntity?.name ?? '—';
+}
+
+function PaymentTypeDetails({ pt, makerLabel, legalEntityLabel }: { pt: PaymentType; makerLabel: string; legalEntityLabel: string }): React.ReactElement {
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2 text-sm">
       <div className="grid grid-cols-2 gap-3">
@@ -55,8 +68,8 @@ function PaymentTypeDetails({ pt, makerLabel }: { pt: PaymentType; makerLabel: s
           <p>{pt.paymentCategory?.name ?? '—'}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Legal entity</p>
-          <p>{pt.legalEntity?.name ?? '—'}</p>
+          <p className="text-xs text-muted-foreground">Legal entities</p>
+          <p>{legalEntityLabel}</p>
         </div>
         <div>
           <p className="text-xs text-muted-foreground">Direction</p>
@@ -138,6 +151,15 @@ export default function PaymentTypesPage(): React.ReactElement {
   const roleNameById = useMemo(
     () => new Map((roles ?? []).map((r) => [r.id, r.name])),
     [roles],
+  );
+
+  const { data: legalEntities } = useQuery({
+    queryKey: ['legal-entities-all'],
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
+  });
+  const leNameById = useMemo(
+    () => new Map((legalEntities?.data ?? []).map((le) => [le.id, le.name])),
+    [legalEntities],
   );
 
   // Existing approval matrix for the type being edited, so the combined form
@@ -239,7 +261,7 @@ export default function PaymentTypesPage(): React.ReactElement {
                     {pt.isSystem && <Lock className="h-3 w-3 text-muted-foreground" />}
                   </span>
                 </TableCell>
-                <TableCell className="text-sm">{pt.legalEntity?.name ?? '—'}</TableCell>
+                <TableCell className="text-sm">{legalEntitiesText(pt, leNameById)}</TableCell>
                 <TableCell>
                   <span
                     className={
@@ -300,7 +322,7 @@ export default function PaymentTypesPage(): React.ReactElement {
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader><DialogTitle>Payment type details</DialogTitle></DialogHeader>
-          {viewing && <PaymentTypeDetails pt={viewing} makerLabel={makerRolesText(viewing, roleNameById)} />}
+          {viewing && <PaymentTypeDetails pt={viewing} makerLabel={makerRolesText(viewing, roleNameById)} legalEntityLabel={legalEntitiesText(viewing, leNameById)} />}
         </DialogContent>
       </Dialog>
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>

@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/card';
 import { useNotify } from '@/hooks/use-notify';
 import { useAuth } from '@/hooks/use-auth';
 import { PaymentRequestForm, type PaymentRequestFormData } from '../../payment-request-form';
+import { RejectionHistory } from '@/components/payment-requests/rejection-history';
 
 export default function EditPaymentRequestPage(): React.ReactElement {
   const params = useParams();
@@ -33,6 +34,7 @@ export default function EditPaymentRequestPage(): React.ReactElement {
       paymentTypeId: d.paymentTypeId,
       counterpartyId: d.counterpartyId || undefined,
       beneficiaryAccountId: d.beneficiaryAccountId || undefined,
+      legalEntityId: d.legalEntityId || undefined,
       sourceAccountId: d.sourceAccountId || undefined,
       currencyId: d.currencyId,
       amount: d.amount,
@@ -55,6 +57,7 @@ export default function EditPaymentRequestPage(): React.ReactElement {
       paymentTypeId: pr.paymentTypeId,
       counterpartyId: pr.counterpartyId ?? '',
       beneficiaryAccountId: pr.beneficiaryAccountId ?? '',
+      legalEntityId: pr.legalEntityId ?? '',
       sourceAccountId: pr.sourceAccountId ?? '',
       currencyId: pr.currencyId,
       amount: String(pr.amount),
@@ -110,6 +113,9 @@ export default function EditPaymentRequestPage(): React.ReactElement {
         description="Update this draft, then save. Documents are managed from the detail page."
         actions={backToDetail}
       />
+      {/* Show why prior attempts were rejected (and their details) while editing
+          a reopened request. */}
+      <RejectionHistory rejections={pr.rejections} />
       <Card className="p-6">
         <PaymentRequestForm
           defaultValues={defaultValues}

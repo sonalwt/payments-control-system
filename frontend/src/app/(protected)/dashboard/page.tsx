@@ -174,9 +174,11 @@ function PrRow({ pr, msgInfo }: { pr: PaymentRequest; msgInfo?: PrMessageInfo | 
 // What the viewer needs to do, by the request's current status.
 const ACTION_LABEL: Record<string, string> = {
   PENDING_APPROVAL: 'Awaiting your approval',
-  TREASURY_MAKER: 'Add reference no. + SWIFT/MT103',
+  TREASURY_MAKER: 'Select account + upload Online TT',
   TREASURY_CHECKER: 'Awaiting your check',
   TREASURY_AUTHORISER: 'Awaiting your authorisation',
+  TREASURY_SWIFT: 'Upload SWIFT copy + reference',
+  AWAITING_CLOSURE: 'Close the payment request',
 };
 
 /**

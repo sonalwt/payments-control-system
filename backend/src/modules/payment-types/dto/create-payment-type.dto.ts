@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsEnum,
@@ -125,10 +126,21 @@ export class CreatePaymentTypeDto {
   paymentCategoryId?: string | null;
 
   @ApiPropertyOptional({
+    type: [String],
     description:
-      'Legal entity master UUID this payment type belongs to. Required unless the type is confidential (chairman-style).',
+      'Legal entity master UUIDs this payment type belongs to. At least one is required unless the type is confidential (chairman-style).',
   })
   @ValidateIf((o) => !o.isConfidential)
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('all', { each: true })
+  legalEntityIds?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Deprecated — single legal entity UUID. Prefer legalEntityIds. Kept in sync with legalEntityIds[0].',
+  })
+  @IsOptional()
   @IsUUID()
   legalEntityId?: string | null;
 

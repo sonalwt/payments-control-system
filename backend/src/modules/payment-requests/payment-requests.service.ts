@@ -17,6 +17,10 @@ import {
 import { PaymentRequest, PaymentRequestStatus } from './payment-request.entity';
 import { PaymentRequestApproval } from './payment-request-approval.entity';
 import { PaymentRequestDocument } from './payment-request-document.entity';
+import {
+  PaymentRequestRejection,
+  RejectionStage,
+} from './payment-request-rejection.entity';
 import { CreatePaymentRequestDto } from './dto/create-payment-request.dto';
 import { UpdatePaymentRequestDto } from './dto/update-payment-request.dto';
 import {
@@ -26,6 +30,7 @@ import {
   TreasuryCompleteDto,
   TreasuryDecisionDto,
   TreasurySubmitDto,
+  TreasurySwiftDto,
   WithdrawDto,
 } from './dto/action.dto';
 import { BeneficiaryAccountsService } from '../beneficiary-accounts/beneficiary-accounts.service';
@@ -80,6 +85,8 @@ export class PaymentRequestsService {
         counterpartyId: dto.counterpartyId ?? null,
         employeeId: dto.employeeId ?? null,
         beneficiaryAccountId: dto.beneficiaryAccountId ?? null,
+        legalEntityId: dto.legalEntityId ?? null,
+        // The source account is now picked by the Treasury Maker, not the initiator.
         sourceAccountId: dto.sourceAccountId ?? null,
         currencyId: dto.currencyId,
         amount: dto.amount,
@@ -279,6 +286,7 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('pr.counterparty', 'counterparty')
       .leftJoinAndSelect('pr.employee', 'employee')
       .leftJoinAndSelect('pr.currency', 'currency')
+      .leftJoinAndSelect('pr.legalEntity', 'prLegalEntity')
       .leftJoinAndSelect('pr.beneficiaryAccount', 'beneficiaryAccount')
       .leftJoinAndSelect('beneficiaryAccount.bank', 'beneficiaryBank')
       .leftJoinAndSelect('pr.sourceAccount', 'sourceAccount')
@@ -389,8 +397,10 @@ export class PaymentRequestsService {
       //     chain, so without this they would never see their queue.
       // (3a) Matrix-pinned treasury roles: when the request snapshotted a role
       //      for a stage, only holders of THAT role see it at that stage.
+      // The maker owns both the initial submit (TREASURY_MAKER) and the
+      // post-completion SWIFT upload (TREASURY_SWIFT) stages.
       orClauses.push(`(
-        (pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NOT NULL AND EXISTS (
+        (pr.status IN ('TREASURY_MAKER', 'TREASURY_SWIFT') AND pr.treasury_maker_role_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_maker_role_id))
         OR (pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_checker_role_id))
@@ -403,10 +413,10 @@ export class PaymentRequestsService {
       const tRoles = viewer.roles ?? [];
       if (tRoles.includes('TREASURY_MAKER_ONLINE')) {
         // Online maker also covers legacy rows with no tt_mode (→ online).
-        orClauses.push(`(pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
+        orClauses.push(`(pr.status IN ('TREASURY_MAKER', 'TREASURY_SWIFT') AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
       }
       if (tRoles.includes('TREASURY_MAKER_OFFLINE')) {
-        orClauses.push(`(pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode = 'OFFLINE_TT')`);
+        orClauses.push(`(pr.status IN ('TREASURY_MAKER', 'TREASURY_SWIFT') AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode = 'OFFLINE_TT')`);
       }
       if (tRoles.includes('TREASURY_CHECKER')) {
         orClauses.push(`(pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NULL)`);
@@ -417,6 +427,16 @@ export class PaymentRequestsService {
       orClauses.push(
         `(pr.treasury_maker_by = :viewerId OR pr.treasury_checker_by = :viewerId OR pr.treasury_authoriser_by = :viewerId)`,
       );
+
+      // (4) Anyone who has rejected this request keeps it in their list as
+      //     history. A checker/authoriser rejection bounces the request back and
+      //     clears the treasury_*_by stamps, so without this the rejector would
+      //     lose sight of a request they acted on. The rejection history table is
+      //     append-only, so this visibility survives every subsequent transition.
+      orClauses.push(`EXISTS (
+        SELECT 1 FROM payment_request_rejections prr
+        WHERE prr.payment_request_id = pr.id AND prr.rejected_by = :viewerId
+      )`);
 
       qb.andWhere(`(${orClauses.join(' OR ')})`, params);
 
@@ -447,9 +467,11 @@ export class PaymentRequestsService {
         }
         // Requests awaiting a delegator the viewer is currently covering.
         aw.push(delegatedAwaiting);
+        // Executed payments returned to the initiator to close.
+        aw.push(`(pr.status = 'AWAITING_CLOSURE' AND pr.created_by = :viewerId)`);
         // Matrix-pinned stage roles awaiting this viewer.
         aw.push(`(
-          (pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NOT NULL AND EXISTS (
+          (pr.status IN ('TREASURY_MAKER', 'TREASURY_SWIFT') AND pr.treasury_maker_role_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_maker_role_id))
           OR (pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM user_roles urt WHERE urt.user_id = :viewerId AND urt.role_id = pr.treasury_checker_role_id))
@@ -458,9 +480,9 @@ export class PaymentRequestsService {
         )`);
         const r = viewer.roles ?? [];
         if (r.includes('TREASURY_MAKER_ONLINE'))
-          aw.push(`(pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
+          aw.push(`(pr.status IN ('TREASURY_MAKER', 'TREASURY_SWIFT') AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode IS DISTINCT FROM 'OFFLINE_TT')`);
         if (r.includes('TREASURY_MAKER_OFFLINE'))
-          aw.push(`(pr.status = 'TREASURY_MAKER' AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode = 'OFFLINE_TT')`);
+          aw.push(`(pr.status IN ('TREASURY_MAKER', 'TREASURY_SWIFT') AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode = 'OFFLINE_TT')`);
         if (r.includes('TREASURY_CHECKER')) aw.push(`(pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NULL)`);
         if (r.includes('TREASURY_AUTHORISER')) aw.push(`(pr.status = 'TREASURY_AUTHORISER' AND pr.treasury_authoriser_role_id IS NULL)`);
         qb.andWhere(`(${aw.join(' OR ')})`, awParams);
@@ -535,6 +557,7 @@ export class PaymentRequestsService {
       counterpartyId: dto.counterpartyId ?? pr.counterpartyId,
       employeeId: dto.employeeId ?? pr.employeeId,
       beneficiaryAccountId: dto.beneficiaryAccountId ?? pr.beneficiaryAccountId,
+      legalEntityId: dto.legalEntityId ?? pr.legalEntityId,
       sourceAccountId: dto.sourceAccountId ?? pr.sourceAccountId,
       currencyId: dto.currencyId ?? pr.currencyId,
       amount: dto.amount ?? pr.amount,
@@ -945,6 +968,9 @@ export class PaymentRequestsService {
       pr.updatedBy = actorId;
       await em.save(pr);
 
+      // Preserve this rejection in the request's permanent history.
+      await this.recordRejection(em, pr.id, 'APPROVAL', actorId, dto.comments, step.stepOrder);
+
       return this.loadOne(pr.id, em.getRepository(PaymentRequest));
     });
   }
@@ -1011,6 +1037,29 @@ export class PaymentRequestsService {
   // Treasury Team execution (post final-approval)
   // ===================================================================
 
+  /**
+   * Resolve and validate a treasury-selected source bank account: it must
+   * exist, be active and belong to the request's legal entity (when one is
+   * set). Any of the entity's accounts may be used regardless of currency.
+   * Returns the validated account.
+   */
+  private async resolveTreasurySourceAccount(
+    em: EntityManager,
+    pr: PaymentRequest,
+    sourceAccountId: string,
+  ): Promise<BankAccount> {
+    const acc = await em.findOne(BankAccount, { where: { id: sourceAccountId } });
+    if (!acc || !acc.isActive) {
+      throw new BadRequestException('Selected bank account is invalid or inactive.');
+    }
+    if (pr.legalEntityId && acc.legalEntityId !== pr.legalEntityId) {
+      throw new BadRequestException(
+        "Bank account does not belong to the payment's legal entity.",
+      );
+    }
+    return acc;
+  }
+
   /** Format a number as a 2-decimal money string (no currency symbol). */
   private money(n: number): string {
     return n.toLocaleString('en-US', {
@@ -1047,8 +1096,12 @@ export class PaymentRequestsService {
         await this.assertHasRole(em, actorId, makerRole);
       }
 
-      pr.treasuryReferenceNumber = dto.referenceNumber;
-      pr.swiftCopyUrl = dto.swiftCopyUrl;
+      // §4.3 — the treasury maker selects the source bank account and uploads
+      // the generated Online TT document (PDF). The bank reference + SWIFT copy
+      // are captured later, after the authoriser completes the payment.
+      const acc = await this.resolveTreasurySourceAccount(em, pr, dto.sourceAccountId);
+      pr.sourceAccountId = acc.id;
+      pr.ttDocumentUrl = dto.ttDocumentUrl;
       pr.treasuryMakerBy = actorId;
       pr.treasuryMakerAt = new Date();
       // Clear any rejection note carried over from a checker/authoriser bounce.
@@ -1061,10 +1114,10 @@ export class PaymentRequestsService {
     });
   }
 
-  /** Treasury checker marks the captured info as checked → authoriser. */
+  /** Treasury checker marks the captured info as checked (+ optional note) → authoriser. */
   async treasuryCheck(
     id: string,
-    _dto: TreasuryDecisionDto,
+    dto: TreasuryDecisionDto,
     actorId: string,
   ): Promise<PaymentRequest> {
     return this.dataSource.transaction(async (em) => {
@@ -1081,6 +1134,7 @@ export class PaymentRequestsService {
 
       pr.treasuryCheckerBy = actorId;
       pr.treasuryCheckerAt = new Date();
+      pr.treasuryCheckerComments = dto.comments ?? null;
       pr.status = 'TREASURY_AUTHORISER';
       pr.updatedBy = actorId;
       await em.save(pr);
@@ -1095,7 +1149,7 @@ export class PaymentRequestsService {
     dto: TreasuryCompleteDto,
     actorId: string,
   ): Promise<PaymentRequest> {
-    const { result, balanceUpdate } = await this.dataSource.transaction(async (em) => {
+    const { result, balanceUpdate, isConfidential, makerId } = await this.dataSource.transaction(async (em) => {
       const pr = await em.findOne(PaymentRequest, { where: { id } });
       if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
       if (pr.status !== 'TREASURY_AUTHORISER') {
@@ -1107,73 +1161,169 @@ export class PaymentRequestsService {
         await this.assertHasRole(em, actorId, RoleCode.TREASURY_AUTHORISER);
       }
 
-      // Confidential (chairman-style) payments skip the treasury maker stage,
-      // so the authoriser supplies the bank reference + SWIFT/MT103 copy here.
       const paymentType = await em.findOne(PaymentType, {
         where: { id: pr.paymentTypeId },
         select: ['id', 'isConfidential'],
       });
-      if (paymentType?.isConfidential) {
-        if (!dto.referenceNumber || !dto.swiftCopyUrl) {
-          throw new BadRequestException(
-            'Reference number and SWIFT/MT103 copy are required to complete a confidential payment.',
-          );
-        }
-        pr.treasuryReferenceNumber = dto.referenceNumber;
-        pr.swiftCopyUrl = dto.swiftCopyUrl;
-      }
+      const isConfidential = !!paymentType?.isConfidential;
 
-      // §2.5 — debit the source account's remaining balance on completion
-      // (preserved from the retired mark-paid flow) when one is set. Capture
-      // the before/after figures so we can notify the authoriser.
-      let balanceUpdate: {
-        bankLabel: string;
-        accountNumber: string;
-        currencyCode: string;
-        amount: number;
-        previousBalance: number;
-        newBalance: number;
-      } | null = null;
-      if (pr.sourceAccountId) {
-        const acc = await em.findOne(BankAccount, {
-          where: { id: pr.sourceAccountId },
-          relations: { currency: true, bank: true },
-        });
-        if (acc) {
-          const previousBalance = Number(acc.remainingBalance);
-          const newBalance = previousBalance - Number(pr.amount);
-          acc.remainingBalance = newBalance;
-          await em.save(acc);
-          balanceUpdate = {
-            bankLabel: acc.bankNickname || acc.bank?.name || acc.bankName || 'Bank account',
-            accountNumber: acc.accountNumber,
-            currencyCode: acc.currency?.code ?? '',
-            amount: Number(pr.amount),
-            previousBalance,
-            newBalance,
-          };
-        }
-      }
-
+      // §2.5 — the balance is debited at completion. For the standard flow the
+      // authoriser only APPROVES here (no debit, no completion) and the request
+      // returns to the treasury maker, who debits + completes on SWIFT upload.
+      // Confidential payments have no maker SWIFT step, so they complete (and
+      // debit) here, with the authoriser supplying the reference + SWIFT copy.
+      let balanceUpdate: Awaited<ReturnType<typeof this.debitSourceAccount>> = null;
       pr.treasuryAuthoriserBy = actorId;
       pr.treasuryAuthoriserAt = new Date();
-      pr.completedAt = new Date();
-      pr.status = 'COMPLETED';
+      if (isConfidential) {
+        if (!dto.referenceNumber || !dto.swiftCopyUrl || !dto.sourceAccountId) {
+          throw new BadRequestException(
+            'Source bank account, reference number and SWIFT/MT103 copy are required to complete a confidential payment.',
+          );
+        }
+        const acc = await this.resolveTreasurySourceAccount(em, pr, dto.sourceAccountId);
+        pr.sourceAccountId = acc.id;
+        pr.treasuryReferenceNumber = dto.referenceNumber;
+        pr.swiftCopyUrl = dto.swiftCopyUrl;
+        balanceUpdate = await this.debitSourceAccount(em, pr);
+        pr.completedAt = new Date();
+        pr.status = 'COMPLETED';
+      } else {
+        // Standard flow: approve only — debit + completion happen at SWIFT upload.
+        pr.status = 'TREASURY_SWIFT';
+      }
       pr.updatedBy = actorId;
       await em.save(pr);
 
       const result = await this.loadOne(pr.id, em.getRepository(PaymentRequest));
-      return { result, balanceUpdate };
+      return { result, balanceUpdate, isConfidential, makerId: pr.treasuryMakerBy ?? null };
     });
 
-    // Notify the authoriser of the completed payment and the resulting bank
-    // balance. Best-effort and post-commit: a mail failure must not roll back
-    // or fail the completion (sendNotification already swallows its errors).
+    // Notify the authoriser of the completed (confidential) payment + balance.
+    // Best-effort and post-commit: a mail failure must not roll back the action.
+    if (balanceUpdate) {
+      await this.notifyAuthoriserOfCompletion(actorId, result, balanceUpdate);
+    }
+    // Standard flow: tell the treasury maker the request is back with them to
+    // upload the SWIFT copy (and complete the payment).
+    if (!isConfidential && makerId) {
+      await this.notifyTreasuryMakerForSwift(makerId, result, actorId);
+    }
+
+    return result;
+  }
+
+  /**
+   * §2.5 — debit the source account's remaining balance by the request amount,
+   * returning the before/after figures for notifications. No-op (returns null)
+   * when no source account is set or it cannot be found.
+   */
+  private async debitSourceAccount(
+    em: EntityManager,
+    pr: PaymentRequest,
+  ): Promise<{
+    bankLabel: string;
+    accountNumber: string;
+    currencyCode: string;
+    amount: number;
+    previousBalance: number;
+    newBalance: number;
+  } | null> {
+    if (!pr.sourceAccountId) return null;
+    const acc = await em.findOne(BankAccount, {
+      where: { id: pr.sourceAccountId },
+      relations: { currency: true, bank: true },
+    });
+    if (!acc) return null;
+    const previousBalance = Number(acc.remainingBalance);
+    const newBalance = previousBalance - Number(pr.amount);
+    acc.remainingBalance = newBalance;
+    await em.save(acc);
+    return {
+      bankLabel: acc.bankNickname || acc.bank?.name || acc.bankName || 'Bank account',
+      accountNumber: acc.accountNumber,
+      currencyCode: acc.currency?.code ?? '',
+      amount: Number(pr.amount),
+      previousBalance,
+      newBalance,
+    };
+  }
+
+  /**
+   * Treasury maker uploads the SWIFT / MT103 copy (and the bank reference) after
+   * the authoriser has approved. This executes the payment: the source account
+   * is debited here, the request is marked COMPLETED and returned to the initiator.
+   */
+  async treasuryUploadSwift(
+    id: string,
+    dto: TreasurySwiftDto,
+    actorId: string,
+  ): Promise<PaymentRequest> {
+    const { result, initiatorId, balanceUpdate } = await this.dataSource.transaction(async (em) => {
+      const pr = await em.findOne(PaymentRequest, { where: { id } });
+      if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
+      if (pr.status !== 'TREASURY_SWIFT') {
+        throw new BadRequestException(`Cannot upload SWIFT copy in status ${pr.status}`);
+      }
+      // Gated to the treasury maker stage role (same as the submit step).
+      if (pr.treasuryMakerRoleId) {
+        await this.assertHoldsRoleId(em, actorId, pr.treasuryMakerRoleId);
+      } else {
+        const makerRole =
+          pr.ttMode === 'OFFLINE_TT'
+            ? RoleCode.TREASURY_MAKER_OFFLINE
+            : RoleCode.TREASURY_MAKER_ONLINE;
+        await this.assertHasRole(em, actorId, makerRole);
+      }
+
+      pr.swiftCopyUrl = dto.swiftCopyUrl;
+      pr.treasuryReferenceNumber = dto.referenceNumber;
+      // The payment is executed here — debit the source account, then return the
+      // request to the initiator to close it.
+      const balanceUpdate = await this.debitSourceAccount(em, pr);
+      pr.treasurySwiftBy = actorId;
+      pr.treasurySwiftAt = new Date();
+      pr.status = 'AWAITING_CLOSURE';
+      pr.updatedBy = actorId;
+      await em.save(pr);
+
+      const result = await this.loadOne(pr.id, em.getRepository(PaymentRequest));
+      return { result, initiatorId: pr.createdBy ?? null, balanceUpdate };
+    });
+
+    // Email the acting maker the resulting bank balance (best-effort, post-commit).
     if (balanceUpdate) {
       await this.notifyAuthoriserOfCompletion(actorId, result, balanceUpdate);
     }
 
+    // Tell the initiator the payment is executed (SWIFT attached) and ask them
+    // to close the request.
+    if (initiatorId) {
+      await this.notifyInitiatorToClose(initiatorId, result, actorId);
+    }
     return result;
+  }
+
+  /**
+   * Initiator closes the request after the treasury maker has executed the
+   * payment and attached the SWIFT copy. Marks the request COMPLETED.
+   */
+  async closeRequest(id: string, actorId: string): Promise<PaymentRequest> {
+    return this.dataSource.transaction(async (em) => {
+      const pr = await em.findOne(PaymentRequest, { where: { id } });
+      if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
+      if (pr.status !== 'AWAITING_CLOSURE') {
+        throw new BadRequestException(`Cannot close in status ${pr.status}`);
+      }
+      if (pr.createdBy !== actorId) {
+        throw new ForbiddenException('Only the initiator can close this request.');
+      }
+      pr.status = 'COMPLETED';
+      pr.completedAt = new Date();
+      pr.updatedBy = actorId;
+      await em.save(pr);
+      return this.loadOne(pr.id, em.getRepository(PaymentRequest));
+    });
   }
 
   /** Email the acting treasury authoriser a confirmation + new bank balance. */
@@ -1214,6 +1364,54 @@ export class PaymentRequestsService {
     await this.mail.sendNotification(authoriser.email, subject, text, html);
   }
 
+  /** Email the treasury maker that a completed request is back with them for the SWIFT copy. */
+  private async notifyTreasuryMakerForSwift(
+    makerId: string,
+    pr: PaymentRequest,
+    authoriserActorId: string,
+  ): Promise<void> {
+    const [maker, authoriser] = await Promise.all([
+      this.repo.manager.findOne(User, { where: { id: makerId }, select: ['id', 'email', 'fullName'] }),
+      this.repo.manager.findOne(User, { where: { id: authoriserActorId }, select: ['id', 'fullName'] }),
+    ]);
+    if (!maker?.email) return;
+    const authName = authoriser?.fullName ?? 'The treasury authoriser';
+    const subject = `Payment ${pr.requestNumber} completed — upload the SWIFT copy`;
+    const text =
+      `Hello ${maker.fullName},\n\n` +
+      `${authName} has completed payment request ${pr.requestNumber}. ` +
+      `Please upload the SWIFT / MT103 copy and the bank reference to finalise it.\n`;
+    const html =
+      `<p>Hello ${maker.fullName},</p>` +
+      `<p>${authName} has completed payment request <strong>${pr.requestNumber}</strong>. ` +
+      `Please upload the SWIFT / MT103 copy and the bank reference to finalise it.</p>`;
+    await this.mail.sendNotification(maker.email, subject, text, html);
+  }
+
+  /** Email the initiator that the payment is executed and asks them to close it. */
+  private async notifyInitiatorToClose(
+    initiatorId: string,
+    pr: PaymentRequest,
+    _makerActorId: string,
+  ): Promise<void> {
+    const initiator = await this.repo.manager.findOne(User, {
+      where: { id: initiatorId },
+      select: ['id', 'email', 'fullName'],
+    });
+    if (!initiator?.email) return;
+    const ref = pr.treasuryReferenceNumber ? ` (bank reference ${pr.treasuryReferenceNumber})` : '';
+    const subject = `Payment ${pr.requestNumber} executed — please close it`;
+    const text =
+      `Hello ${initiator.fullName},\n\n` +
+      `Your payment request ${pr.requestNumber} has been executed${ref} and the SWIFT / MT103 ` +
+      `copy is attached. Please review and close the request to complete it.\n`;
+    const html =
+      `<p>Hello ${initiator.fullName},</p>` +
+      `<p>Your payment request <strong>${pr.requestNumber}</strong> has been executed${ref} and the ` +
+      `SWIFT / MT103 copy is attached. Please review and close the request to complete it.</p>`;
+    await this.mail.sendNotification(initiator.email, subject, text, html);
+  }
+
   /**
    * Treasury rejection routing:
    * - The treasury MAKER rejecting sends the request back to the request
@@ -1230,7 +1428,7 @@ export class PaymentRequestsService {
     dto: RejectDto,
     actorId: string,
   ): Promise<PaymentRequest> {
-    return this.dataSource.transaction(async (em) => {
+    const { result, notify } = await this.dataSource.transaction(async (em) => {
       const pr = await em.findOne(PaymentRequest, { where: { id } });
       if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
 
@@ -1277,11 +1475,18 @@ export class PaymentRequestsService {
         bounceToMaker = !paymentType?.isConfidential;
       }
 
+      // Stage the rejection came from (captured before the status changes).
+      const rejectionStage = pr.status as RejectionStage;
       pr.rejectionReason = dto.comments;
+      // Who the request is returned to — notified after commit.
+      let notify: { recipientId: string | null; returnedTo: 'TREASURY_MAKER' | 'INITIATOR' };
       if (bounceToMaker) {
         // Reopen the maker stage and clear the downstream execution stamps so
         // the timeline reflects an awaiting-resubmit maker step. The maker's
         // captured reference/SWIFT are kept as a prefill for the resubmit.
+        // Capture the treasury maker (who submitted) before clearing — they are
+        // the one notified to come back and correct it.
+        notify = { recipientId: pr.treasuryMakerBy ?? null, returnedTo: 'TREASURY_MAKER' };
         pr.status = 'TREASURY_MAKER';
         pr.treasuryMakerBy = null;
         pr.treasuryMakerAt = null;
@@ -1290,13 +1495,64 @@ export class PaymentRequestsService {
         pr.treasuryAuthoriserBy = null;
         pr.treasuryAuthoriserAt = null;
       } else {
+        notify = { recipientId: pr.createdBy ?? null, returnedTo: 'INITIATOR' };
         pr.status = 'REJECTED';
       }
       pr.updatedBy = actorId;
       await em.save(pr);
 
-      return this.loadOne(pr.id, em.getRepository(PaymentRequest));
+      // Preserve this rejection in the request's permanent history.
+      await this.recordRejection(em, pr.id, rejectionStage, actorId, dto.comments, null);
+
+      const result = await this.loadOne(pr.id, em.getRepository(PaymentRequest));
+      return { result, notify };
     });
+
+    // Best-effort, post-commit: notify whoever the request was returned to (the
+    // treasury maker on a checker/authoriser bounce, or the initiator on a final
+    // rejection). A mail failure must not fail the rejection.
+    if (notify.recipientId) {
+      await this.notifyRejection(notify.recipientId, result, actorId, dto.comments, notify.returnedTo);
+    }
+    return result;
+  }
+
+  /** Email the party a rejected request is returned to (maker or initiator). */
+  private async notifyRejection(
+    recipientId: string,
+    pr: PaymentRequest,
+    rejectedByActorId: string,
+    reason: string,
+    returnedTo: 'TREASURY_MAKER' | 'INITIATOR',
+  ): Promise<void> {
+    const [recipient, actor] = await Promise.all([
+      this.repo.manager.findOne(User, {
+        where: { id: recipientId },
+        select: ['id', 'email', 'fullName'],
+      }),
+      this.repo.manager.findOne(User, {
+        where: { id: rejectedByActorId },
+        select: ['id', 'fullName'],
+      }),
+    ]);
+    if (!recipient?.email) return;
+
+    const actorName = actor?.fullName ?? 'A treasury reviewer';
+    const where =
+      returnedTo === 'TREASURY_MAKER'
+        ? 'returned to you (Treasury Maker) for correction'
+        : 'returned to the initiator';
+    const subject = `Payment ${pr.requestNumber} rejected — ${where}`;
+    const text =
+      `Hello ${recipient.fullName},\n\n` +
+      `Payment request ${pr.requestNumber} was rejected by ${actorName} and has been ${where}.\n\n` +
+      `Reason: ${reason}\n`;
+    const html =
+      `<p>Hello ${recipient.fullName},</p>` +
+      `<p>Payment request <strong>${pr.requestNumber}</strong> was rejected by ${actorName} ` +
+      `and has been ${where}.</p>` +
+      `<p><strong>Reason:</strong> ${reason}</p>`;
+    await this.mail.sendNotification(recipient.email, subject, text, html);
   }
 
   /** Administrative cancel — any non-terminal status. */
@@ -1376,33 +1632,21 @@ export class PaymentRequestsService {
   // ===================================================================
 
   /**
-   * Maker-eligibility check. A user may act as Maker for a payment
-   * type when they are SUPER_ADMIN, OR they are the payment type's
-   * named maker_user_id, OR they hold the payment type's
-   * maker_role_id. Holding only the Checker role does not count.
-   *
-   * Throws ForbiddenException when the actor does not qualify.
-   */
-  /**
-   * Assert the actor holds the given role code (SUPER_ADMIN / platform-admin
-   * bypass). Used to gate the treasury maker / checker / authoriser stages.
+   * Assert the actor actually holds the given role code. Used to gate the
+   * treasury maker / checker / authoriser stages. There is no platform-admin /
+   * SUPER_ADMIN bypass — capability follows the assigned role only.
    */
   private async assertHasRole(
     em: EntityManager,
     actorId: string,
     code: RoleCode,
   ): Promise<void> {
-    const userRow = await em
-      .getRepository(User)
-      .findOne({ where: { id: actorId }, select: ['id', 'isPlatformAdmin'] });
-    if (userRow?.isPlatformAdmin) return;
-
     const has = await em
       .getRepository(UserRole)
       .createQueryBuilder('ur')
       .innerJoin('ur.role', 'r')
       .where('ur.user_id = :uid', { uid: actorId })
-      .andWhere('r.code IN (:...codes)', { codes: [code, RoleCode.SUPER_ADMIN] })
+      .andWhere('r.code = :code', { code })
       .getCount();
     if (has > 0) return;
 
@@ -1412,29 +1656,21 @@ export class PaymentRequestsService {
   }
 
   /**
-   * Assert the actor holds a specific role by its ID (platform-admin /
-   * SUPER_ADMIN bypass). Used when a treasury stage is pinned to a role
-   * selected on the approval matrix and snapshotted onto the request.
+   * Assert the actor actually holds a specific role by its ID. Used when a
+   * treasury stage is pinned to a role selected on the approval matrix and
+   * snapshotted onto the request. There is no platform-admin / SUPER_ADMIN
+   * bypass — capability follows the assigned role only.
    */
   private async assertHoldsRoleId(
     em: EntityManager,
     actorId: string,
     roleId: string,
   ): Promise<void> {
-    const userRow = await em
-      .getRepository(User)
-      .findOne({ where: { id: actorId }, select: ['id', 'isPlatformAdmin'] });
-    if (userRow?.isPlatformAdmin) return;
-
     const has = await em
       .getRepository(UserRole)
       .createQueryBuilder('ur')
-      .innerJoin('ur.role', 'r')
       .where('ur.user_id = :uid', { uid: actorId })
-      .andWhere('(ur.role_id = :roleId OR r.code = :superAdmin)', {
-        roleId,
-        superAdmin: RoleCode.SUPER_ADMIN,
-      })
+      .andWhere('ur.role_id = :roleId', { roleId })
       .getCount();
     if (has > 0) return;
 
@@ -1446,6 +1682,15 @@ export class PaymentRequestsService {
     );
   }
 
+  /**
+   * Maker-eligibility check. A user may act as Maker for a payment type when
+   * they are the type's named maker_user_id, OR they hold one of the type's
+   * maker roles. Holding only the Checker role does not count, and there is no
+   * platform-admin / SUPER_ADMIN bypass — capability follows the assigned role
+   * only.
+   *
+   * Throws ForbiddenException when the actor does not qualify.
+   */
   private async assertCanMake(actorId: string, paymentTypeId: string): Promise<void> {
     const ptRepo = this.dataSource.getRepository(PaymentType);
     const pt = await ptRepo.findOne({
@@ -1453,20 +1698,6 @@ export class PaymentRequestsService {
       select: ['id', 'code', 'name', 'makerRoleId', 'makerRoleIds', 'makerUserId'],
     });
     if (!pt) throw new NotFoundException(`Payment type ${paymentTypeId} not found`);
-
-    // Platform-admin / SUPER_ADMIN bypass.
-    const userRow = await this.dataSource
-      .getRepository(User)
-      .findOne({ where: { id: actorId }, select: ['id', 'isPlatformAdmin'] });
-    if (userRow?.isPlatformAdmin) return;
-    const hasSuperAdmin = await this.dataSource
-      .getRepository(UserRole)
-      .createQueryBuilder('ur')
-      .innerJoin('ur.role', 'r')
-      .where('ur.user_id = :uid', { uid: actorId })
-      .andWhere('r.code = :code', { code: 'SUPER_ADMIN' })
-      .getCount();
-    if (hasSuperAdmin > 0) return;
 
     // Named-user maker match.
     if (pt.makerUserId && pt.makerUserId === actorId) return;
@@ -1490,6 +1721,99 @@ export class PaymentRequestsService {
     throw new ForbiddenException(
       `You are not configured as the Maker for "${pt.name}" (${pt.code}). Only users holding the maker role (or named as maker) may create requests for this payment type.`,
     );
+  }
+
+  /**
+   * Append a rejection to the request's permanent history. Kept in a dedicated
+   * append-only table so it survives resubmission (which wipes the approval
+   * chain). attempt_no is the 1-based position in this request's rejection log.
+   */
+  private async recordRejection(
+    em: EntityManager,
+    paymentRequestId: string,
+    stage: RejectionStage,
+    actorId: string,
+    reason: string,
+    stepOrder: number | null,
+  ): Promise<void> {
+    const priorCount = await em.count(PaymentRequestRejection, {
+      where: { paymentRequestId },
+    });
+    // Snapshot the full request (with relations) so the rejected version stays
+    // viewable even after the maker edits and resubmits. The rejection only
+    // changes status/reason, so the substantive details still reflect the
+    // pre-rejection state at this point.
+    const full = await this.loadOne(paymentRequestId, em.getRepository(PaymentRequest));
+    await em.save(
+      em.create(PaymentRequestRejection, {
+        paymentRequestId,
+        stage,
+        stepOrder,
+        attemptNo: priorCount + 1,
+        rejectedBy: actorId,
+        reason,
+        snapshot: this.buildRejectionSnapshot(full),
+      }),
+    );
+  }
+
+  /** Build a display-friendly snapshot of a request's details for the history. */
+  private buildRejectionSnapshot(pr: PaymentRequest): Record<string, unknown> {
+    const le = pr.legalEntity ?? pr.paymentType?.legalEntity ?? null;
+    const src = pr.sourceAccount ?? null;
+    return {
+      requestNumber: pr.requestNumber,
+      paymentType: pr.paymentType
+        ? { code: pr.paymentType.code, name: pr.paymentType.name }
+        : null,
+      legalEntity: le ? { code: le.code, name: le.name } : null,
+      currencyCode: pr.currency?.code ?? null,
+      amount: pr.amount,
+      counterpartyName: pr.counterparty?.legalName ?? null,
+      employeeName: pr.employee?.fullName ?? null,
+      beneficiary: pr.beneficiaryAccount
+        ? {
+            name: pr.beneficiaryAccount.accountHolderName,
+            accountNumber: pr.beneficiaryAccount.accountNumber,
+          }
+        : null,
+      sourceAccount: src
+        ? {
+            bank: src.bankNickname ?? src.bank?.name ?? src.bankName ?? null,
+            accountNumber: src.accountNumber,
+          }
+        : null,
+      invoiceNumber: pr.invoiceNumber ?? null,
+      dueDate: pr.dueDate ?? null,
+      purposeDescription: pr.purposeDescription ?? null,
+      treasuryReferenceNumber: pr.treasuryReferenceNumber ?? null,
+      treasuryCheckerComments: pr.treasuryCheckerComments ?? null,
+      swiftCopyUrl: pr.swiftCopyUrl ?? null,
+      documents: (pr.documents ?? []).map((d) => ({
+        documentCode: d.documentCode,
+        documentLabel: d.documentLabel ?? null,
+        fileName: d.fileName,
+        fileUrl: d.fileUrl,
+      })),
+      // Full approval chain at rejection time — who approved/rejected each step
+      // and their comments. The chain itself is wiped on resubmit, so this is
+      // the permanent record of who acted and what they said.
+      approvals: (pr.approvals ?? [])
+        .slice()
+        .sort((a, b) => a.stepOrder - b.stepOrder)
+        .map((a) => ({
+          stepOrder: a.stepOrder,
+          approverType: a.approverType,
+          approver:
+            a.approverType === 'USER'
+              ? a.approverUser?.fullName ?? a.approverUserId ?? null
+              : a.approverRole?.name ?? a.approverRoleId ?? null,
+          decision: a.decision,
+          decidedBy: a.decidedByUser?.fullName ?? null,
+          decidedAt: a.decidedAt ?? null,
+          comments: a.comments ?? null,
+        })),
+    };
   }
 
   /**
@@ -1547,6 +1871,7 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('pr.counterparty', 'counterparty')
       .leftJoinAndSelect('pr.employee', 'employee')
       .leftJoinAndSelect('pr.currency', 'currency')
+      .leftJoinAndSelect('pr.legalEntity', 'prLegalEntity')
       .leftJoinAndSelect('pr.beneficiaryAccount', 'beneficiaryAccount')
       .leftJoinAndSelect('beneficiaryAccount.bank', 'beneficiaryBank')
       .leftJoinAndSelect('beneficiaryAccount.country', 'beneficiaryCountry')
@@ -1565,13 +1890,17 @@ export class PaymentRequestsService {
       .leftJoinAndSelect('pr.treasuryMakerByUser', 'treasuryMakerByUser')
       .leftJoinAndSelect('pr.treasuryCheckerByUser', 'treasuryCheckerByUser')
       .leftJoinAndSelect('pr.treasuryAuthoriserByUser', 'treasuryAuthoriserByUser')
+      .leftJoinAndSelect('pr.treasurySwiftByUser', 'treasurySwiftByUser')
       .leftJoinAndSelect('pr.treasuryMakerRole', 'treasuryMakerRole')
       .leftJoinAndSelect('pr.treasuryCheckerRole', 'treasuryCheckerRole')
       .leftJoinAndSelect('pr.treasuryAuthoriserRole', 'treasuryAuthoriserRole')
       .leftJoinAndSelect('pr.documents', 'document')
+      .leftJoinAndSelect('pr.rejections', 'rejection')
+      .leftJoinAndSelect('rejection.rejectedByUser', 'rejectionUser')
       .where('pr.id = :id', { id })
       .orderBy('approval.stepOrder', 'ASC')
       .addOrderBy('document.uploadedAt', 'ASC')
+      .addOrderBy('rejection.rejectedAt', 'ASC')
       .getOne();
     if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
     return pr;

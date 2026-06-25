@@ -10,6 +10,7 @@ import { useFilePreview } from '@/components/shared/use-file-preview';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { RejectionHistory } from '@/components/payment-requests/rejection-history';
 
 /**
  * Single source of truth for the payment-request detail UI. Both the admin
@@ -29,6 +30,8 @@ export const STATUS_STYLES: Record<string, string> = {
   TREASURY_MAKER: 'bg-blue-50 text-blue-700 ring-blue-200',
   TREASURY_CHECKER: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
   TREASURY_AUTHORISER: 'bg-violet-50 text-violet-700 ring-violet-200',
+  TREASURY_SWIFT: 'bg-sky-50 text-sky-700 ring-sky-200',
+  AWAITING_CLOSURE: 'bg-teal-50 text-teal-700 ring-teal-200',
   COMPLETED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   REJECTED: 'bg-rose-50 text-rose-700 ring-rose-200',
   WITHDRAWN: 'bg-muted text-muted-foreground ring-border',
@@ -83,7 +86,8 @@ export function treasurySteps(pr: PaymentRequest, isConfidential = false): TtSte
   const stages = [
     { order: 1, role: 'MAKER', label: 'Treasury Maker', user: pr.treasuryMakerByUser, at: pr.treasuryMakerAt, activeStatus: 'TREASURY_MAKER', doneBadge: 'SUBMITTED' },
     { order: 2, role: 'CHECKER', label: 'Treasury Checker', user: pr.treasuryCheckerByUser, at: pr.treasuryCheckerAt, activeStatus: 'TREASURY_CHECKER', doneBadge: 'CHECKED' },
-    { order: 3, role: 'AUTHORISER', label: 'Treasury Authoriser', user: pr.treasuryAuthoriserByUser, at: pr.treasuryAuthoriserAt, activeStatus: 'TREASURY_AUTHORISER', doneBadge: 'COMPLETED' },
+    { order: 3, role: 'AUTHORISER', label: 'Treasury Authoriser', user: pr.treasuryAuthoriserByUser, at: pr.treasuryAuthoriserAt, activeStatus: 'TREASURY_AUTHORISER', doneBadge: 'AUTHORISED' },
+    { order: 4, role: 'MAKER', label: 'Treasury Maker — SWIFT', user: pr.treasurySwiftByUser, at: pr.treasurySwiftAt, activeStatus: 'TREASURY_SWIFT', doneBadge: 'EXECUTED' },
   ] as const;
   const approvalChainRejected = pr.approvals?.some((a) => a.decision === 'REJECTED') ?? false;
   const rejectedIdx =
@@ -97,10 +101,13 @@ export function treasurySteps(pr: PaymentRequest, isConfidential = false): TtSte
     const state: TtStepView['state'] = done ? 'DONE' : rejected ? 'REJECTED' : active ? 'ACTIVE' : 'PENDING';
     const badge = done ? s.doneBadge : rejected ? 'REJECTED' : active ? 'PENDING' : '—';
     let detail: string | null = null;
-    if (s.order === 1 && pr.treasuryReferenceNumber) detail = `Reference: ${pr.treasuryReferenceNumber}`;
+    // The bank reference is captured with the SWIFT copy at the final maker step.
+    if (s.order === 4 && pr.treasuryReferenceNumber) detail = `Reference: ${pr.treasuryReferenceNumber}`;
+    // The checker's note, shown once they have marked it checked.
+    if (s.order === 2 && pr.treasuryCheckerComments) detail = `Note: ${pr.treasuryCheckerComments}`;
     if (rejected && pr.rejectionReason) detail = pr.rejectionReason;
     // Request bounced back to the maker after a checker/authoriser rejection.
-    if (s.role === 'MAKER' && active && pr.rejectionReason) detail = `Returned: ${pr.rejectionReason}`;
+    if (s.order === 1 && active && pr.rejectionReason) detail = `Returned: ${pr.rejectionReason}`;
     const roleName =
       s.role === 'MAKER' ? pr.treasuryMakerRole?.name
       : s.role === 'CHECKER' ? pr.treasuryCheckerRole?.name
@@ -169,7 +176,7 @@ export function PaymentRequestDetailView({
           <CardHeader><CardTitle>Request</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 gap-3 text-sm">
             <Field label="Payment type" value={pr.paymentType?.name ?? '—'} />
-            <Field label="Legal entity" value={pr.paymentType?.legalEntity?.name ?? '—'} />
+            <Field label="Legal entity" value={pr.legalEntity?.name ?? pr.paymentType?.legalEntity?.name ?? '—'} />
             <Field label="Counterparty" value={pr.counterparty?.legalName ?? pr.employee?.fullName ?? '—'} />
             <Field label="Currency" value={pr.currency?.code ?? '—'} />
             <Field label="Amount" value={Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} />
@@ -295,6 +302,10 @@ export function PaymentRequestDetailView({
           </CardContent>
         </Card>
 
+        {/* Rejection history — append-only, preserved across resubmissions
+            (including after reopen). Visible to anyone who can view the request. */}
+        <RejectionHistory rejections={pr.rejections} className="order-last col-span-3" />
+
         {/* Treasury Team chain */}
         {(pr.ttMode || isConfidential) && (
           <Card className="order-4 col-span-3">
@@ -337,7 +348,13 @@ export function PaymentRequestDetailView({
                       {step.detail && (
                         <div className="mt-1 text-xs whitespace-pre-wrap">{step.detail}</div>
                       )}
-                      {step.order === 1 && pr.swiftCopyUrl && (
+                      {!isConfidential && step.order === 1 && pr.ttDocumentUrl && (
+                        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <span>Online TT document</span>
+                          <FileActions fileUrl={pr.ttDocumentUrl} fileName="online-tt" presign={presign} onView={openPreview} />
+                        </div>
+                      )}
+                      {pr.swiftCopyUrl && ((isConfidential && step.order === 1) || (!isConfidential && step.order === 4)) && (
                         <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                           <span>SWIFT / MT103 copy</span>
                           <FileActions fileUrl={pr.swiftCopyUrl} fileName="swift-mt103" presign={presign} onView={openPreview} />

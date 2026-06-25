@@ -76,8 +76,15 @@ export class PaymentType extends BaseEntity {
   @JoinColumn({ name: 'payment_category_id' })
   paymentCategory?: PaymentCategory | null;
 
-  // Optional: confidential (chairman-style) types are not tied to a legal
-  // entity. Required for all non-confidential types (enforced in the DTO).
+  // Legal entities this payment type belongs to. A type may now span several
+  // legal entities; `legal_entity_ids` is the source of truth and
+  // `legal_entity_id` is kept in sync with the first entry as a denormalised
+  // "primary" for legacy single-entity consumers. Optional: confidential
+  // (chairman-style) types are not tied to a legal entity. Required (at least
+  // one) for all non-confidential types (enforced in the DTO).
+  @Column({ name: 'legal_entity_ids', type: 'uuid', array: true, default: () => "'{}'" })
+  legalEntityIds!: string[];
+
   @Column({ name: 'legal_entity_id', type: 'uuid', nullable: true })
   legalEntityId?: string | null;
 
