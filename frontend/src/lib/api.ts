@@ -1,3 +1,5 @@
+import type { PrMessage, PrMessageAttachment, PrParticipant } from '@/types/domain';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 // Backend origin without the /api/vN path — used to construct static file URLs.
 const BACKEND_ORIGIN = API_URL.replace(/\/api\/v\d+\/?$/, '');
@@ -317,4 +319,47 @@ export async function downloadFile(
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+// ── Payment Request Chat ────────────────────────────────────────────────────
+
+export function getPrParticipants(id: string): Promise<PrParticipant[]> {
+  return api.get<PrParticipant[]>(`/payment-requests/${id}/messages/participants`);
+}
+
+export function getPaymentRequestMessages(id: string): Promise<PrMessage[]> {
+  return api.get<PrMessage[]>(`/payment-requests/${id}/messages`);
+}
+
+export function sendPaymentRequestMessage(
+  id: string,
+  message: string,
+  attachments: PrMessageAttachment[] = [],
+): Promise<PrMessage> {
+  return api.post<PrMessage>(`/payment-requests/${id}/messages`, { message, attachments });
+}
+
+export interface PrMessageSummary {
+  paymentRequestId: string;
+  messageCount: number;
+  latestAt: string | null;
+}
+
+/** Message counts for all PRs the user participates in (drives dashboard badges). */
+export function getPrMessageSummary(): Promise<PrMessageSummary[]> {
+  return api.get<PrMessageSummary[]>('/payment-request-messages/summary');
+}
+
+const MSG_READ_PREFIX = 'pcs.msgs.';
+
+/** Called when the user opens the chat for a payment request. */
+export function markPrMessagesRead(prId: string): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(`${MSG_READ_PREFIX}${prId}.readAt`, new Date().toISOString());
+}
+
+/** Returns the ISO timestamp of when the user last read the chat for this PR, or null. */
+export function getPrMessagesReadAt(prId: string): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(`${MSG_READ_PREFIX}${prId}.readAt`);
 }
