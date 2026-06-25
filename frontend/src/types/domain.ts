@@ -301,6 +301,9 @@ export interface PaymentType extends AuditFields {
   effectiveTo?: string | null;
   paymentCategoryId?: string | null;
   paymentCategory?: PaymentCategory | null;
+  /** Legal entity UUIDs (multi-select). A type may span several legal entities. */
+  legalEntityIds?: string[];
+  /** Deprecated denormalised primary legal entity (kept in sync with legalEntityIds[0]). */
   legalEntityId: string;
   legalEntity?: LegalEntity | null;
   /** Maker role UUIDs (multi-select). Any holder of one of these can create requests. */
@@ -467,6 +470,8 @@ export type PaymentRequestStatus =
   | 'TREASURY_MAKER'
   | 'TREASURY_CHECKER'
   | 'TREASURY_AUTHORISER'
+  | 'TREASURY_SWIFT'
+  | 'AWAITING_CLOSURE'
   | 'COMPLETED'
   | 'REJECTED'
   | 'WITHDRAWN'
@@ -493,6 +498,53 @@ export interface PaymentRequestApproval {
   comments?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type RejectionStage =
+  | 'APPROVAL'
+  | 'TREASURY_MAKER'
+  | 'TREASURY_CHECKER'
+  | 'TREASURY_AUTHORISER';
+
+export interface PaymentRequestRejectionSnapshot {
+  requestNumber?: string;
+  paymentType?: { code: string; name: string } | null;
+  legalEntity?: { code: string; name: string } | null;
+  currencyCode?: string | null;
+  amount?: string;
+  counterpartyName?: string | null;
+  employeeName?: string | null;
+  beneficiary?: { name: string; accountNumber: string } | null;
+  sourceAccount?: { bank?: string | null; accountNumber: string } | null;
+  invoiceNumber?: string | null;
+  dueDate?: string | null;
+  purposeDescription?: string | null;
+  treasuryReferenceNumber?: string | null;
+  treasuryCheckerComments?: string | null;
+  swiftCopyUrl?: string | null;
+  documents?: { documentCode: string; documentLabel?: string | null; fileName: string; fileUrl: string }[];
+  approvals?: {
+    stepOrder: number;
+    approverType: 'USER' | 'ROLE';
+    approver?: string | null;
+    decision: ApprovalDecision;
+    decidedBy?: string | null;
+    decidedAt?: string | null;
+    comments?: string | null;
+  }[];
+}
+
+export interface PaymentRequestRejection {
+  id: string;
+  paymentRequestId: string;
+  stage: RejectionStage;
+  stepOrder?: number | null;
+  attemptNo: number;
+  rejectedBy?: string | null;
+  rejectedByUser?: User | null;
+  reason?: string | null;
+  snapshot?: PaymentRequestRejectionSnapshot | null;
+  rejectedAt: string;
 }
 
 export interface PaymentRequestDocument {
@@ -583,6 +635,10 @@ export interface PaymentRequest extends AuditFields {
   employee?: Employee | null;
   beneficiaryAccountId?: string | null;
   beneficiaryAccount?: BeneficiaryAccount | null;
+  /** Legal entity chosen by the maker (from the payment type's entities). */
+  legalEntityId?: string | null;
+  legalEntity?: LegalEntity | null;
+  /** Source bank account — picked by the Treasury Maker, not the initiator. */
   sourceAccountId?: string | null;
   sourceAccount?: BankAccount | null;
   currencyId: string;
@@ -611,6 +667,8 @@ export interface PaymentRequest extends AuditFields {
   treasuryAuthoriserRoleId?: string | null;
   treasuryAuthoriserRole?: Role | null;
   treasuryReferenceNumber?: string | null;
+  /** Online TT document (PDF) uploaded by the maker at submit. */
+  ttDocumentUrl?: string | null;
   swiftCopyUrl?: string | null;
   treasuryMakerBy?: string | null;
   treasuryMakerByUser?: User | null;
@@ -618,9 +676,13 @@ export interface PaymentRequest extends AuditFields {
   treasuryCheckerBy?: string | null;
   treasuryCheckerByUser?: User | null;
   treasuryCheckerAt?: string | null;
+  treasuryCheckerComments?: string | null;
   treasuryAuthoriserBy?: string | null;
   treasuryAuthoriserByUser?: User | null;
   treasuryAuthoriserAt?: string | null;
+  treasurySwiftBy?: string | null;
+  treasurySwiftByUser?: User | null;
+  treasurySwiftAt?: string | null;
   completedAt?: string | null;
   sanctionWarning: boolean;
   sanctionOverrideReason?: string | null;
@@ -636,6 +698,7 @@ export interface PaymentRequest extends AuditFields {
   withdrawnReason?: string | null;
   approvals?: PaymentRequestApproval[];
   documents?: PaymentRequestDocument[];
+  rejections?: PaymentRequestRejection[];
   /** Maker who created the request — joined for the "Worked on by" column. */
   createdByUser?: { id: string; fullName: string; email: string } | null;
 }

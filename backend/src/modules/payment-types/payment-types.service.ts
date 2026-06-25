@@ -41,9 +41,11 @@ export class PaymentTypesService {
       allowsCrossCurrency: dto.allowsCrossCurrency ?? true,
       fieldConfig: dto.fieldConfig ?? [],
       paymentCategoryId: dto.paymentCategoryId ?? null,
-      // Optional for confidential (chairman-style) types; the DTO enforces it
-      // for everything else.
-      legalEntityId: dto.legalEntityId ?? null,
+      // Optional for confidential (chairman-style) types; the DTO enforces at
+      // least one for everything else. Keep the denormalised primary
+      // legal_entity_id in sync with the first entry.
+      legalEntityIds: dto.legalEntityIds ?? (dto.legalEntityId ? [dto.legalEntityId] : []),
+      legalEntityId: dto.legalEntityIds?.[0] ?? dto.legalEntityId ?? null,
       makerRoleIds: dto.makerRoleIds ?? (dto.makerRoleId ? [dto.makerRoleId] : []),
       // Keep the legacy single "primary" maker role in sync with the first entry.
       makerRoleId: dto.makerRoleIds?.[0] ?? dto.makerRoleId ?? null,
@@ -120,7 +122,10 @@ export class PaymentTypesService {
       .andWhere('(pt.effective_to IS NULL OR pt.effective_to >= :today)', { today })
       .orderBy('pt.name', 'ASC');
     if (legalEntityId) {
-      qb.andWhere('pt.legal_entity_id = :le', { le: legalEntityId });
+      qb.andWhere(
+        '(:le = ANY(pt.legal_entity_ids) OR pt.legal_entity_id = :le)',
+        { le: legalEntityId },
+      );
     }
     return qb.getMany();
   }
@@ -159,6 +164,14 @@ export class PaymentTypesService {
     } else if (dto.makerRoleId !== undefined) {
       pt.makerRoleId = dto.makerRoleId;
       pt.makerRoleIds = dto.makerRoleId ? [dto.makerRoleId] : [];
+    }
+    // Keep legal_entity_ids and the denormalised primary legal_entity_id consistent.
+    if (dto.legalEntityIds !== undefined) {
+      pt.legalEntityIds = dto.legalEntityIds;
+      pt.legalEntityId = dto.legalEntityIds[0] ?? null;
+    } else if (dto.legalEntityId !== undefined) {
+      pt.legalEntityId = dto.legalEntityId;
+      pt.legalEntityIds = dto.legalEntityId ? [dto.legalEntityId] : [];
     }
     return this.repo.save(pt);
   }

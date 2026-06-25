@@ -1,6 +1,6 @@
 'use client';
 
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm, useFieldArray, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
@@ -37,6 +37,9 @@ export const paymentRequestSchema = z.object({
   paymentTypeId: z.string().uuid('Select a payment type'),
   counterpartyId: z.string().uuid().optional().or(z.literal('')),
   beneficiaryAccountId: z.string().uuid().optional().or(z.literal('')),
+  // Legal entity is chosen by the maker (from the payment type's entities); the
+  // source bank account is no longer picked here — the Treasury Maker picks it.
+  legalEntityId: z.string().uuid('Select a legal entity'),
   sourceAccountId: z.string().uuid().optional().or(z.literal('')),
   currencyId: z.string().uuid('Select a currency'),
   amount: z.string().regex(/^\d+(\.\d{1,4})?$/, 'Positive decimal, up to 4 dp'),
@@ -114,6 +117,9 @@ export function PaymentRequestForm({
   useEffect(() => {
     if (!hydrated && defaultValues) {
       reset({ documents: [], ...defaultValues });
+      setPaymentTypeId(defaultValues.paymentTypeId ?? '');
+      setLegalEntityId(defaultValues.legalEntityId ?? '');
+      setCurrencyId(defaultValues.currencyId ?? '');
       setHydrated(true);
     }
   }, [defaultValues, hydrated, reset]);
@@ -170,11 +176,29 @@ export function PaymentRequestForm({
     }
   }
 
-  const counterpartyId = watch('counterpartyId');
-  const sourceAccountId = watch('sourceAccountId');
-  // Legal entity is a UI filter for the source bank-account list (not stored
-  // on the request — the chosen bank account already implies the entity).
-  const [legalEntityId, setLegalEntityId] = useState('');
+  const counterpartyId = useWatch({ control, name: 'counterpartyId' });
+  // §4.3 — the maker chooses a legal entity (from the payment type's entities)
+  // and then a currency derived from that entity's bank accounts. The source
+  // bank account itself is picked later by the Treasury Maker.
+  //
+  // These three cross-field drivers are mirrored in component state rather than
+  // read via RHF watch/useWatch: the watch subscription was not re-rendering
+  // the dependent dropdowns when their parent changed (the legal entity list
+  // only appeared after touching another field). Component state guarantees the
+  // re-render; RHF is kept in sync via setValue so submission/validation work.
+  const [paymentTypeId, setPaymentTypeId] = useState(defaultValues?.paymentTypeId ?? '');
+  const [legalEntityId, setLegalEntityId] = useState(defaultValues?.legalEntityId ?? '');
+  const [currencyId, setCurrencyId] = useState(defaultValues?.currencyId ?? '');
+
+  // Set a cross-field driver in both component state and RHF at once.
+  const setField = (
+    name: 'paymentTypeId' | 'legalEntityId' | 'currencyId',
+    value: string,
+    localSetter: (v: string) => void,
+  ): void => {
+    localSetter(value);
+    setValue(name, value, { shouldValidate: true, shouldDirty: true });
+  };
 
   const { user } = useAuth();
 
@@ -232,42 +256,77 @@ export function PaymentRequestForm({
     })
     .map((p) => ({ label: `${p.code} — ${p.name}`, value: p.id }));
 
-  // §4.3 — the source bank account is picked by first choosing its owning
-  // legal entity; the currency is then derived from the chosen account.
+  // §4.3 — the maker picks the legal entity (constrained to the chosen payment
+  // type's legal entities), then a currency drawn from that entity's bank
+  // accounts. The source bank account is no longer selected here.
   const accounts = sourceAccounts?.data ?? [];
-  const selectedSource = accounts.find((a) => a.id === sourceAccountId);
-  // Only offer legal entities that actually own at least one active bank
-  // account — otherwise the bank-account list would come up empty.
+  const selectedPaymentType = (paymentTypes?.data ?? []).find((p) => p.id === paymentTypeId);
+  // A payment type may belong to several legal entities (multi-select); fall
+  // back to the legacy single legalEntityId for older records. Confidential
+  // (chairman-style) types carry no legal entity — for those we offer any
+  // entity that owns an active bank account so a currency can still be chosen.
   const entityIdsWithAccounts = new Set(
     accounts.filter((a) => a.isActive && a.legalEntityId).map((a) => a.legalEntityId),
   );
+  const configuredLegalEntityIds =
+    selectedPaymentType?.legalEntityIds?.length
+      ? selectedPaymentType.legalEntityIds
+      : selectedPaymentType?.legalEntityId
+        ? [selectedPaymentType.legalEntityId]
+        : [];
+  const paymentTypeLegalEntityIds =
+    configuredLegalEntityIds.length > 0
+      ? configuredLegalEntityIds
+      : selectedPaymentType
+        ? Array.from(entityIdsWithAccounts).filter((id): id is string => !!id)
+        : [];
   const legalEntityOptions = (legalEntities?.data ?? [])
-    .filter((le) => le.isActive && entityIdsWithAccounts.has(le.id))
+    .filter((le) => le.isActive && paymentTypeLegalEntityIds.includes(le.id))
     .map((le) => ({ label: `${le.code} — ${le.name}`, value: le.id }));
-  const bankAccountOptions = accounts
-    .filter((a) => a.isActive && a.legalEntityId === legalEntityId)
-    .map((a) => ({
-      label: `${a.bank?.name ?? a.bankName ?? 'Bank'} · ${a.accountNumber} · ${a.currency?.code ?? ''}`,
-      value: a.id,
-    }));
-  const selectedCurrencyCode =
-    selectedSource?.currency?.code ??
-    (currencies?.data ?? []).find((c) => c.id === selectedSource?.currencyId)?.code ??
-    '';
 
-  // Edit mode: preselect the legal entity from the existing source account.
-  useEffect(() => {
-    if (!legalEntityId && selectedSource?.legalEntityId) {
-      setLegalEntityId(selectedSource.legalEntityId);
+  // Distinct currencies available across the selected legal entity's active
+  // bank accounts — these are the currencies the maker may choose from.
+  const currencyCodeById = new Map(
+    (currencies?.data ?? []).map((c) => [c.id, c.code ?? c.name]),
+  );
+  const legalEntityCurrencyIds: string[] = [];
+  for (const a of accounts) {
+    if (a.isActive && a.legalEntityId === legalEntityId && a.currencyId && !legalEntityCurrencyIds.includes(a.currencyId)) {
+      legalEntityCurrencyIds.push(a.currencyId);
     }
-  }, [selectedSource?.legalEntityId, legalEntityId]);
+  }
+  const currencyOptions = legalEntityCurrencyIds.map((id) => ({
+    label: currencyCodeById.get(id) ?? id,
+    value: id,
+  }));
 
-  // Currency is derived from the chosen source bank account (shown read-only).
+  // Keep the legal entity valid for the chosen payment type: auto-select when
+  // there is only one, and clear a stale selection that no longer belongs.
   useEffect(() => {
-    if (selectedSource?.currencyId) {
-      setValue('currencyId', selectedSource.currencyId, { shouldValidate: true });
+    if (!paymentTypeId || !legalEntities) return;
+    if (paymentTypeLegalEntityIds.length === 1) {
+      if (legalEntityId !== paymentTypeLegalEntityIds[0]) {
+        setField('legalEntityId', paymentTypeLegalEntityIds[0], setLegalEntityId);
+      }
+    } else if (legalEntityId && !paymentTypeLegalEntityIds.includes(legalEntityId)) {
+      setField('legalEntityId', '', setLegalEntityId);
     }
-  }, [selectedSource?.currencyId, setValue]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentTypeId, paymentTypeLegalEntityIds.join(','), legalEntities]);
+
+  // Keep the currency valid for the chosen legal entity: auto-select when there
+  // is only one, and clear a stale selection once the accounts have loaded.
+  useEffect(() => {
+    if (!legalEntityId || !sourceAccounts) return;
+    if (legalEntityCurrencyIds.length === 1) {
+      if (currencyId !== legalEntityCurrencyIds[0]) {
+        setField('currencyId', legalEntityCurrencyIds[0], setCurrencyId);
+      }
+    } else if (currencyId && !legalEntityCurrencyIds.includes(currencyId)) {
+      setField('currencyId', '', setCurrencyId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [legalEntityId, legalEntityCurrencyIds.join(','), sourceAccounts]);
 
   const { fields, append, remove } = useFieldArray({ control, name: 'documents' });
 
@@ -275,40 +334,47 @@ export function PaymentRequestForm({
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
       <div className="space-y-2">
         <Label htmlFor="paymentTypeId">Payment type <span className="text-destructive">*</span></Label>
+        <input type="hidden" {...register('paymentTypeId')} />
         <Select id="paymentTypeId"
           placeholder={paymentTypeOptions.length === 0 ? 'No payment types available for your role' : 'Select payment type'}
           disabled={paymentTypeOptions.length === 0}
           options={paymentTypeOptions}
-          {...register('paymentTypeId')} />
+          value={paymentTypeId}
+          onChange={(e) => {
+            setField('paymentTypeId', e.target.value, setPaymentTypeId);
+            // Reset downstream selections — they depend on the payment type.
+            setField('legalEntityId', '', setLegalEntityId);
+            setField('currencyId', '', setCurrencyId);
+          }} />
         {errors.paymentTypeId && <p className="text-xs text-destructive">{errors.paymentTypeId.message}</p>}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
-          <Select id="legalEntityId" placeholder="Select legal entity"
+          <input type="hidden" {...register('legalEntityId')} />
+          <Select id="legalEntityId"
+            placeholder={paymentTypeId ? 'Select legal entity' : 'Pick a payment type first'}
+            disabled={!paymentTypeId}
             options={legalEntityOptions}
             value={legalEntityId}
             onChange={(e) => {
-              setLegalEntityId(e.target.value);
-              setValue('sourceAccountId', '', { shouldValidate: true });
-              setValue('currencyId', '', { shouldValidate: true });
+              setField('legalEntityId', e.target.value, setLegalEntityId);
+              setField('currencyId', '', setCurrencyId);
             }} />
+          <p className="text-xs text-muted-foreground">Legal entities configured on the selected payment type.</p>
+          {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
         </div>
         <div className="space-y-2">
-          <Label htmlFor="sourceAccountId">Bank account <span className="text-destructive">*</span></Label>
-          <Select id="sourceAccountId"
-            placeholder={legalEntityId ? 'Select bank account' : 'Pick a legal entity first'}
-            disabled={!legalEntityId}
-            options={bankAccountOptions}
-            {...register('sourceAccountId')} />
-          <p className="text-xs text-muted-foreground">Bank accounts of the selected legal entity.</p>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="currencyDisplay">Currency</Label>
+          <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
           <input type="hidden" {...register('currencyId')} />
-          <Input id="currencyDisplay" value={selectedCurrencyCode} readOnly disabled
-            placeholder="From bank account" />
+          <Select id="currencyId"
+            placeholder={legalEntityId ? 'Select currency' : 'Pick a legal entity first'}
+            disabled={!legalEntityId}
+            options={currencyOptions}
+            value={currencyId}
+            onChange={(e) => setField('currencyId', e.target.value, setCurrencyId)} />
+          <p className="text-xs text-muted-foreground">Currencies of the selected legal entity&apos;s bank accounts.</p>
           {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
         </div>
       </div>

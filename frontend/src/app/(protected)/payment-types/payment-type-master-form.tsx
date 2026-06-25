@@ -52,9 +52,9 @@ export const paymentTypeMasterSchema = z
     name: z.string().min(2).max(100),
     description: z.string().optional().or(z.literal('')),
     paymentCategoryId: z.string().uuid().optional().or(z.literal('')),
-    // Optional for confidential (chairman-style) types; required otherwise
-    // (enforced in the superRefine below).
-    legalEntityId: z.string().uuid('Select a legal entity').optional().or(z.literal('')),
+    // Optional for confidential (chairman-style) types; at least one required
+    // otherwise (enforced in the superRefine below).
+    legalEntityIds: z.array(z.string().uuid()).default([]),
     makerRoleIds: z.array(z.string().uuid()).default([]),
     checkerRoleId: z.string().uuid().optional().or(z.literal('')),
     direction: z.enum(['OUTGOING', 'INCOMING']),
@@ -78,9 +78,10 @@ export const paymentTypeMasterSchema = z
     bands: z.array(bandSchema).optional().default([]),
   })
   .superRefine((d, ctx) => {
-    // Legal entity is required unless the type is confidential (chairman-style).
-    if (!d.isConfidential && !d.legalEntityId) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['legalEntityId'], message: 'Select a legal entity' });
+    // At least one legal entity is required unless the type is confidential
+    // (chairman-style).
+    if (!d.isConfidential && (!d.legalEntityIds || d.legalEntityIds.length === 0)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['legalEntityIds'], message: 'Select at least one legal entity' });
     }
 
     const usesMatrix = d.requiresApprovalChain || d.isConfidential;
@@ -121,7 +122,7 @@ export interface PaymentTypeMasterSubmit {
     name: string;
     description?: string;
     paymentCategoryId?: string;
-    legalEntityId?: string;
+    legalEntityIds: string[];
     makerRoleIds: string[];
     checkerRoleId?: string;
     direction: 'OUTGOING' | 'INCOMING';
@@ -276,7 +277,9 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
       name: paymentType?.name ?? '',
       description: paymentType?.description ?? '',
       paymentCategoryId: paymentType?.paymentCategoryId ?? '',
-      legalEntityId: paymentType?.legalEntityId ?? '',
+      legalEntityIds:
+        paymentType?.legalEntityIds ??
+        (paymentType?.legalEntityId ? [paymentType.legalEntityId] : []),
       makerRoleIds: paymentType?.makerRoleIds ?? (paymentType?.makerRoleId ? [paymentType.makerRoleId] : []),
       checkerRoleId: paymentType?.checkerRoleId ?? '',
       direction: (paymentType?.direction ?? 'OUTGOING') as 'OUTGOING' | 'INCOMING',
@@ -346,6 +349,7 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
   const userOptions = (users?.data ?? []).filter((u) => u.isActive).map((u) => ({ label: `${u.fullName} (${u.email})`, value: u.id }));
 
   const makerRoleIds = watch('makerRoleIds') ?? [];
+  const legalEntityIds = watch('legalEntityIds') ?? [];
   const requiresApprovalChain = watch('requiresApprovalChain') ?? false;
   const isConfidential = watch('isConfidential') ?? false;
   const usesMatrix = requiresApprovalChain || isConfidential;
@@ -357,7 +361,7 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
       name: d.name,
       description: d.description || undefined,
       paymentCategoryId: d.paymentCategoryId || undefined,
-      legalEntityId: d.legalEntityId || undefined,
+      legalEntityIds: d.legalEntityIds ?? [],
       makerRoleIds: d.makerRoleIds ?? [],
       checkerRoleId: d.checkerRoleId || undefined,
       direction: d.direction,
@@ -429,19 +433,64 @@ export function PaymentTypeMasterForm({ paymentType, matrix, onSubmit, submittin
           </div>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="legalEntityId">
-            Legal entity {!isConfidential && <span className="text-destructive">*</span>}
+          <Label>
+            Legal entities {!isConfidential && <span className="text-destructive">*</span>}
           </Label>
-          <Select
-            id="legalEntityId"
-            placeholder={isConfidential ? 'Select legal entity (optional)' : 'Select legal entity'}
-            options={isConfidential ? [{ label: '— None —', value: '' }, ...legalEntityOptions] : legalEntityOptions}
-            {...register('legalEntityId')}
-          />
-          {isConfidential && (
-            <p className="text-xs text-muted-foreground">Optional for confidential (chairman-style) payment types.</p>
+          <p className="text-xs text-muted-foreground">
+            {isConfidential
+              ? 'Optional for confidential (chairman-style) payment types.'
+              : 'Select one or more legal entities this payment type belongs to.'}
+          </p>
+          {legalEntityOptions.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No legal entities available.</p>
+          ) : (
+            <div className="rounded-md border p-3 space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer text-sm font-medium border-b pb-2">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border"
+                  checked={legalEntityOptions.every((le) => legalEntityIds.includes(le.value))}
+                  ref={(el) => {
+                    if (el) {
+                      const some = legalEntityOptions.some((le) => legalEntityIds.includes(le.value));
+                      const all = legalEntityOptions.every((le) => legalEntityIds.includes(le.value));
+                      el.indeterminate = some && !all;
+                    }
+                  }}
+                  onChange={(e) => {
+                    setValue(
+                      'legalEntityIds',
+                      e.target.checked ? legalEntityOptions.map((le) => le.value) : [],
+                      { shouldValidate: true, shouldDirty: true },
+                    );
+                  }}
+                />
+                <span>All legal entities</span>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {legalEntityOptions.map((le) => {
+                  const selected = legalEntityIds.includes(le.value);
+                  return (
+                    <label key={le.value} className="flex items-center gap-2 cursor-pointer text-sm">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-border"
+                        checked={selected}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...legalEntityIds, le.value]
+                            : legalEntityIds.filter((id) => id !== le.value);
+                          setValue('legalEntityIds', next, { shouldValidate: true, shouldDirty: true });
+                        }}
+                      />
+                      <span>{le.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
           )}
-          {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
+          {errors.legalEntityIds && <p className="text-xs text-destructive">{errors.legalEntityIds.message as string}</p>}
         </div>
 
         <div className="space-y-2">
