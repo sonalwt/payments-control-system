@@ -39,6 +39,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { EmployeeAuthModule } from './modules/employee-auth/employee-auth.module';
 import { EmployeePortalModule } from './modules/employee-portal/employee-portal.module';
 import { FxRatesModule } from './modules/fx-rates/fx-rates.module';
+import { PaymentRequestMessagesModule } from './modules/payment-request-messages/payment-request-messages.module';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { FxRatesModule } from './modules/fx-rates/fx-rates.module';
     EmployeeAuthModule,
     EmployeePortalModule,
     FxRatesModule,
+    PaymentRequestMessagesModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })
