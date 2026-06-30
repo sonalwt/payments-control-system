@@ -4,10 +4,9 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  BadgeCheck, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard, Database, FileType2, FolderTree, Globe2, GitBranch, Handshake,
-  Landmark, ListChecks, LogOut, ScrollText, ShieldCheck, Users2, Wallet2, UserCheck,
-  BadgeCheck, Banknote, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard, Database, FileSearch, FileType2, FolderTree, Globe2, Handshake,
-  Landmark, ListChecks, LogOut, Receipt, ScrollText, ShieldCheck, TrendingUp, Users2, Wallet2,
+  BadgeCheck, Banknote, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard,
+  Database, FileSearch, FileType2, FolderTree, Globe2, Handshake, Landmark, ListChecks,
+  LogOut, Receipt, ScrollText, ShieldCheck, TrendingUp, UserCheck, Users2, Wallet2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
