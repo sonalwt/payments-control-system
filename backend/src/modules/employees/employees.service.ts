@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -7,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Employee } from './employee.entity';
 import { Country } from '../countries/country.entity';
+import { LegalEntity } from '../legal-entities/legal-entity.entity';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import {
@@ -20,7 +22,34 @@ export class EmployeesService {
   constructor(
     @InjectRepository(Employee) private readonly repo: Repository<Employee>,
     @InjectRepository(Country) private readonly countryRepo: Repository<Country>,
+    @InjectRepository(LegalEntity)
+    private readonly legalEntityRepo: Repository<LegalEntity>,
   ) {}
+
+  /**
+   * Resolve the country of employment for an employee. The form now selects a
+   * legal entity rather than a country, so the country is derived from the
+   * chosen legal entity. CSV import still passes an explicit country.
+   */
+  private async resolveCountryId(dto: {
+    legalEntityId?: string;
+    countryOfEmploymentId?: string;
+  }): Promise<string> {
+    if (dto.legalEntityId) {
+      const le = await this.legalEntityRepo.findOne({
+        where: { id: dto.legalEntityId },
+      });
+      if (!le) throw new BadRequestException('Selected legal entity was not found.');
+      if (!le.countryId) {
+        throw new BadRequestException(
+          'The selected legal entity has no country set; set its country first.',
+        );
+      }
+      return le.countryId;
+    }
+    if (dto.countryOfEmploymentId) return dto.countryOfEmploymentId;
+    throw new BadRequestException('A legal entity is required.');
+  }
 
   async create(dto: CreateEmployeeDto, actorId: string): Promise<Employee> {
     if (await this.repo.findOne({ where: { employeeCode: dto.employeeCode } })) {
@@ -33,11 +62,13 @@ export class EmployeesService {
         `Employee with email "${dto.workEmail}" already exists`,
       );
     }
+    const countryOfEmploymentId = await this.resolveCountryId(dto);
     const emp = this.repo.create({
       employeeCode: dto.employeeCode,
       fullName: dto.fullName,
       workEmail: dto.workEmail,
-      countryOfEmploymentId: dto.countryOfEmploymentId,
+      legalEntityId: dto.legalEntityId ?? null,
+      countryOfEmploymentId,
       startDate: dto.startDate ?? null,
       endDate: dto.endDate ?? null,
       nationalId: dto.nationalId ?? null,
@@ -58,6 +89,7 @@ export class EmployeesService {
     const qb = this.repo
       .createQueryBuilder('e')
       .leftJoinAndSelect('e.countryOfEmployment', 'countryOfEmployment')
+      .leftJoinAndSelect('e.legalEntity', 'legalEntity')
       .orderBy('e.fullName', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -74,7 +106,7 @@ export class EmployeesService {
   async findOne(id: string): Promise<Employee> {
     const e = await this.repo.findOne({
       where: { id },
-      relations: ['countryOfEmployment'],
+      relations: ['countryOfEmployment', 'legalEntity'],
     });
     if (!e) throw new NotFoundException(`Employee ${id} not found`);
     return e;
@@ -103,6 +135,12 @@ export class EmployeesService {
       }
     }
     Object.assign(emp, dto, { updatedBy: actorId });
+    // Keep the country of employment in sync with the (possibly changed) legal entity.
+    if (dto.legalEntityId) {
+      emp.countryOfEmploymentId = await this.resolveCountryId({
+        legalEntityId: dto.legalEntityId,
+      });
+    }
     return this.repo.save(emp);
   }
 
@@ -117,6 +155,8 @@ export class EmployeesService {
     const rows = parseImportFile(file);
     const countries = await this.countryRepo.find({ select: ['id', 'code'] });
     const countryMap = new Map(countries.map((c) => [c.code.toUpperCase(), c.id]));
+    const legalEntities = await this.legalEntityRepo.find({ select: ['id', 'code'] });
+    const legalEntityMap = new Map(legalEntities.map((le) => [le.code.toUpperCase(), le.id]));
     const result: ImportResult = { created: 0, skipped: 0, errors: [] };
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -124,12 +164,24 @@ export class EmployeesService {
       if (!employeeCode) { result.errors.push({ row: i + 2, message: 'employee_code is required' }); result.skipped++; continue; }
       if (!fullName) { result.errors.push({ row: i + 2, message: 'full_name is required' }); result.skipped++; continue; }
       if (!workEmail) { result.errors.push({ row: i + 2, message: 'work_email is required' }); result.skipped++; continue; }
+      // Prefer the legal entity (country of employment is derived from it).
+      // country_code is still accepted as a fallback for older templates.
+      const legalEntityCode = (row['legal_entity_code'] ?? '').toUpperCase();
       const countryCode = (row['country_code'] ?? '').toUpperCase();
-      const countryOfEmploymentId = countryMap.get(countryCode);
-      if (!countryOfEmploymentId) { result.errors.push({ row: i + 2, message: `Country code "${countryCode}" not found` }); result.skipped++; continue; }
+      let legalEntityId: string | undefined;
+      let countryOfEmploymentId: string | undefined;
+      if (legalEntityCode) {
+        legalEntityId = legalEntityMap.get(legalEntityCode);
+        if (!legalEntityId) { result.errors.push({ row: i + 2, message: `Legal entity code "${legalEntityCode}" not found` }); result.skipped++; continue; }
+      } else if (countryCode) {
+        countryOfEmploymentId = countryMap.get(countryCode);
+        if (!countryOfEmploymentId) { result.errors.push({ row: i + 2, message: `Country code "${countryCode}" not found` }); result.skipped++; continue; }
+      } else {
+        result.errors.push({ row: i + 2, message: 'legal_entity_code is required' }); result.skipped++; continue;
+      }
       try {
         await this.create({
-          employeeCode, fullName, workEmail, countryOfEmploymentId,
+          employeeCode, fullName, workEmail, legalEntityId, countryOfEmploymentId,
           startDate: row['start_date'] || undefined, endDate: row['end_date'] || undefined,
           nationalId: row['national_id'] || undefined, taxIdentifier: row['tax_identifier'] || undefined,
           dateOfBirth: row['date_of_birth'] || undefined, mobileNumber: row['mobile_number'] || undefined,

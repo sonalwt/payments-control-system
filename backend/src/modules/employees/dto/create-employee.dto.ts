@@ -27,9 +27,18 @@ export class CreateEmployeeDto {
   @IsEmail()
   workEmail!: string;
 
-  @ApiProperty({ description: 'Country master UUID (country of employment)' })
+  @ApiPropertyOptional({ description: 'Employing legal entity UUID. The country of employment is derived from it.' })
+  @IsOptional()
   @IsUUID()
-  countryOfEmploymentId!: string;
+  legalEntityId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Country master UUID. Optional — derived from the legal entity when one is given; used directly by CSV import.',
+  })
+  @IsOptional()
+  @IsUUID()
+  countryOfEmploymentId?: string;
 
   @ApiPropertyOptional({ example: '2024-01-15' })
   @IsOptional()

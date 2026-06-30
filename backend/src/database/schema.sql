@@ -258,6 +258,9 @@ CREATE TABLE payment_types (
     is_confidential           BOOLEAN NOT NULL DEFAULT FALSE,
     mobile_initiation_only    BOOLEAN NOT NULL DEFAULT FALSE,
     allows_cross_currency     BOOLEAN NOT NULL DEFAULT TRUE,
+    -- When TRUE, employees may raise this type themselves via the
+    -- passwordless employee portal (allow-list; see employee_login_otps).
+    employee_self_service     BOOLEAN NOT NULL DEFAULT FALSE,
     -- Forward reference; matrix lives in Section 1.5
     approval_matrix_ref       UUID,
     -- Legal entity this payment type belongs to (required). A request's
@@ -836,6 +839,9 @@ CREATE TABLE payment_requests (
     payment_type_code           VARCHAR(30) NOT NULL,
     counterparty_id             UUID        REFERENCES counterparties(id) ON DELETE RESTRICT,
     employee_id                 UUID        REFERENCES employees(id) ON DELETE RESTRICT,
+    -- Set when an employee raised the request via the self-service portal
+    -- (created_by stays NULL in that case, as it references a user).
+    raised_by_employee_id       UUID        REFERENCES employees(id) ON DELETE SET NULL,
     currency_code               CHAR(3)     NOT NULL,
     amount                      DECIMAL(20,4) NOT NULL,
     amount_minor                BIGINT      NOT NULL,
@@ -1044,3 +1050,22 @@ CREATE TABLE IF NOT EXISTS employee_bank_account_changes (
 );
 
 CREATE INDEX idx_prd_request ON payment_request_documents(payment_request_id);
+
+-- -----------------------------------------------------------------------
+-- employee_login_otps
+-- Passwordless login for the employee self-service portal. A short-lived,
+-- single-use 6-digit code is emailed to the employee's work_email; only
+-- its hash is stored here. No password is ever persisted for employees.
+-- -----------------------------------------------------------------------
+CREATE TABLE employee_login_otps (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id  UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    code_hash    VARCHAR(255) NOT NULL,
+    expires_at   TIMESTAMPTZ  NOT NULL,
+    consumed_at  TIMESTAMPTZ,
+    attempts     INT          NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_employee_login_otps_employee
+    ON employee_login_otps(employee_id, expires_at);

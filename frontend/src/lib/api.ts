@@ -1,3 +1,5 @@
+import type { PrMessage, PrMessageAttachment, PrParticipant } from '@/types/domain';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 // Backend origin without the /api/vN path — used to construct static file URLs.
 const BACKEND_ORIGIN = API_URL.replace(/\/api\/v\d+\/?$/, '');
@@ -130,9 +132,9 @@ export function friendlyError(err: unknown): string {
 
   // Approval matrix errors
   if (lower.includes('no published approval matrix'))
-    return `No approval matrix is configured for this payment type. Ask your administrator to create and publish one under Masters → Approval Matrices.`;
+    return `No approval matrix is configured for this payment type. Ask your administrator to create and publish one under Payment Types & Approvals.`;
   if (lower.includes('no band') && lower.includes('matrix') && lower.includes('covers'))
-    return 'The payment amount falls outside the bands defined in the approval matrix. Ask your administrator to update the matrix bands under Masters → Approval Matrices.';
+    return 'The payment amount falls outside the bands defined in the approval matrix. Ask your administrator to update the matrix bands under Payment Types & Approvals.';
   // Matrix band-shape validation raised while *saving* a matrix — show the
   // real cause rather than the payment-amount message below.
   if (lower.includes('maxamount') && lower.includes('minamount'))
@@ -191,7 +193,7 @@ export function friendlyError(err: unknown): string {
   if (lower.includes('entity') && lower.includes('not found'))
     return 'The record you are trying to access no longer exists. It may have been deleted.';
   if (lower.includes('no approval') || lower.includes('approval matrix'))
-    return 'No approval matrix is configured for this payment type. Ask your administrator to set one up under Masters → Approval Matrices.';
+    return 'No approval matrix is configured for this payment type. Ask your administrator to set one up under Payment Types & Approvals.';
   if (lower.includes('payment amount') && (lower.includes('band') || lower.includes('range')))
     return 'The payment amount is outside the configured approval bands. Ask your administrator to update the matrix.';
   if (lower.includes('status') && lower.includes('draft'))
@@ -229,5 +231,135 @@ export const api = {
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: (file: File) =>
     uploadRequest<{ url: string; fileName: string }>('/uploads/file', file),
+  /**
+   * Best-effort, local read of an invoice PDF for cross-checking against the
+   * entered values. Advisory only — the file is not stored by this call.
+   */
+  extractInvoice: (file: File) =>
+    uploadRequest<ExtractedInvoice>('/uploads/extract-invoice', file),
+  /**
+   * Best-effort, local read of a bank remittance / SWIFT / MT103 copy for
+   * cross-checking the entered reference + amount. Advisory only; not stored.
+   */
+  extractRemittance: (file: File) =>
+    uploadRequest<ExtractedRemittance>('/uploads/extract-remittance', file),
   postForm: <T>(path: string, formData: FormData) => formRequest<T>(path, formData),
 };
+
+/** Fields read off an uploaded invoice (warn-only cross-check). */
+export interface ExtractedInvoice {
+  readable: boolean;
+  reason?: string;
+  invoiceNumber: string | null;
+  amount: string | null;
+}
+
+/** Fields read off an uploaded remittance / SWIFT / MT103 copy. */
+export interface ExtractedRemittance {
+  readable: boolean;
+  reason?: string;
+  referenceNumber: string | null;
+  amount: string | null;
+}
+
+// ── Stored-file viewing & downloading ──────────────────────────────────────
+// Files live in a private S3 bucket. The backend mints a short-lived presigned
+// URL on demand; the SPA never touches a public object URL. The presign call is
+// realm-specific (staff vs. employee), so it is injected as `PresignFn`.
+
+/** Asks the backend for a short-lived presigned URL for a stored file. */
+export type PresignFn = (
+  fileUrl: string,
+  opts?: { download?: boolean; fileName?: string },
+) => Promise<string>;
+
+/** Staff-realm presign (uses the staff token). */
+export const presignFileUrl: PresignFn = async (fileUrl, opts) => {
+  const params = new URLSearchParams({ url: fileUrl });
+  if (opts?.download) params.set('download', '1');
+  if (opts?.fileName) params.set('fileName', opts.fileName);
+  const res = await api.get<{ url: string }>(`/uploads/presign?${params.toString()}`);
+  return res.url;
+};
+
+/**
+ * Open a stored file inline in a new tab. The blank tab is opened synchronously
+ * (inside the click gesture) to avoid popup blockers, then redirected to the
+ * presigned URL once it resolves.
+ */
+export async function viewFile(fileUrl: string, presign: PresignFn = presignFileUrl): Promise<void> {
+  // Open the tab synchronously (inside the click gesture) so it isn't blocked.
+  // Can't pass 'noopener' here — that returns null and we'd lose the handle —
+  // so sever the opener manually to avoid reverse-tabnabbing.
+  const w = window.open('', '_blank');
+  if (w) { try { w.opener = null; } catch { /* ignore */ } }
+  try {
+    const url = await presign(fileUrl);
+    if (w) w.location.href = url;
+    else window.open(url, '_blank', 'noopener');
+  } catch {
+    if (w) w.close();
+  }
+}
+
+/**
+ * Force a direct download of a stored file. The presigned URL carries
+ * `Content-Disposition: attachment` from S3, so navigating to it saves the file
+ * (with its original name) rather than opening it — no blob/CORS needed.
+ */
+export async function downloadFile(
+  fileUrl: string,
+  fileName?: string,
+  presign: PresignFn = presignFileUrl,
+): Promise<void> {
+  const url = await presign(fileUrl, { download: true, fileName });
+  const a = document.createElement('a');
+  a.href = url;
+  if (fileName) a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// ── Payment Request Chat ────────────────────────────────────────────────────
+
+export function getPrParticipants(id: string): Promise<PrParticipant[]> {
+  return api.get<PrParticipant[]>(`/payment-requests/${id}/messages/participants`);
+}
+
+export function getPaymentRequestMessages(id: string): Promise<PrMessage[]> {
+  return api.get<PrMessage[]>(`/payment-requests/${id}/messages`);
+}
+
+export function sendPaymentRequestMessage(
+  id: string,
+  message: string,
+  attachments: PrMessageAttachment[] = [],
+): Promise<PrMessage> {
+  return api.post<PrMessage>(`/payment-requests/${id}/messages`, { message, attachments });
+}
+
+export interface PrMessageSummary {
+  paymentRequestId: string;
+  messageCount: number;
+  latestAt: string | null;
+}
+
+/** Message counts for all PRs the user participates in (drives dashboard badges). */
+export function getPrMessageSummary(): Promise<PrMessageSummary[]> {
+  return api.get<PrMessageSummary[]>('/payment-request-messages/summary');
+}
+
+const MSG_READ_PREFIX = 'pcs.msgs.';
+
+/** Called when the user opens the chat for a payment request. */
+export function markPrMessagesRead(prId: string): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(`${MSG_READ_PREFIX}${prId}.readAt`, new Date().toISOString());
+}
+
+/** Returns the ISO timestamp of when the user last read the chat for this PR, or null. */
+export function getPrMessagesReadAt(prId: string): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(`${MSG_READ_PREFIX}${prId}.readAt`);
+}

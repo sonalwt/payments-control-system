@@ -1,6 +1,7 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Country } from '../countries/country.entity';
+import { LegalEntity } from '../legal-entities/legal-entity.entity';
 
 @Entity({ name: 'employees' })
 export class Employee extends BaseEntity {
@@ -12,6 +13,15 @@ export class Employee extends BaseEntity {
 
   @Column({ name: 'work_email', type: 'citext' })
   workEmail!: string;
+
+  /** Employing legal entity. Nullable on the master; used to scope which
+   *  self-service payment types an employee may raise. */
+  @Column({ name: 'legal_entity_id', type: 'uuid', nullable: true })
+  legalEntityId?: string | null;
+
+  @ManyToOne(() => LegalEntity, { nullable: true })
+  @JoinColumn({ name: 'legal_entity_id' })
+  legalEntity?: LegalEntity | null;
 
   @Column({ name: 'country_of_employment_id', type: 'uuid' })
   countryOfEmploymentId!: string;

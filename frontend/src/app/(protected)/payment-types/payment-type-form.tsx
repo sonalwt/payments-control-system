@@ -22,7 +22,7 @@ export const paymentTypeSchema = z.object({
   name: z.string().min(2).max(100),
   description: z.string().optional().or(z.literal('')),
   paymentCategoryId: z.string().uuid().optional().or(z.literal('')),
-  legalEntityId: z.string().uuid('Select a legal entity'),
+  legalEntityIds: z.array(z.string().uuid()).min(1, 'Select at least one legal entity'),
   makerRoleIds: z.array(z.string().uuid()).default([]),
   checkerRoleId: z.string().uuid().optional().or(z.literal('')),
   direction: z.enum(['OUTGOING', 'INCOMING']),
@@ -59,7 +59,9 @@ export function PaymentTypeForm({
       name: defaultValues?.name ?? '',
       description: defaultValues?.description ?? '',
       paymentCategoryId: defaultValues?.paymentCategoryId ?? '',
-      legalEntityId: defaultValues?.legalEntityId ?? '',
+      legalEntityIds:
+        defaultValues?.legalEntityIds ??
+        (defaultValues?.legalEntityId ? [defaultValues.legalEntityId] : []),
       makerRoleIds:
         defaultValues?.makerRoleIds ??
         (defaultValues?.makerRoleId ? [defaultValues.makerRoleId] : []),
@@ -97,6 +99,13 @@ export function PaymentTypeForm({
   const roleOptions = (roles ?? []).map((r) => ({ label: r.name, value: r.id }));
 
   const makerRoleIds = watch('makerRoleIds') ?? [];
+  const legalEntityIds = watch('legalEntityIds') ?? [];
+
+  // "Requires approval chain" and "Confidential (chairman-style)" are mutually
+  // exclusive: a confidential type bypasses the approval matrix and goes
+  // straight to the Treasury Authoriser. Selecting one clears the other.
+  const requiresApprovalChain = watch('requiresApprovalChain') ?? false;
+  const isConfidential = watch('isConfidential') ?? false;
 
   const isSystem = defaultValues?.isSystem ?? false;
 
@@ -153,14 +162,60 @@ export function PaymentTypeForm({
         </div>
       </div>
       <div className="space-y-2">
-        <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
-        <Select
-          id="legalEntityId"
-          placeholder="Select legal entity"
-          options={legalEntityOptions}
-          {...register('legalEntityId')}
-        />
-        {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
+        <Label>Legal entities <span className="text-destructive">*</span></Label>
+        <p className="text-xs text-muted-foreground">
+          Select one or more legal entities this payment type belongs to.
+        </p>
+        {legalEntityOptions.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No legal entities available.</p>
+        ) : (
+          <div className="rounded-md border p-3 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer text-sm font-medium border-b pb-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-border"
+                checked={legalEntityOptions.every((le) => legalEntityIds.includes(le.value))}
+                ref={(el) => {
+                  if (el) {
+                    const some = legalEntityOptions.some((le) => legalEntityIds.includes(le.value));
+                    const all = legalEntityOptions.every((le) => legalEntityIds.includes(le.value));
+                    el.indeterminate = some && !all;
+                  }
+                }}
+                onChange={(e) => {
+                  setValue(
+                    'legalEntityIds',
+                    e.target.checked ? legalEntityOptions.map((le) => le.value) : [],
+                    { shouldValidate: true, shouldDirty: true },
+                  );
+                }}
+              />
+              <span>All legal entities</span>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {legalEntityOptions.map((le) => {
+                const selected = legalEntityIds.includes(le.value);
+                return (
+                  <label key={le.value} className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-border"
+                      checked={selected}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? [...legalEntityIds, le.value]
+                          : legalEntityIds.filter((id) => id !== le.value);
+                        setValue('legalEntityIds', next, { shouldValidate: true, shouldDirty: true });
+                      }}
+                    />
+                    <span>{le.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {errors.legalEntityIds && <p className="text-xs text-destructive">{errors.legalEntityIds.message as string}</p>}
       </div>
 
       <div className="space-y-2">
@@ -211,7 +266,16 @@ export function PaymentTypeForm({
         <p className="text-sm font-medium">Workflow behaviour</p>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('requiresApprovalChain')} />
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-border"
+              checked={requiresApprovalChain}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setValue('requiresApprovalChain', on, { shouldDirty: true });
+                if (on) setValue('isConfidential', false, { shouldDirty: true });
+              }}
+            />
             <span>Requires approval chain</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -219,7 +283,16 @@ export function PaymentTypeForm({
             <span>Batch-based (e.g. payroll)</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="h-4 w-4 rounded border-border" {...register('isConfidential')} />
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-border"
+              checked={isConfidential}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setValue('isConfidential', on, { shouldDirty: true });
+                if (on) setValue('requiresApprovalChain', false, { shouldDirty: true });
+              }}
+            />
             <span>Confidential (chairman-style)</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -235,6 +308,13 @@ export function PaymentTypeForm({
             <span>Active</span>
           </label>
         </div>
+        {isConfidential && (
+          <p className="text-xs text-muted-foreground">
+            Confidential payments skip the approval matrix and go directly to the Treasury
+            Authoriser, who captures the reference number + SWIFT/MT103 copy and marks the
+            payment completed.
+          </p>
+        )}
       </div>
 
       <DialogFooter>

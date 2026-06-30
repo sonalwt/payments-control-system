@@ -14,12 +14,15 @@ import {
   Users2,
   ArrowRight,
   Hourglass,
+  AlertTriangle,
+  MessageCircle,
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { hourInDubai } from '@/lib/datetime';
 import { useAuth } from '@/hooks/use-auth';
 import { useNotify } from '@/hooks/use-notify';
+import { usePrMessageSummary, type PrMessageInfo } from '@/hooks/use-pr-message-summary';
 import type {
   Paginated,
   Group,
@@ -31,6 +34,13 @@ import type {
 } from '@/types/domain';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,11 +133,31 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
-function PrRow({ pr }: { pr: PaymentRequest }) {
+function MsgBadge({ info }: { info: PrMessageInfo | null }) {
+  if (!info) return null;
+  return (
+    <span
+      title={`${info.count} chat message${info.count !== 1 ? 's' : ''}${info.isNew ? ' — new' : ''}`}
+      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+        info.isNew
+          ? 'bg-indigo-100 text-indigo-700'
+          : 'bg-slate-100 text-slate-500'
+      }`}
+    >
+      <MessageCircle className="h-2.5 w-2.5" />
+      {info.isNew ? 'NEW' : info.count}
+    </span>
+  );
+}
+
+function PrRow({ pr, msgInfo }: { pr: PaymentRequest; msgInfo?: PrMessageInfo | null }) {
   return (
     <li className="flex items-center gap-3 py-2 border-b last:border-0">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{pr.requestNumber}</p>
+        <p className="text-sm font-medium truncate flex items-center gap-1.5">
+          {pr.requestNumber}
+          <MsgBadge info={msgInfo ?? null} />
+        </p>
         <p className="text-xs text-muted-foreground">
           {pr.paymentType?.code ?? '—'} · {pr.currency?.code ?? '—'}{' '}
           {Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -146,9 +176,11 @@ function PrRow({ pr }: { pr: PaymentRequest }) {
 // What the viewer needs to do, by the request's current status.
 const ACTION_LABEL: Record<string, string> = {
   PENDING_APPROVAL: 'Awaiting your approval',
-  TREASURY_MAKER: 'Add reference no. + SWIFT/MT103',
+  TREASURY_MAKER: 'Select account + upload Online TT',
   TREASURY_CHECKER: 'Awaiting your check',
   TREASURY_AUTHORISER: 'Awaiting your authorisation',
+  TREASURY_SWIFT: 'Upload SWIFT copy + reference',
+  AWAITING_CLOSURE: 'Close the payment request',
 };
 
 /**
@@ -165,6 +197,7 @@ function NeedsAttention(): React.ReactElement | null {
         '/payment-requests?awaitingAction=true&page=1&limit=8',
       ),
   });
+  const getMsgInfo = usePrMessageSummary();
   const rows = data?.data ?? [];
   if (rows.length === 0) return null;
   return (
@@ -180,7 +213,10 @@ function NeedsAttention(): React.ReactElement | null {
           {rows.map((pr) => (
             <li key={pr.id} className="flex items-center gap-3 border-b py-2 last:border-0">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{pr.requestNumber}</p>
+                <p className="truncate text-sm font-medium flex items-center gap-1.5">
+                  {pr.requestNumber}
+                  <MsgBadge info={getMsgInfo(pr.id)} />
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {pr.paymentType?.code ?? '—'} · {pr.currency?.code ?? '—'}{' '}
                   {Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -199,6 +235,79 @@ function NeedsAttention(): React.ReactElement | null {
         </ul>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Admin alert: group-own bank accounts whose remaining balance has dropped
+ * below their configured minimum balance. Shown as a compact "Urgent attention"
+ * banner; clicking it opens a popup with the breaching accounts. Renders nothing
+ * when all accounts are healthy. Admin-only (the endpoint requires SUPER_ADMIN).
+ */
+function LowBalanceAlert(): React.ReactElement | null {
+  const { data } = useQuery({
+    queryKey: ['bank-accounts-below-minimum'],
+    queryFn: () => api.get<BankAccount[]>('/bank-accounts/below-minimum'),
+  });
+  const rows = data ?? [];
+  if (rows.length === 0) return null;
+  const money = (n: number | string): string =>
+    Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-left transition-colors hover:bg-red-100"
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100">
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-red-800">Urgent attention</span>
+            <span className="block text-xs text-red-700">
+              {rows.length} bank account{rows.length > 1 ? 's are' : ' is'} below minimum balance — click to review
+            </span>
+          </span>
+          <span className="shrink-0 rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold text-white">
+            {rows.length}
+          </span>
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-800">
+            <AlertTriangle className="h-5 w-5" />
+            Accounts below minimum balance
+          </DialogTitle>
+        </DialogHeader>
+        <ul className="max-h-[60vh] divide-y overflow-y-auto">
+          {rows.map((a) => {
+            const ccy = a.currency?.code ? `${a.currency.code} ` : '';
+            const bank = a.bankNickname ?? a.bankName ?? 'Account';
+            const shortfall = Number(a.minimumBalance) - Number(a.remainingBalance);
+            return (
+              <li key={a.id} className="flex items-center gap-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{bank} · {a.accountNumber}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Balance {ccy}{money(a.remainingBalance)} · minimum {ccy}{money(a.minimumBalance)}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
+                  short {ccy}{money(shortfall)}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="flex justify-end">
+          <Link href="/bank-accounts">
+            <Button size="sm" variant="outline">Go to Bank Accounts</Button>
+          </Link>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -296,10 +405,14 @@ function AdminDashboard() {
       ),
   });
 
+  const getMsgInfo = usePrMessageSummary();
   const bankAccountCount = useCount<BankAccount>('/bank-accounts');
 
   return (
     <div className="space-y-8">
+      {/* Low-balance admin alert */}
+      <LowBalanceAlert />
+
       {/* Payment Stats */}
       <div className="space-y-3">
         <SectionHeading>Payment Requests</SectionHeading>
@@ -342,7 +455,7 @@ function AdminDashboard() {
           <Card className="p-4">
             <ul>
               {pendingList.data.map((pr) => (
-                <PrRow key={pr.id} pr={pr} />
+                <PrRow key={pr.id} pr={pr} msgInfo={getMsgInfo(pr.id)} />
               ))}
             </ul>
           </Card>
@@ -357,14 +470,6 @@ function ApproverDashboard() {
   const approved = usePrCount('TREASURY_MAKER');
   const paid = usePrCount('COMPLETED');
 
-  const { data: pendingList } = useQuery({
-    queryKey: ['dashboard-pending-approvals'],
-    queryFn: () =>
-      api.get<Paginated<PaymentRequest>>(
-        '/payment-requests?status=PENDING_APPROVAL&page=1&limit=8',
-      ),
-  });
-
   return (
     <div className="space-y-8">
       <div className="space-y-3">
@@ -374,28 +479,6 @@ function ApproverDashboard() {
           <StatTile label="In Treasury (Total)" value={approved} icon={CheckCircle2} href="/payment-requests?status=TREASURY_MAKER" />
           <StatTile label="Completed (Total)" value={paid} icon={BadgeCheck} href="/payment-requests?status=COMPLETED" />
         </div>
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <SectionHeading>Requests Pending Your Approval</SectionHeading>
-          <Link href="/payment-requests?status=PENDING_APPROVAL">
-            <Button variant="ghost" size="sm" className="h-6 text-xs">View all</Button>
-          </Link>
-        </div>
-        {pendingList && pendingList.data.length > 0 ? (
-          <Card className="p-4">
-            <ul>
-              {pendingList.data.map((pr) => (
-                <PrRow key={pr.id} pr={pr} />
-              ))}
-            </ul>
-          </Card>
-        ) : (
-          <Card className="p-6 text-center text-sm text-muted-foreground">
-            No payment requests are currently pending approval.
-          </Card>
-        )}
       </div>
     </div>
   );
@@ -436,6 +519,7 @@ function InitiatorDashboard() {
   const pendingApproval = usePrCount('PENDING_APPROVAL');
   const approved = usePrCount('TREASURY_MAKER');
   const paid = usePrCount('COMPLETED');
+  const getMsgInfo = usePrMessageSummary();
 
   const { data: myDrafts } = useQuery({
     queryKey: ['dashboard-my-drafts'],
@@ -468,7 +552,7 @@ function InitiatorDashboard() {
           <Card className="p-4">
             <ul>
               {myDrafts.data.map((pr) => (
-                <PrRow key={pr.id} pr={pr} />
+                <PrRow key={pr.id} pr={pr} msgInfo={getMsgInfo(pr.id)} />
               ))}
             </ul>
           </Card>
@@ -482,6 +566,7 @@ function MakerCheckerDashboard({ role }: { role: 'PAYMENTS_MAKER' | 'PAYMENTS_CH
   const approved = usePrCount('TREASURY_MAKER');
   const awaitingPayment = usePrCount('TREASURY_CHECKER');
   const paid = usePrCount('COMPLETED');
+  const getMsgInfo = usePrMessageSummary();
 
   const { data: readyList } = useQuery({
     queryKey: ['dashboard-ready-to-release'],
@@ -523,7 +608,7 @@ function MakerCheckerDashboard({ role }: { role: 'PAYMENTS_MAKER' | 'PAYMENTS_CH
           <Card className="p-4">
             <ul>
               {readyList.data.map((pr) => (
-                <PrRow key={pr.id} pr={pr} />
+                <PrRow key={pr.id} pr={pr} msgInfo={getMsgInfo(pr.id)} />
               ))}
             </ul>
           </Card>

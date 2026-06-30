@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Eye, Lock, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Paginated, PaymentType, Role } from '@/types/domain';
+import type { ApprovalMatrix, LegalEntity, Paginated, PaymentType, Role } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,7 +18,7 @@ import {
 import { useNotify } from '@/hooks/use-notify';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
-import { PaymentTypeForm, type PaymentTypeFormData } from './payment-type-form';
+import { PaymentTypeMasterForm, type PaymentTypeMasterSubmit } from './payment-type-master-form';
 
 const KEY = 'payment-types';
 
@@ -35,7 +35,20 @@ function makerRolesText(pt: PaymentType, roleNameById: Map<string, string>): str
   return pt.makerRole?.name ?? '—';
 }
 
-function PaymentTypeDetails({ pt, makerLabel }: { pt: PaymentType; makerLabel: string }): React.ReactElement {
+/** Resolve a payment type's legal entity IDs to a comma-separated label. */
+function legalEntitiesText(pt: PaymentType, leNameById: Map<string, string>): string {
+  const ids =
+    pt.legalEntityIds && pt.legalEntityIds.length
+      ? pt.legalEntityIds
+      : pt.legalEntityId
+        ? [pt.legalEntityId]
+        : [];
+  const names = ids.map((id) => leNameById.get(id)).filter(Boolean) as string[];
+  if (names.length) return names.join(', ');
+  return pt.legalEntity?.name ?? '—';
+}
+
+function PaymentTypeDetails({ pt, makerLabel, legalEntityLabel }: { pt: PaymentType; makerLabel: string; legalEntityLabel: string }): React.ReactElement {
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2 text-sm">
       <div className="grid grid-cols-2 gap-3">
@@ -55,8 +68,8 @@ function PaymentTypeDetails({ pt, makerLabel }: { pt: PaymentType; makerLabel: s
           <p>{pt.paymentCategory?.name ?? '—'}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Legal entity</p>
-          <p>{pt.legalEntity?.name ?? '—'}</p>
+          <p className="text-xs text-muted-foreground">Legal entities</p>
+          <p>{legalEntityLabel}</p>
         </div>
         <div>
           <p className="text-xs text-muted-foreground">Direction</p>
@@ -140,19 +153,61 @@ export default function PaymentTypesPage(): React.ReactElement {
     [roles],
   );
 
+  const { data: legalEntities } = useQuery({
+    queryKey: ['legal-entities-all'],
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
+  });
+  const leNameById = useMemo(
+    () => new Map((legalEntities?.data ?? []).map((le) => [le.id, le.name])),
+    [legalEntities],
+  );
+
+  // Existing approval matrix for the type being edited, so the combined form
+  // can prefill it and we know whether to PUT (update) or POST (create) it.
+  // Filtered client-side from the matrices list so the backend stays untouched.
+  const { data: allMatrices } = useQuery({
+    queryKey: ['approval-matrices', 'all-for-master'],
+    queryFn: () => api.get<Paginated<ApprovalMatrix>>('/approval-matrices?page=1&limit=200'),
+    enabled: !!editing,
+  });
+  const editingMatrix = editing
+    ? allMatrices?.data.find((m) => m.paymentTypeId === editing.id) ?? null
+    : null;
+
+  // Invalidate both catalogues — a single save can touch both tables.
+  const invalidateBoth = (): void => {
+    void qc.invalidateQueries({ queryKey: [KEY] });
+    void qc.invalidateQueries({ queryKey: ['approval-matrices'] });
+  };
+
   const createMut = useMutation({
-    mutationFn: (i: PaymentTypeFormData) => api.post<PaymentType>('/payment-types', i),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setCreateOpen(false); notify.success('Payment type created'); },
+    mutationFn: async (s: PaymentTypeMasterSubmit) => {
+      const pt = await api.post<PaymentType>('/payment-types', s.paymentType);
+      if (s.matrix) {
+        await api.post<ApprovalMatrix>('/approval-matrices', { ...s.matrix, paymentTypeId: pt.id });
+      }
+      return pt;
+    },
+    onSuccess: () => { invalidateBoth(); setCreateOpen(false); notify.success('Payment type created'); },
     onError: (e: Error) => notify.error('Create failed', e),
   });
   const updateMut = useMutation({
-    mutationFn: ({ id, i }: { id: string; i: PaymentTypeFormData }) => api.put<PaymentType>(`/payment-types/${id}`, i),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setEditing(null); notify.success('Updated'); },
+    mutationFn: async ({ id, s, matrixId }: { id: string; s: PaymentTypeMasterSubmit; matrixId: string | null }) => {
+      await api.put<PaymentType>(`/payment-types/${id}`, s.paymentType);
+      if (s.matrix) {
+        if (matrixId) {
+          await api.put<ApprovalMatrix>(`/approval-matrices/${matrixId}`, { ...s.matrix, paymentTypeId: id });
+        } else {
+          await api.post<ApprovalMatrix>('/approval-matrices', { ...s.matrix, paymentTypeId: id });
+        }
+      }
+    },
+    onSuccess: () => { invalidateBoth(); setEditing(null); notify.success('Updated'); },
     onError: (e: Error) => notify.error('Update failed', e),
   });
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.del<void>(`/payment-types/${id}`),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setDeleting(null); notify.success('Deleted'); },
+    onSuccess: () => { invalidateBoth(); setDeleting(null); notify.success('Deleted'); },
     onError: (e: Error) => notify.error('Delete failed', e),
   });
 
@@ -166,9 +221,9 @@ export default function PaymentTypesPage(): React.ReactElement {
             <DialogTrigger asChild>
               <Button><Plus className="mr-2 h-4 w-4" /> New payment type</Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-2xl">
+            <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
               <DialogHeader><DialogTitle>Create payment type</DialogTitle></DialogHeader>
-              <PaymentTypeForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              <PaymentTypeMasterForm submitting={createMut.isPending} onSubmit={(s) => createMut.mutate(s)} />
             </DialogContent>
           </Dialog>
         }
@@ -206,7 +261,7 @@ export default function PaymentTypesPage(): React.ReactElement {
                     {pt.isSystem && <Lock className="h-3 w-3 text-muted-foreground" />}
                   </span>
                 </TableCell>
-                <TableCell className="text-sm">{pt.legalEntity?.name ?? '—'}</TableCell>
+                <TableCell className="text-sm">{legalEntitiesText(pt, leNameById)}</TableCell>
                 <TableCell>
                   <span
                     className={
@@ -267,17 +322,20 @@ export default function PaymentTypesPage(): React.ReactElement {
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader><DialogTitle>Payment type details</DialogTitle></DialogHeader>
-          {viewing && <PaymentTypeDetails pt={viewing} makerLabel={makerRolesText(viewing, roleNameById)} />}
+          {viewing && <PaymentTypeDetails pt={viewing} makerLabel={makerRolesText(viewing, roleNameById)} legalEntityLabel={legalEntitiesText(viewing, leNameById)} />}
         </DialogContent>
       </Dialog>
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit payment type</DialogTitle></DialogHeader>
           {editing && (
-            <PaymentTypeForm
-              defaultValues={editing}
+            <PaymentTypeMasterForm
+              // Remount when the matrix finishes loading so its values prefill.
+              key={editingMatrix?.id ?? editing.id}
+              paymentType={editing}
+              matrix={editingMatrix}
               submitting={updateMut.isPending}
-              onSubmit={(d) => updateMut.mutate({ id: editing.id, i: d })}
+              onSubmit={(s) => updateMut.mutate({ id: editing.id, s, matrixId: editingMatrix?.id ?? null })}
             />
           )}
         </DialogContent>

@@ -86,6 +86,24 @@ export class CreateApprovalMatrixDto {
   @IsEnum(['ONLINE_TT', 'OFFLINE_TT'])
   ttMode!: 'ONLINE_TT' | 'OFFLINE_TT';
 
+  // Treasury-stage roles. For a standard (approval-chain) matrix all three are
+  // required; for a confidential payment type only the authoriser applies.
+  // The required set is enforced in the service based on the payment type.
+  @ApiPropertyOptional({ description: 'Role UUID that acts as the Treasury Maker (standard matrices)' })
+  @IsOptional()
+  @IsUUID()
+  treasuryMakerRoleId?: string;
+
+  @ApiPropertyOptional({ description: 'Role UUID that acts as the Treasury Checker (standard matrices)' })
+  @IsOptional()
+  @IsUUID()
+  treasuryCheckerRoleId?: string;
+
+  @ApiPropertyOptional({ description: 'Role UUID that acts as the Treasury Authoriser' })
+  @IsOptional()
+  @IsUUID()
+  treasuryAuthoriserRoleId?: string;
+
   @ApiProperty({ example: '2026-01-01' })
   @IsDateString()
   effectiveFrom!: string;
@@ -95,12 +113,14 @@ export class CreateApprovalMatrixDto {
   @IsDateString()
   effectiveTo?: string;
 
-  @ApiProperty({ type: [BandDto] })
+  // Required for standard matrices; omitted for confidential payment types
+  // (which carry only the authoriser role). Enforced in the service.
+  @ApiPropertyOptional({ type: [BandDto] })
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => BandDto)
-  bands!: BandDto[];
+  bands?: BandDto[];
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()

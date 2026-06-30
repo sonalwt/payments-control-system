@@ -6,6 +6,8 @@ import { usePathname } from 'next/navigation';
 import {
   BadgeCheck, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard, Database, FileType2, FolderTree, Globe2, GitBranch, Handshake,
   Landmark, ListChecks, LogOut, ScrollText, ShieldCheck, Users2, Wallet2, UserCheck,
+  BadgeCheck, Banknote, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard, Database, FileSearch, FileType2, FolderTree, Globe2, Handshake,
+  Landmark, ListChecks, LogOut, Receipt, ScrollText, ShieldCheck, TrendingUp, Users2, Wallet2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -37,6 +39,7 @@ const NAV_GROUPS: NavGroup[] = [
     roles: [RoleCode.SUPER_ADMIN],
     items: [
       { href: '/currencies',     label: 'Currencies',     icon: Coins },
+      { href: '/fx-rates',       label: 'FX Rates',       icon: TrendingUp },
       { href: '/countries',      label: 'Countries',      icon: Globe2 },
       { href: '/legal-entities', label: 'Legal Entities', icon: Building2 },
       { href: '/user-roles',     label: 'Roles',          icon: ShieldCheck },
@@ -47,8 +50,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/bank-accounts',  label: 'Bank Accounts',  icon: Landmark },
       { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: Wallet2 },
       { href: '/payment-categories', label: 'Payment Categories', icon: FolderTree },
-      { href: '/payment-types',      label: 'Payment Types',      icon: FileType2 },
-      { href: '/approval-matrices',  label: 'Approval Matrices',  icon: GitBranch },
+      { href: '/payment-types',      label: 'Payment Types & Approvals', icon: FileType2 },
     ],
   },
   {
@@ -67,6 +69,16 @@ const NAV_GROUPS: NavGroup[] = [
     // to access matrices and create payment requests they're eligible for.
     items: [
       { href: '/payment-requests',     label: 'Payment Requests',     icon: CreditCard },
+      { href: '/incoming-receipts',    label: 'Incoming Receipts',    icon: Receipt, roles: [RoleCode.SUPER_ADMIN] },
+    ],
+  },
+  {
+    label: 'Reconciliation',
+    icon: Banknote,
+    roles: [RoleCode.SUPER_ADMIN],
+    items: [
+      { href: '/statement-uploads',         label: 'Statement Uploads',        icon: Landmark },
+      { href: '/reconciliation-exceptions', label: 'Reconciliation Exceptions', icon: FileSearch },
     ],
   },
   {
@@ -165,7 +177,9 @@ export function Sidebar(): React.ReactElement {
               </button>
               {open && (
                 <div className="mt-1 space-y-1 border-l border-border pl-3 ml-4">
-                  {group.items.map((item) => {
+                  {group.items
+                    .filter((item) => !item.roles || hasAnyRole(user?.roles, item.roles))
+                    .map((item) => {
                     const Icon = item.icon;
                     const active = isActive(pathname, item.href);
                     return (

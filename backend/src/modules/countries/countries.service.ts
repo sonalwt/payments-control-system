@@ -6,7 +6,6 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Country } from './country.entity';
-import { Currency } from '../currencies/currency.entity';
 import { CreateCountryDto } from './dto/create-country.dto';
 import { UpdateCountryDto } from './dto/update-country.dto';
 import {
@@ -19,7 +18,6 @@ import { ImportResult, parseImportFile } from '../../common/helpers/parse-import
 export class CountriesService {
   constructor(
     @InjectRepository(Country) private readonly repo: Repository<Country>,
-    @InjectRepository(Currency) private readonly currencyRepo: Repository<Currency>,
   ) {}
 
   async create(dto: CreateCountryDto, actorId: string): Promise<Country> {
@@ -32,7 +30,6 @@ export class CountriesService {
       countryName: dto.countryName,
       countryShortName: dto.countryShortName,
       code: dto.code,
-      currencyId: dto.currencyId,
       isActive: dto.isActive ?? true,
       isSanctioned: dto.isSanctioned ?? false,
       createdBy: actorId,
@@ -45,7 +42,6 @@ export class CountriesService {
     const { page = 1, limit = 20, search } = query;
     const qb = this.repo
       .createQueryBuilder('c')
-      .leftJoinAndSelect('c.currency', 'currency')
       .orderBy('c.countryName', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -66,10 +62,7 @@ export class CountriesService {
   }
 
   async findOne(id: string): Promise<Country> {
-    const c = await this.repo.findOne({
-      where: { id },
-      relations: ['currency'],
-    });
+    const c = await this.repo.findOne({ where: { id } });
     if (!c) throw new NotFoundException(`Country ${id} not found`);
     return c;
   }
@@ -101,8 +94,6 @@ export class CountriesService {
 
   async bulkImport(file: Express.Multer.File, actorId: string): Promise<ImportResult> {
     const rows = parseImportFile(file);
-    const currencies = await this.currencyRepo.find({ select: ['id', 'code'] });
-    const currencyMap = new Map(currencies.filter(c => c.code).map((c) => [c.code!.toUpperCase(), c.id]));
     const result: ImportResult = { created: 0, skipped: 0, errors: [] };
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -112,11 +103,8 @@ export class CountriesService {
       if (!countryShortName) { result.errors.push({ row: i + 2, message: 'country_short_name is required' }); result.skipped++; continue; }
       const code = (row['code'] ?? '').toUpperCase();
       if (!code) { result.errors.push({ row: i + 2, message: 'code is required' }); result.skipped++; continue; }
-      const currencyCode = (row['currency_code'] ?? '').toUpperCase();
-      const currencyId = currencyMap.get(currencyCode);
-      if (!currencyId) { result.errors.push({ row: i + 2, message: `Currency code "${currencyCode}" not found` }); result.skipped++; continue; }
       try {
-        await this.create({ countryName, countryShortName, code, currencyId, isActive: row['is_active'] !== 'false', isSanctioned: row['is_sanctioned'] === 'true' }, actorId);
+        await this.create({ countryName, countryShortName, code, isActive: row['is_active'] !== 'false', isSanctioned: row['is_sanctioned'] === 'true' }, actorId);
         result.created++;
       } catch (e: unknown) {
         result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });

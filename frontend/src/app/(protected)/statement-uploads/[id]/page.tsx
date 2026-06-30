@@ -8,11 +8,14 @@ import {
   ArrowLeft,
   CheckCircle2,
   Download,
+  Eye,
+  Loader2,
   PlayCircle,
   RefreshCw,
   Unlink,
 } from 'lucide-react';
-import { api, friendlyError, resolveFileUrl } from '@/lib/api';
+import { api, downloadFile, friendlyError } from '@/lib/api';
+import { useFilePreview } from '@/components/shared/use-file-preview';
 import { formatDateMedium } from '@/lib/datetime';
 import type {
   StatementLine,
@@ -76,6 +79,8 @@ export default function StatementUploadDetailPage(): React.ReactElement {
   const id = params.id;
   const qc = useQueryClient();
   const notify = useNotify();
+
+  const { openPreview, preview, loading: previewLoading } = useFilePreview();
 
   const [unmatchTarget, setUnmatchTarget] = useState<StatementLine | null>(null);
   const [unmatchReason, setUnmatchReason] = useState('');
@@ -175,12 +180,23 @@ export default function StatementUploadDetailPage(): React.ReactElement {
               </Button>
             </Link>
             {data?.fileUrl && (
-              <a href={resolveFileUrl(data.fileUrl)} target="_blank" rel="noopener noreferrer">
-                <Button variant="outline" size="sm">
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={previewLoading}
+                  onClick={() => { void openPreview(data.fileUrl); }}
+                >
+                  {previewLoading
+                    ? <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    : <Eye className="mr-1 h-4 w-4" />}
+                  View
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { void downloadFile(data.fileUrl); }}>
                   <Download className="mr-1 h-4 w-4" />
                   Download
                 </Button>
-              </a>
+              </>
             )}
             {data && ingestionStatus === 'UPLOADED' && (
               <Button
@@ -208,6 +224,8 @@ export default function StatementUploadDetailPage(): React.ReactElement {
           </div>
         }
       />
+
+      {preview}
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <SummaryCard

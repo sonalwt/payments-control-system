@@ -14,7 +14,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-class AttachDocumentDto {
+export class AttachDocumentDto {
   @ApiProperty({ example: 'INVOICE' })
   @IsString()
   @Length(2, 50)
@@ -74,7 +74,15 @@ export class CreatePaymentRequestDto {
   @IsUUID()
   beneficiaryAccountId?: string;
 
-  @ApiPropertyOptional({ description: 'Source bank account (group own) from which the payment is to be made.' })
+  @ApiPropertyOptional({
+    description:
+      'Legal entity the payment is made on behalf of (chosen by the maker from the payment type\'s legal entities). The request currency must be one of this entity\'s bank-account currencies.',
+  })
+  @IsOptional()
+  @IsUUID()
+  legalEntityId?: string;
+
+  @ApiPropertyOptional({ description: 'Source bank account (group own). Picked by the Treasury Maker, not the initiator.' })
   @IsOptional()
   @IsUUID()
   sourceAccountId?: string;

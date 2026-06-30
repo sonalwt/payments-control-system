@@ -9,6 +9,7 @@ import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
 import { ApprovalMatrix } from './approval-matrix.entity';
 import { ApprovalMatrixBand } from './approval-matrix-band.entity';
 import { ApprovalMatrixStep } from './approval-matrix-step.entity';
+import { PaymentType } from '../payment-types/payment-type.entity';
 import { CreateApprovalMatrixDto } from './dto/create-approval-matrix.dto';
 import { UpdateApprovalMatrixDto } from './dto/update-approval-matrix.dto';
 import {
@@ -28,7 +29,7 @@ export class ApprovalMatricesService {
 
   /** Validate band shape: at most one open-ended band (no maxAmount), and
    *  every step references exactly one of approverUserId/approverRoleId. */
-  private validateBands(bands: CreateApprovalMatrixDto['bands']): void {
+  private validateBands(bands: NonNullable<CreateApprovalMatrixDto['bands']>): void {
     const openEnded = bands.filter((b) => b.maxAmount == null);
     if (openEnded.length > 1) {
       throw new BadRequestException('At most one open-ended band is allowed');
@@ -56,8 +57,33 @@ export class ApprovalMatricesService {
     }
   }
 
+  /** Whether the given payment type is confidential (chairman-style). */
+  private async isConfidentialType(paymentTypeId: string): Promise<boolean> {
+    const pt = await this.dataSource.getRepository(PaymentType).findOne({
+      where: { id: paymentTypeId },
+      select: ['id', 'isConfidential'],
+    });
+    return !!pt?.isConfidential;
+  }
+
   async create(dto: CreateApprovalMatrixDto, actorId: string): Promise<ApprovalMatrix> {
-    this.validateBands(dto.bands);
+    const confidential = await this.isConfidentialType(dto.paymentTypeId);
+    // Confidential types carry only the authoriser role and no bands; standard
+    // matrices need bands + all three treasury-stage roles.
+    if (confidential) {
+      if (!dto.treasuryAuthoriserRoleId) {
+        throw new BadRequestException('A Treasury Authoriser role is required for confidential payment types.');
+      }
+    } else {
+      if (!dto.bands?.length) {
+        throw new BadRequestException('At least one band is required.');
+      }
+      this.validateBands(dto.bands);
+      if (!dto.treasuryMakerRoleId || !dto.treasuryCheckerRoleId || !dto.treasuryAuthoriserRoleId) {
+        throw new BadRequestException('Treasury maker, checker and authoriser roles are required.');
+      }
+    }
+
     const dup = await this.repo.findOne({
       where: {
         paymentTypeId: dto.paymentTypeId,
@@ -81,13 +107,16 @@ export class ApprovalMatricesService {
         effectiveTo: dto.effectiveTo ?? null,
         isActive: dto.isActive ?? true,
         ttMode: dto.ttMode,
+        treasuryMakerRoleId: confidential ? null : (dto.treasuryMakerRoleId ?? null),
+        treasuryCheckerRoleId: confidential ? null : (dto.treasuryCheckerRoleId ?? null),
+        treasuryAuthoriserRoleId: dto.treasuryAuthoriserRoleId ?? null,
         createdBy: actorId,
         updatedBy: actorId,
       });
       const saved = await em.save(matrix);
 
       // sort bands by min amount for deterministic ordering
-      const sortedBands = [...dto.bands].sort((a, b) => a.minAmount - b.minAmount);
+      const sortedBands = [...(dto.bands ?? [])].sort((a, b) => a.minAmount - b.minAmount);
       for (let i = 0; i < sortedBands.length; i++) {
         const band = sortedBands[i];
         const bandEntity = em.create(ApprovalMatrixBand, {
@@ -179,6 +208,9 @@ export class ApprovalMatricesService {
       .leftJoinAndSelect('paymentType.makerRole', 'paymentTypeMakerRole')
       .leftJoinAndSelect('paymentType.checkerRole', 'paymentTypeCheckerRole')
       .leftJoinAndSelect('m.currency', 'currency')
+      .leftJoinAndSelect('m.treasuryMakerRole', 'treasuryMakerRole')
+      .leftJoinAndSelect('m.treasuryCheckerRole', 'treasuryCheckerRole')
+      .leftJoinAndSelect('m.treasuryAuthoriserRole', 'treasuryAuthoriserRole')
       .leftJoinAndSelect('m.bands', 'band')
       .leftJoinAndSelect('band.steps', 'step')
       .leftJoinAndSelect('step.approverUser', 'approverUser')
@@ -199,6 +231,9 @@ export class ApprovalMatricesService {
       .leftJoinAndSelect('paymentType.makerRole', 'paymentTypeMakerRole')
       .leftJoinAndSelect('paymentType.checkerRole', 'paymentTypeCheckerRole')
       .leftJoinAndSelect('m.currency', 'currency')
+      .leftJoinAndSelect('m.treasuryMakerRole', 'treasuryMakerRole')
+      .leftJoinAndSelect('m.treasuryCheckerRole', 'treasuryCheckerRole')
+      .leftJoinAndSelect('m.treasuryAuthoriserRole', 'treasuryAuthoriserRole')
       .leftJoinAndSelect('m.bands', 'band')
       .leftJoinAndSelect('band.steps', 'step')
       .leftJoinAndSelect('step.approverUser', 'approverUser')
@@ -216,8 +251,10 @@ export class ApprovalMatricesService {
   }
 
   async update(id: string, dto: UpdateApprovalMatrixDto, actorId: string): Promise<ApprovalMatrix> {
-    await this.findOne(id);
-    if (dto.bands) this.validateBands(dto.bands);
+    const existing = await this.findOne(id);
+    if (dto.bands?.length) this.validateBands(dto.bands);
+
+    const confidential = await this.isConfidentialType(dto.paymentTypeId ?? existing.paymentTypeId);
 
     return this.dataSource.transaction(async (em) => {
       const matrix = await em.findOne(ApprovalMatrix, { where: { id } });
@@ -232,6 +269,10 @@ export class ApprovalMatricesService {
         effectiveTo: dto.effectiveTo ?? matrix.effectiveTo,
         isActive: dto.isActive ?? matrix.isActive,
         ttMode: dto.ttMode ?? matrix.ttMode,
+        // Confidential matrices carry no maker/checker.
+        treasuryMakerRoleId: confidential ? null : (dto.treasuryMakerRoleId ?? matrix.treasuryMakerRoleId),
+        treasuryCheckerRoleId: confidential ? null : (dto.treasuryCheckerRoleId ?? matrix.treasuryCheckerRoleId),
+        treasuryAuthoriserRoleId: dto.treasuryAuthoriserRoleId ?? matrix.treasuryAuthoriserRoleId,
         updatedBy: actorId,
       });
       await em.save(matrix);
@@ -269,9 +310,13 @@ export class ApprovalMatricesService {
   }
 
   async remove(id: string, actorId: string): Promise<void> {
-    const matrix = await this.findOne(id);
-    matrix.updatedBy = actorId;
-    await this.repo.save(matrix);
-    await this.repo.softRemove(matrix);
+    await this.findOne(id); // 404 if it doesn't exist
+    // Soft-delete the matrix header only. We use softDelete (a criteria-based
+    // UPDATE of deleted_at) rather than softRemove(entity): softRemove would
+    // cascade into the loaded bands/steps, which have no deleted_at column and
+    // raise MissingDeleteDateColumnError. Bands/steps are only ever read via a
+    // live matrix, so soft-deleting the header is sufficient.
+    await this.repo.update(id, { updatedBy: actorId });
+    await this.repo.softDelete(id);
   }
 }

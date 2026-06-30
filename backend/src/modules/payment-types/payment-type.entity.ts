@@ -43,6 +43,11 @@ export class PaymentType extends BaseEntity {
   @Column({ name: 'mobile_initiation_only', type: 'boolean', default: false })
   mobileInitiationOnly!: boolean;
 
+  /** When true, employees may raise this type themselves via the
+   *  passwordless employee portal (allow-list, enforced server-side). */
+  @Column({ name: 'employee_self_service', type: 'boolean', default: false })
+  employeeSelfService!: boolean;
+
   @Column({ name: 'allows_cross_currency', type: 'boolean', default: true })
   allowsCrossCurrency!: boolean;
 
@@ -71,12 +76,21 @@ export class PaymentType extends BaseEntity {
   @JoinColumn({ name: 'payment_category_id' })
   paymentCategory?: PaymentCategory | null;
 
-  @Column({ name: 'legal_entity_id', type: 'uuid' })
-  legalEntityId!: string;
+  // Legal entities this payment type belongs to. A type may now span several
+  // legal entities; `legal_entity_ids` is the source of truth and
+  // `legal_entity_id` is kept in sync with the first entry as a denormalised
+  // "primary" for legacy single-entity consumers. Optional: confidential
+  // (chairman-style) types are not tied to a legal entity. Required (at least
+  // one) for all non-confidential types (enforced in the DTO).
+  @Column({ name: 'legal_entity_ids', type: 'uuid', array: true, default: () => "'{}'" })
+  legalEntityIds!: string[];
+
+  @Column({ name: 'legal_entity_id', type: 'uuid', nullable: true })
+  legalEntityId?: string | null;
 
   @ManyToOne(() => LegalEntity, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'legal_entity_id' })
-  legalEntity?: LegalEntity;
+  legalEntity?: LegalEntity | null;
 
   // Maker roles — a payment type may have several maker roles; any user
   // holding one of them can create requests for this type. `maker_role_ids`

@@ -7,12 +7,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { Country, Currency, Paginated } from '@/types/domain';
+import type { Country, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -29,7 +28,6 @@ const schema = z.object({
   countryName: z.string().min(2).max(120),
   countryShortName: z.string().min(1).max(20),
   code: z.string().min(2).max(10),
-  currencyId: z.string().uuid('Select a currency'),
   isActive: z.boolean().optional(),
   isSanctioned: z.boolean().optional(),
 });
@@ -42,24 +40,12 @@ function CountryForm({
   onSubmit: (d: FormData) => void;
   submitting?: boolean;
 }): React.ReactElement {
-  const { data: currencies } = useQuery({
-    queryKey: ['currencies-all'],
-    queryFn: () => api.get<Paginated<Currency>>('/currencies?page=1&limit=200'),
-  });
-  const currencyOptions = (currencies?.data ?? [])
-    .filter((c) => c.isActive)
-    .map((c) => ({
-      label: c.code ? `${c.code} — ${c.name}` : c.name,
-      value: c.id,
-    }));
-
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       countryName: defaultValues?.countryName ?? '',
       countryShortName: defaultValues?.countryShortName ?? '',
       code: defaultValues?.code ?? '',
-      currencyId: defaultValues?.currencyId ?? '',
       isActive: defaultValues?.isActive ?? true,
       isSanctioned: defaultValues?.isSanctioned ?? false,
     },
@@ -79,22 +65,10 @@ function CountryForm({
           {errors.countryShortName && <p className="text-xs text-destructive">{errors.countryShortName.message}</p>}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="code">Code <span className="text-destructive">*</span></Label>
-          <Input id="code" maxLength={10} placeholder="IN" {...register('code')} />
-          {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="currencyId">Currency <span className="text-destructive">*</span></Label>
-          <Select
-            id="currencyId"
-            placeholder="Select currency"
-            options={currencyOptions}
-            {...register('currencyId')}
-          />
-          {errors.currencyId && <p className="text-xs text-destructive">{errors.currencyId.message}</p>}
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="code">Code <span className="text-destructive">*</span></Label>
+        <Input id="code" maxLength={10} placeholder="IN" {...register('code')} />
+        {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
       </div>
       <div className="flex flex-wrap items-center gap-6">
         <label className="flex cursor-pointer items-center gap-2">
@@ -160,14 +134,14 @@ export default function CountriesPage(): React.ReactElement {
     <div>
       <PageHeader
         title="Countries"
-        description="Master list of countries with their default currency (Super Admin only)."
+        description="Master list of countries (Super Admin only)."
         actions={
           <div className="flex items-center gap-2">
             <ImportCsvDialog
               entityName="Countries"
               endpoint="/countries/import"
-              sampleHeaders={['country_name', 'country_short_name', 'code', 'currency_code', 'is_active', 'is_sanctioned']}
-              sampleRows={[['United Kingdom', 'UK', 'GB', 'GBP', 'true', 'false'], ['Germany', 'DE', 'DE', 'EUR', 'true', 'false']]}
+              sampleHeaders={['country_name', 'country_short_name', 'code', 'is_active', 'is_sanctioned']}
+              sampleRows={[['United Kingdom', 'UK', 'GB', 'true', 'false'], ['Germany', 'DE', 'DE', 'true', 'false']]}
               onSuccess={() => void qc.invalidateQueries({ queryKey: ['countries'] })}
             />
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -191,7 +165,6 @@ export default function CountriesPage(): React.ReactElement {
               <TableHead>Country name</TableHead>
               <TableHead>Short name</TableHead>
               <TableHead>Code</TableHead>
-              <TableHead>Currency</TableHead>
               <TableHead>Sanctioned</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-32 text-right">Actions</TableHead>
@@ -199,21 +172,12 @@ export default function CountriesPage(): React.ReactElement {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((c) => (
               <TableRow key={c.id}>
                 <TableCell className="font-medium">{c.countryName}</TableCell>
                 <TableCell className="text-muted-foreground">{c.countryShortName}</TableCell>
                 <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{c.code}</code></TableCell>
-                <TableCell>
-                  {c.currency ? (
-                    <span className="text-sm">
-                      {c.currency.code ? `${c.currency.code} — ${c.currency.name}` : c.currency.name}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </TableCell>
                 <TableCell>
                   {c.isSanctioned ? (
                     <span className="inline-flex items-center rounded-md bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:ring-rose-800">
@@ -240,7 +204,7 @@ export default function CountriesPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={7} className="py-12 text-center text-muted-foreground">No countries yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="py-12 text-center text-muted-foreground">No countries yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

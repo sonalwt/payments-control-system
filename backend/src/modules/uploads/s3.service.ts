@@ -1,7 +1,26 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { S3Config } from '../../config/s3.config';
+
+/** How long a presigned view/download URL stays valid. */
+const PRESIGN_EXPIRES_SECONDS = 300; // 5 minutes
+
+/** Strip characters that could break/inject the Content-Disposition header. */
+function sanitizeFilename(name: string): string {
+  return name.replace(/[\r\n"\\]/g, '').trim() || 'download';
+}
+
+/** Normalise a key by removing any leading slashes (e.g. "/uploads/x" -> "uploads/x"). */
+function stripLeadingSlashes(s: string): string {
+  return s.replace(/^\/+/, '');
+}
 
 @Injectable()
 export class S3Service {
@@ -9,12 +28,16 @@ export class S3Service {
   private readonly bucket: string;
   private readonly region: string;
   private readonly endpoint: string | undefined;
+  /** Base URL for the backend's own static /uploads mount (local-dev fallback). */
+  private readonly localBaseUrl: string;
 
   constructor(private readonly config: ConfigService) {
     const s3 = config.getOrThrow<S3Config>('s3');
     this.bucket = s3.bucket;
     this.region = s3.region;
     this.endpoint = s3.endpoint;
+    const port = config.get<number>('app.port') ?? 4000;
+    this.localBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://localhost:${port}`;
 
     this.client = new S3Client({
       region: this.region,
@@ -47,6 +70,84 @@ export class S3Service {
       return `${this.endpoint}/${this.bucket}/${key}`;
     }
     return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
+  }
+
+  /** Derive the object key from a stored file URL produced by uploadFile(). */
+  keyFromUrl(url: string): string {
+    const marker = `/${this.bucket}/`;
+    // Only meaningful when a bucket is configured ('//' would match everything).
+    if (this.bucket) {
+      const idx = url.indexOf(marker);
+      if (idx !== -1) return stripLeadingSlashes(url.slice(idx + marker.length));
+    }
+    // Virtual-hosted style: https://<bucket>.s3.<region>.amazonaws.com/<key>
+    try {
+      const u = new URL(url);
+      return stripLeadingSlashes(u.pathname);
+    } catch {
+      // Relative path stored without a host, e.g. "/uploads/file.pdf".
+      return stripLeadingSlashes(url);
+    }
+  }
+
+  /**
+   * Issue a short-lived presigned GET URL for a stored file. Keeps the bucket
+   * private: the browser is handed a temporary signed link instead of a public
+   * URL. When `download` is set, S3 returns `Content-Disposition: attachment`
+   * (with the original filename) so the browser saves rather than navigates.
+   */
+  async presignGetUrl(
+    url: string,
+    opts: { download?: boolean; fileName?: string } = {},
+  ): Promise<string> {
+    const key = this.keyFromUrl(url);
+
+    // Local dev: no S3 bucket configured. The file is served from the backend's
+    // own static /uploads mount, so hand back a direct URL to it instead of a
+    // (meaningless) S3-signed link.
+    if (!this.bucket) {
+      return `${this.localBaseUrl}/${key}`;
+    }
+
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ...(opts.download
+        ? {
+            ResponseContentDisposition: `attachment; filename="${sanitizeFilename(
+              opts.fileName ?? key.split('/').pop() ?? 'download',
+            )}"`,
+          }
+        : {}),
+    });
+    try {
+      return await getSignedUrl(this.client, command, {
+        expiresIn: PRESIGN_EXPIRES_SECONDS,
+      });
+    } catch (err) {
+      throw new InternalServerErrorException(
+        `Failed to presign file URL: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** Download a stored object as a Buffer. */
+  async getFile(url: string): Promise<Buffer> {
+    const key = this.keyFromUrl(url);
+    try {
+      const res = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      const body = res.Body as { transformToByteArray?: () => Promise<Uint8Array> };
+      if (!body?.transformToByteArray) {
+        throw new Error('Empty response body');
+      }
+      return Buffer.from(await body.transformToByteArray());
+    } catch (err) {
+      throw new InternalServerErrorException(
+        `Failed to read file from S3: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   async deleteFile(key: string): Promise<void> {

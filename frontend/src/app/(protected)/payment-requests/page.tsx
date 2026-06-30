@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Download, Eye, Pencil, Plus, Search, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Download, Eye, MessageCircle, Pencil, Plus, Search, ShieldAlert } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatDateTime, todayInDubai } from '@/lib/datetime';
 import type {
@@ -25,6 +25,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { useNotify } from '@/hooks/use-notify';
+import { usePrMessageSummary } from '@/hooks/use-pr-message-summary';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { PaymentRequestForm, type PaymentRequestFormData } from './payment-request-form';
 import { useAuth } from '@/hooks/use-auth';
@@ -118,6 +119,8 @@ const STATUS_STYLES: Record<PaymentRequestStatus, string> = {
   TREASURY_MAKER: 'bg-blue-50 text-blue-700 ring-blue-200',
   TREASURY_CHECKER: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
   TREASURY_AUTHORISER: 'bg-violet-50 text-violet-700 ring-violet-200',
+  TREASURY_SWIFT: 'bg-sky-50 text-sky-700 ring-sky-200',
+  AWAITING_CLOSURE: 'bg-teal-50 text-teal-700 ring-teal-200',
   COMPLETED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   REJECTED: 'bg-rose-50 text-rose-700 ring-rose-200',
   WITHDRAWN: 'bg-muted text-muted-foreground ring-border',
@@ -169,6 +172,8 @@ export default function PaymentRequestsPage(): React.ReactElement {
     queryFn: () => api.get<Paginated<PaymentRequest>>(`/payment-requests?${params}`),
   });
 
+  const getMsgInfo = usePrMessageSummary();
+
   const [exporting, setExporting] = useState(false);
   async function handleExport(): Promise<void> {
     setExporting(true);
@@ -196,6 +201,7 @@ export default function PaymentRequestsPage(): React.ReactElement {
       paymentTypeId: d.paymentTypeId,
       counterpartyId: d.counterpartyId || undefined,
       beneficiaryAccountId: d.beneficiaryAccountId || undefined,
+      legalEntityId: d.legalEntityId || undefined,
       sourceAccountId: d.sourceAccountId || undefined,
       currencyId: d.currencyId,
       amount: d.amount,
@@ -304,6 +310,8 @@ export default function PaymentRequestsPage(): React.ReactElement {
                   { label: 'Treasury — maker', value: 'TREASURY_MAKER' },
                   { label: 'Treasury — checker', value: 'TREASURY_CHECKER' },
                   { label: 'Treasury — authoriser', value: 'TREASURY_AUTHORISER' },
+                  { label: 'Treasury — SWIFT upload', value: 'TREASURY_SWIFT' },
+                  { label: 'Awaiting closure', value: 'AWAITING_CLOSURE' },
                   { label: 'Completed', value: 'COMPLETED' },
                   { label: 'Rejected', value: 'REJECTED' },
                   { label: 'Withdrawn', value: 'WITHDRAWN' },
@@ -342,6 +350,21 @@ export default function PaymentRequestsPage(): React.ReactElement {
                     {pr.requestNumber}
                     {pr.sanctionWarning && <span title="Sanctioned country" className="inline-flex"><ShieldAlert className="h-3 w-3 text-amber-600" /></span>}
                     {pr.anomalyFlag && <span title="Anomaly detected" className="inline-flex"><AlertTriangle className="h-3 w-3 text-orange-500" /></span>}
+                    {(() => {
+                      const info = getMsgInfo(pr.id);
+                      if (!info) return null;
+                      return (
+                        <span
+                          title={`${info.count} chat message${info.count !== 1 ? 's' : ''}${info.isNew ? ' — new' : ''}`}
+                          className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                            info.isNew ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          <MessageCircle className="h-2.5 w-2.5" />
+                          {info.isNew ? 'NEW' : info.count}
+                        </span>
+                      );
+                    })()}
                   </span>
                   {pr.invoiceNumber && (
                     <div className="text-xs text-muted-foreground">{pr.invoiceNumber}</div>

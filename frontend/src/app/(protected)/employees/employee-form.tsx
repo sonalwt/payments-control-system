@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { Country, Employee, Paginated } from '@/types/domain';
+import type { Employee, LegalEntity, Paginated } from '@/types/domain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,7 +17,7 @@ export const employeeSchema = z.object({
   employeeCode: z.string().min(1).max(50),
   fullName: z.string().min(2).max(150),
   workEmail: z.string().email(),
-  countryOfEmploymentId: z.string().uuid('Select a country'),
+  legalEntityId: z.string().uuid('Select a legal entity'),
   startDate: z.string().optional().or(z.literal('')),
   endDate: z.string().optional().or(z.literal('')),
   nationalId: z.string().max(50).optional().or(z.literal('')),
@@ -41,14 +41,14 @@ export function EmployeeForm({
   onSubmit,
   submitting,
 }: Props): React.ReactElement {
-  const { data: countries } = useQuery({
-    queryKey: ['countries-all'],
-    queryFn: () => api.get<Paginated<Country>>('/countries?page=1&limit=200'),
+  const { data: legalEntities } = useQuery({
+    queryKey: ['legal-entities-all'],
+    queryFn: () => api.get<Paginated<LegalEntity>>('/legal-entities?page=1&limit=200'),
   });
 
-  const countryOptions = (countries?.data ?? [])
-    .filter((c) => c.isActive)
-    .map((c) => ({ label: `${c.code} — ${c.countryName}`, value: c.id }));
+  const legalEntityOptions = (legalEntities?.data ?? [])
+    .filter((le) => le.isActive)
+    .map((le) => ({ label: `${le.code} — ${le.name}`, value: le.id }));
 
   const {
     register,
@@ -60,7 +60,7 @@ export function EmployeeForm({
       employeeCode: defaultValues?.employeeCode ?? '',
       fullName: defaultValues?.fullName ?? '',
       workEmail: defaultValues?.workEmail ?? '',
-      countryOfEmploymentId: defaultValues?.countryOfEmploymentId ?? '',
+      legalEntityId: defaultValues?.legalEntityId ?? '',
       startDate: defaultValues?.startDate ?? '',
       endDate: defaultValues?.endDate ?? '',
       nationalId: defaultValues?.nationalId ?? '',
@@ -93,14 +93,14 @@ export function EmployeeForm({
         {errors.workEmail && <p className="text-xs text-destructive">{errors.workEmail.message}</p>}
       </div>
       <div className="space-y-2">
-        <Label htmlFor="countryOfEmploymentId">Country of employment <span className="text-destructive">*</span></Label>
+        <Label htmlFor="legalEntityId">Legal entity <span className="text-destructive">*</span></Label>
         <Select
-          id="countryOfEmploymentId"
-          placeholder="Select country"
-          options={countryOptions}
-          {...register('countryOfEmploymentId')}
+          id="legalEntityId"
+          placeholder="Select legal entity"
+          options={legalEntityOptions}
+          {...register('legalEntityId')}
         />
-        {errors.countryOfEmploymentId && <p className="text-xs text-destructive">{errors.countryOfEmploymentId.message}</p>}
+        {errors.legalEntityId && <p className="text-xs text-destructive">{errors.legalEntityId.message}</p>}
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">

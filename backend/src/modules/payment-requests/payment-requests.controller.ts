@@ -21,8 +21,10 @@ import {
   ApproveDto,
   CancelDto,
   RejectDto,
+  TreasuryCompleteDto,
   TreasuryDecisionDto,
   TreasurySubmitDto,
+  TreasurySwiftDto,
   WithdrawDto,
 } from './dto/action.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -158,10 +160,27 @@ export class PaymentRequestsController {
   @Post(':id/treasury/complete')
   treasuryComplete(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: TreasuryDecisionDto,
+    @Body() dto: TreasuryCompleteDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.treasuryComplete(id, dto, user.id);
+  }
+
+  @Post(':id/treasury/upload-swift')
+  treasuryUploadSwift(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: TreasurySwiftDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.treasuryUploadSwift(id, dto, user.id);
+  }
+
+  @Post(':id/close')
+  close(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.closeRequest(id, user.id);
   }
 
   @Post(':id/treasury/reject')

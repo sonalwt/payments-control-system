@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsEnum,
@@ -12,6 +13,7 @@ import {
   Length,
   Matches,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -93,6 +95,14 @@ export class CreatePaymentTypeDto {
   @IsBoolean()
   mobileInitiationOnly?: boolean;
 
+  @ApiPropertyOptional({
+    default: false,
+    description: 'When true the employee is the maker — selectable in the employee self-service portal.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  employeeSelfService?: boolean;
+
   @ApiPropertyOptional({ default: true })
   @IsOptional()
   @IsBoolean()
@@ -115,9 +125,24 @@ export class CreatePaymentTypeDto {
   @IsUUID()
   paymentCategoryId?: string | null;
 
-  @ApiProperty({ description: 'Legal entity master UUID this payment type belongs to' })
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Legal entity master UUIDs this payment type belongs to. At least one is required unless the type is confidential (chairman-style).',
+  })
+  @ValidateIf((o) => !o.isConfidential)
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('all', { each: true })
+  legalEntityIds?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Deprecated — single legal entity UUID. Prefer legalEntityIds. Kept in sync with legalEntityIds[0].',
+  })
+  @IsOptional()
   @IsUUID()
-  legalEntityId!: string;
+  legalEntityId?: string | null;
 
   @ApiPropertyOptional({
     type: [String],

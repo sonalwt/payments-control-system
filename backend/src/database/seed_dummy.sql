@@ -473,6 +473,84 @@ BEGIN
 
   RAISE NOTICE 'Section 2.5 — balance change log: done.';
 
+  -- ================================================================
+  -- SECTION 4  Payment Requests + supporting documents
+  --   A few VENDOR_PAYMENT requests with an attached invoice each, so
+  --   the Payment Requests list/detail and the inline document viewer
+  --   have content to show.
+  --
+  --   NOTE on file_url: a SQL seed cannot place real bytes in the
+  --   private S3 bucket. These dummy URLs deliberately do NOT resolve
+  --   to a stored object, so the in-app viewer falls back to the
+  --   placeholder document (shown under the real file name). Replace a
+  --   file_url with a genuine `uploads/...` object to view real bytes.
+  -- ================================================================
+  DECLARE
+    v_cp_infosys  UUID;
+    v_cp_tcs      UUID;
+    v_pr1         UUID;
+    v_pr2         UUID;
+    v_pr3         UUID;
+  BEGIN
+    SELECT id INTO v_cp_infosys FROM counterparties WHERE code = 'INFOSYS';
+    SELECT id INTO v_cp_tcs     FROM counterparties WHERE code = 'TCS';
+
+    -- ----- Request 1: pending approval -----
+    INSERT INTO payment_requests(
+      request_number, payment_type_code, counterparty_id, currency_code,
+      amount, amount_minor, purpose_description, source_account_id,
+      status, submitted_at, created_by)
+    VALUES (
+      'PR-SEED-0001', 'VENDOR_PAYMENT', v_cp_infosys, 'INR',
+      125000.0000, 12500000, 'Q1 software development services — Infosys',
+      v_acc_acme_ops, 'PENDING_APPROVAL', now(), v_usr_admin)
+    ON CONFLICT (request_number) DO UPDATE SET updated_at = now()
+    RETURNING id INTO v_pr1;
+
+    -- ----- Request 2: completed -----
+    INSERT INTO payment_requests(
+      request_number, payment_type_code, counterparty_id, currency_code,
+      amount, amount_minor, purpose_description, source_account_id,
+      status, submitted_at, approved_at, completed_at, created_by)
+    VALUES (
+      'PR-SEED-0002', 'VENDOR_PAYMENT', v_cp_tcs, 'INR',
+      480000.0000, 48000000, 'Managed services retainer — TCS',
+      v_acc_acme_ops, 'COMPLETED', now() - interval '5 days',
+      now() - interval '4 days', now() - interval '3 days', v_usr_admin)
+    ON CONFLICT (request_number) DO UPDATE SET updated_at = now()
+    RETURNING id INTO v_pr2;
+
+    -- ----- Request 3: draft -----
+    INSERT INTO payment_requests(
+      request_number, payment_type_code, counterparty_id, currency_code,
+      amount, amount_minor, purpose_description, source_account_id,
+      status, created_by)
+    VALUES (
+      'PR-SEED-0003', 'VENDOR_PAYMENT', v_cp_infosys, 'INR',
+      62500.0000, 6250000, 'Annual support renewal — Infosys',
+      v_acc_acme_ops, 'DRAFT', v_usr_admin)
+    ON CONFLICT (request_number) DO UPDATE SET updated_at = now()
+    RETURNING id INTO v_pr3;
+
+    -- ----- Invoice documents (one per request; idempotent on code) -----
+    INSERT INTO payment_request_documents(
+      payment_request_id, document_code, document_label,
+      file_name, file_url, file_size_bytes, mime_type, uploaded_by)
+    SELECT v.pr, 'INVOICE', 'Vendor Invoice',
+           v.fname, v.furl, 84210, 'application/pdf', v_usr_admin
+    FROM (VALUES
+      (v_pr1, 'infosys-invoice-PR-SEED-0001.pdf', 'seed/dummy/infosys-invoice-0001.pdf'),
+      (v_pr2, 'tcs-invoice-PR-SEED-0002.pdf',     'seed/dummy/tcs-invoice-0002.pdf'),
+      (v_pr3, 'infosys-invoice-PR-SEED-0003.pdf', 'seed/dummy/infosys-invoice-0003.pdf')
+    ) AS v(pr, fname, furl)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM payment_request_documents d
+      WHERE d.payment_request_id = v.pr AND d.document_code = 'INVOICE'
+    );
+  END;
+
+  RAISE NOTICE 'Section 4 — payment requests + documents: done.';
+
   RAISE NOTICE '========================================';
   RAISE NOTICE 'ALL SEED DATA INSERTED SUCCESSFULLY.';
   RAISE NOTICE '----------------------------------------';

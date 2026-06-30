@@ -12,11 +12,14 @@ import { PaymentType } from '../payment-types/payment-type.entity';
 import { Counterparty } from '../counterparties/counterparty.entity';
 import { Employee } from '../employees/employee.entity';
 import { Currency } from '../currencies/currency.entity';
+import { LegalEntity } from '../legal-entities/legal-entity.entity';
 import { BankAccount } from '../bank-accounts/bank-account.entity';
 import { BeneficiaryAccount } from '../beneficiary-accounts/beneficiary-account.entity';
 import { PaymentRequestApproval } from './payment-request-approval.entity';
 import { PaymentRequestDocument } from './payment-request-document.entity';
+import { PaymentRequestRejection } from './payment-request-rejection.entity';
 import { User } from '../users/user.entity';
+import { Role } from '../roles/role.entity';
 
 /** SoW §3 — canonical payment request status machine. */
 export type PaymentRequestStatus =
@@ -25,6 +28,11 @@ export type PaymentRequestStatus =
   | 'TREASURY_MAKER'
   | 'TREASURY_CHECKER'
   | 'TREASURY_AUTHORISER'
+  // After the authoriser approves, it returns to the treasury maker to attach
+  // the SWIFT copy (which executes/debits the payment), then to the initiator
+  // (AWAITING_CLOSURE) to close it, after which it is finally COMPLETED.
+  | 'TREASURY_SWIFT'
+  | 'AWAITING_CLOSURE'
   | 'COMPLETED'
   | 'REJECTED'
   | 'WITHDRAWN'
@@ -43,8 +51,10 @@ export type TtMode = 'ONLINE_TT' | 'OFFLINE_TT';
  * On final matrix approval the request is forwarded to the Treasury Team,
  * which executes and signs off the payment (maker → checker → authoriser).
  * Any non-terminal status may also transition to REJECTED, WITHDRAWN
- * (initiator), or CANCELLED (admin). A treasury reject sends the request
- * back to REJECTED; the maker then resubmits and reruns the matrix.
+ * (initiator), or CANCELLED (admin). A treasury checker/authoriser reject
+ * bounces the request back to TREASURY_MAKER for correction; a maker reject
+ * (or an authoriser reject on a confidential payment, which has no maker
+ * stage) sends it back to the initiator as REJECTED.
  *
  * The active approval matrix is snapshotted at submission (§1.5) so
  * in-flight requests are unaffected by later matrix edits.
@@ -79,6 +89,18 @@ export class PaymentRequest extends BaseEntity {
   @JoinColumn({ name: 'employee_id' })
   employee?: Employee | null;
 
+  /**
+   * Set when an employee raised this request via the self-service portal.
+   * `created_by` references a user, so it stays null for employee-raised
+   * requests and the origin is recorded here instead.
+   */
+  @Column({ name: 'raised_by_employee_id', type: 'uuid', nullable: true })
+  raisedByEmployeeId?: string | null;
+
+  @ManyToOne(() => Employee, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'raised_by_employee_id' })
+  raisedByEmployee?: Employee | null;
+
   /** §6 — destination account from the verified master. */
   @Column({ name: 'beneficiary_account_id', type: 'uuid', nullable: true })
   beneficiaryAccountId?: string | null;
@@ -87,7 +109,20 @@ export class PaymentRequest extends BaseEntity {
   @JoinColumn({ name: 'beneficiary_account_id' })
   beneficiaryAccount?: BeneficiaryAccount | null;
 
-  /** §4.3 — picked by the Maker at release time. */
+  /**
+   * Legal entity the payment is made on behalf of. Chosen by the Maker
+   * (initiator) from the payment type's legal entities; the request currency is
+   * one of this entity's bank-account currencies. The source bank account
+   * (picked later by the Treasury Maker) must belong to this entity.
+   */
+  @Column({ name: 'legal_entity_id', type: 'uuid', nullable: true })
+  legalEntityId?: string | null;
+
+  @ManyToOne(() => LegalEntity, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'legal_entity_id' })
+  legalEntity?: LegalEntity | null;
+
+  /** §4.3 — picked by the Treasury Maker at release time. */
   @Column({ name: 'source_account_id', type: 'uuid', nullable: true })
   sourceAccountId?: string | null;
 
@@ -143,11 +178,39 @@ export class PaymentRequest extends BaseEntity {
   @Column({ name: 'tt_mode', type: 'varchar', length: 20, nullable: true })
   ttMode?: TtMode | null;
 
-  /** Reference number captured by the TT maker from the bank. */
+  // Role pinned to each treasury stage, snapshotted from the approval
+  // matrix at freeze time. When set, only holders of that role may act on
+  // the stage; when NULL the stage falls back to the global TREASURY_* role.
+  @Column({ name: 'treasury_maker_role_id', type: 'uuid', nullable: true })
+  treasuryMakerRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_maker_role_id' })
+  treasuryMakerRole?: Role | null;
+
+  @Column({ name: 'treasury_checker_role_id', type: 'uuid', nullable: true })
+  treasuryCheckerRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_checker_role_id' })
+  treasuryCheckerRole?: Role | null;
+
+  @Column({ name: 'treasury_authoriser_role_id', type: 'uuid', nullable: true })
+  treasuryAuthoriserRoleId?: string | null;
+
+  @ManyToOne(() => Role, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_authoriser_role_id' })
+  treasuryAuthoriserRole?: Role | null;
+
+  /** Reference number captured by the TT maker when attaching the SWIFT copy. */
   @Column({ name: 'treasury_reference_number', type: 'varchar', length: 100, nullable: true })
   treasuryReferenceNumber?: string | null;
 
-  /** SWIFT / MT103 copy received from the bank, uploaded by the TT maker. */
+  /** Online TT document (PDF) generated + uploaded by the TT maker at submit. */
+  @Column({ name: 'tt_document_url', type: 'varchar', length: 500, nullable: true })
+  ttDocumentUrl?: string | null;
+
+  /** SWIFT / MT103 copy uploaded by the TT maker after the payment is completed. */
   @Column({ name: 'swift_copy_url', type: 'varchar', length: 500, nullable: true })
   swiftCopyUrl?: string | null;
 
@@ -171,6 +234,10 @@ export class PaymentRequest extends BaseEntity {
   @Column({ name: 'treasury_checker_at', type: 'timestamptz', nullable: true })
   treasuryCheckerAt?: Date | null;
 
+  /** Optional note the treasury checker adds when marking the request checked. */
+  @Column({ name: 'treasury_checker_comments', type: 'text', nullable: true })
+  treasuryCheckerComments?: string | null;
+
   @Column({ name: 'treasury_authoriser_by', type: 'uuid', nullable: true })
   treasuryAuthoriserBy?: string | null;
 
@@ -180,6 +247,18 @@ export class PaymentRequest extends BaseEntity {
 
   @Column({ name: 'treasury_authoriser_at', type: 'timestamptz', nullable: true })
   treasuryAuthoriserAt?: Date | null;
+
+  // Post-completion SWIFT upload (TREASURY_SWIFT stage) — the maker attaches the
+  // SWIFT copy after the authoriser completes, before the request is COMPLETED.
+  @Column({ name: 'treasury_swift_by', type: 'uuid', nullable: true })
+  treasurySwiftBy?: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'treasury_swift_by' })
+  treasurySwiftByUser?: User | null;
+
+  @Column({ name: 'treasury_swift_at', type: 'timestamptz', nullable: true })
+  treasurySwiftAt?: Date | null;
 
   /** Set when the TT authoriser marks the payment completed (terminal). */
   @Column({ name: 'completed_at', type: 'timestamptz', nullable: true })
@@ -234,4 +313,8 @@ export class PaymentRequest extends BaseEntity {
     cascade: ['insert', 'update'],
   })
   documents?: PaymentRequestDocument[];
+
+  /** Append-only rejection history, preserved across resubmissions. */
+  @OneToMany(() => PaymentRequestRejection, (r) => r.paymentRequest)
+  rejections?: PaymentRequestRejection[];
 }

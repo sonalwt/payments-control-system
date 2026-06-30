@@ -31,14 +31,21 @@ export class PaymentTypesService {
       name: dto.name,
       description: dto.description ?? null,
       direction: dto.direction,
-      requiresApprovalChain: dto.requiresApprovalChain ?? true,
+      // A confidential (chairman-style) type bypasses the approval matrix, so
+      // it can never also "require an approval chain" (DB enforces the same).
+      requiresApprovalChain: dto.isConfidential ? false : (dto.requiresApprovalChain ?? true),
       isBatchBased: dto.isBatchBased ?? false,
       isConfidential: dto.isConfidential ?? false,
       mobileInitiationOnly: dto.mobileInitiationOnly ?? false,
+      employeeSelfService: dto.employeeSelfService ?? false,
       allowsCrossCurrency: dto.allowsCrossCurrency ?? true,
       fieldConfig: dto.fieldConfig ?? [],
       paymentCategoryId: dto.paymentCategoryId ?? null,
-      legalEntityId: dto.legalEntityId,
+      // Optional for confidential (chairman-style) types; the DTO enforces at
+      // least one for everything else. Keep the denormalised primary
+      // legal_entity_id in sync with the first entry.
+      legalEntityIds: dto.legalEntityIds ?? (dto.legalEntityId ? [dto.legalEntityId] : []),
+      legalEntityId: dto.legalEntityIds?.[0] ?? dto.legalEntityId ?? null,
       makerRoleIds: dto.makerRoleIds ?? (dto.makerRoleId ? [dto.makerRoleId] : []),
       // Keep the legacy single "primary" maker role in sync with the first entry.
       makerRoleId: dto.makerRoleIds?.[0] ?? dto.makerRoleId ?? null,
@@ -97,6 +104,32 @@ export class PaymentTypesService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
+  /**
+   * Payment types an employee may select when raising a request (e.g. a
+   * reimbursement). Returns ALL active, in-effect payment types — scoped to
+   * the employee's legal entity when known — excluding confidential
+   * (chairman-style) types, which must never be employee-initiated.
+   */
+  async findEmployeeSelectable(legalEntityId?: string | null): Promise<PaymentType[]> {
+    const today = dubaiToday();
+    const qb = this.repo
+      .createQueryBuilder('pt')
+      .where('pt.is_active = true')
+      .andWhere('pt.is_confidential = false')
+      // Only types whose maker is the employee (employee self-service allow-list).
+      .andWhere('pt.employee_self_service = true')
+      .andWhere('pt.effective_from <= :today', { today })
+      .andWhere('(pt.effective_to IS NULL OR pt.effective_to >= :today)', { today })
+      .orderBy('pt.name', 'ASC');
+    if (legalEntityId) {
+      qb.andWhere(
+        '(:le = ANY(pt.legal_entity_ids) OR pt.legal_entity_id = :le)',
+        { le: legalEntityId },
+      );
+    }
+    return qb.getMany();
+  }
+
   async findOne(id: string): Promise<PaymentType> {
     const pt = await this.repo.findOne({
       where: { id },
@@ -118,6 +151,12 @@ export class PaymentTypesService {
       }
     }
     Object.assign(pt, dto, { updatedBy: actorId });
+    // Confidential and approval-chain are mutually exclusive (DB enforces this).
+    // Whenever confidential is on, force the approval-chain flag off so the
+    // raw CHECK constraint never trips.
+    if (pt.isConfidential) {
+      pt.requiresApprovalChain = false;
+    }
     // Keep maker_role_ids and the denormalised primary maker_role_id consistent.
     if (dto.makerRoleIds !== undefined) {
       pt.makerRoleIds = dto.makerRoleIds;
@@ -125,6 +164,14 @@ export class PaymentTypesService {
     } else if (dto.makerRoleId !== undefined) {
       pt.makerRoleId = dto.makerRoleId;
       pt.makerRoleIds = dto.makerRoleId ? [dto.makerRoleId] : [];
+    }
+    // Keep legal_entity_ids and the denormalised primary legal_entity_id consistent.
+    if (dto.legalEntityIds !== undefined) {
+      pt.legalEntityIds = dto.legalEntityIds;
+      pt.legalEntityId = dto.legalEntityIds[0] ?? null;
+    } else if (dto.legalEntityId !== undefined) {
+      pt.legalEntityId = dto.legalEntityId;
+      pt.legalEntityIds = dto.legalEntityId ? [dto.legalEntityId] : [];
     }
     return this.repo.save(pt);
   }
