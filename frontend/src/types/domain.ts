@@ -990,7 +990,6 @@ export interface EmployeeBankAccountChange extends AuditFields {
   rejectionReason?: string | null;
 }
 
-<<<<<<< HEAD
 // ── Delegations ──────────────────────────────────────────────────────────────
 
 export interface Delegation {
@@ -1023,7 +1022,6 @@ export interface AppNotification {
 export interface NotificationsResponse {
   data: AppNotification[];
   unreadCount: number;
-=======
 export interface PrMessageAttachment {
   url: string;
   fileName: string;
@@ -1046,5 +1044,4 @@ export interface PrParticipant {
   fullName: string;
   email: string;
   role: string;
->>>>>>> 43099abedf021798bdb1c81e5b1414483aa71996
 }
