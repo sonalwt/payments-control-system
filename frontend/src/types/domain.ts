@@ -990,6 +990,38 @@ export interface EmployeeBankAccountChange extends AuditFields {
   rejectionReason?: string | null;
 }
 
+// ── Delegations ──────────────────────────────────────────────────────────────
+
+export interface Delegation {
+  id: string;
+  delegatorId: string;
+  delegator: { id: string; fullName: string; email: string };
+  delegateeId: string;
+  delegatee: { id: string; fullName: string; email: string };
+  startDate: string;
+  endDate: string;
+  reason?: string | null;
+  status: 'ACTIVE' | 'CANCELLED' | 'EXPIRED';
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+export interface AppNotification {
+  id: string;
+  userId: string;
+  type: 'DELEGATION_ASSIGNED' | 'DELEGATION_CANCELLED';
+  title: string;
+  message: string;
+  isRead: boolean;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface NotificationsResponse {
+  data: AppNotification[];
+  unreadCount: number;
 export interface PrMessageAttachment {
   url: string;
   fileName: string;
