@@ -1,6 +1,5 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
   Layers,
@@ -16,9 +15,11 @@ import {
   ArrowRight,
   Hourglass,
 } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { hourInDubai } from '@/lib/datetime';
 import { useAuth } from '@/hooks/use-auth';
+import { useNotify } from '@/hooks/use-notify';
 import type {
   Paginated,
   Group,
@@ -26,6 +27,7 @@ import type {
   Country,
   PaymentRequest,
   BankAccount,
+  Delegation,
 } from '@/types/domain';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -196,6 +198,77 @@ function NeedsAttention(): React.ReactElement | null {
           ))}
         </ul>
       </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Delegation banners
+// ---------------------------------------------------------------------------
+
+function DelegationBanners(): React.ReactElement | null {
+  const notify = useNotify();
+  const qc = useQueryClient();
+
+  const { data: outgoing = [] } = useQuery<Delegation[]>({
+    queryKey: ['delegations', 'outgoing'],
+    queryFn: () => api.get<Delegation[]>('/delegations/outgoing'),
+  });
+
+  const { data: incoming = [] } = useQuery<Delegation[]>({
+    queryKey: ['delegations', 'incoming'],
+    queryFn: () => api.get<Delegation[]>('/delegations/incoming'),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/delegations/${id}/cancel`),
+    onSuccess: () => {
+      notify.success('Delegation cancelled');
+      qc.invalidateQueries({ queryKey: ['delegations'] });
+    },
+    onError: (err) => notify.error('Failed to cancel delegation', err),
+  });
+
+  const activeOutgoing = outgoing.find((d) => d.status === 'ACTIVE');
+  const activeIncoming = incoming.filter((d) => d.status === 'ACTIVE');
+
+  if (!activeOutgoing && activeIncoming.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {/* Outgoing delegation */}
+      {activeOutgoing && (
+        <div className="flex items-center justify-between rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-yellow-600">⚡</span>
+            <span className="text-yellow-900">
+              Your tasks are delegated to{' '}
+              <span className="font-semibold">{activeOutgoing.delegatee.fullName}</span>{' '}
+              from {activeOutgoing.startDate} to {activeOutgoing.endDate}.
+            </span>
+          </div>
+          <button
+            onClick={() => cancelMutation.mutate(activeOutgoing.id)}
+            disabled={cancelMutation.isPending}
+            className="ml-4 shrink-0 text-xs font-medium text-yellow-700 underline hover:text-red-600 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Incoming delegations */}
+      {activeIncoming.map((d) => (
+        <div
+          key={d.id}
+          className="rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-900"
+        >
+          <span className="mr-2 text-blue-500">📋</span>
+          <span className="font-semibold">{d.delegator.fullName}</span> has delegated their
+          tasks to you from {d.startDate} to {d.endDate}.
+          {d.reason && <span className="ml-1 text-blue-700">Reason: {d.reason}</span>}
+        </div>
+      ))}
     </div>
   );
 }
@@ -510,6 +583,9 @@ export default function DashboardPage(): React.ReactElement {
           </div>
         </div>
       </div>
+
+      {/* Delegation banners */}
+      <DelegationBanners />
 
       {/* Requests awaiting this user's action (approval step or treasury stage) */}
       <NeedsAttention />

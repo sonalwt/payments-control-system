@@ -173,6 +173,25 @@ export class UsersService {
     await this.repo.save(user);
   }
 
+  /** Return users who share at least one role with the given userId, excluding themselves. */
+  async findPeers(userId: string): Promise<User[]> {
+    return this.repo
+      .createQueryBuilder('u')
+      .where(
+        `u.id != :userId
+         AND u.is_active = true
+         AND u.deleted_at IS NULL
+         AND u.id IN (
+           SELECT ur2.user_id FROM user_roles ur1
+           JOIN user_roles ur2 ON ur1.role_id = ur2.role_id
+           WHERE ur1.user_id = :userId AND ur2.user_id != :userId
+         )`,
+        { userId },
+      )
+      .orderBy('u.full_name', 'ASC')
+      .getMany();
+  }
+
   async loadRoleCodes(userId: string): Promise<{ roles: string[]; entityIds: string[] }> {
     const rows = await this.repo
       .createQueryBuilder('u')

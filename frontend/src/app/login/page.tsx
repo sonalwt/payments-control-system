@@ -33,7 +33,8 @@ export default function LoginPage(): React.ReactElement {
     try {
       await login(data.email, data.password);
     } catch (err) {
-      notify.error('Sign in failed', err);
+      const message = err instanceof Error ? err.message : 'Invalid credentials';
+      notify.error('Sign in failed', message);
     } finally {
       setSubmitting(false);
     }

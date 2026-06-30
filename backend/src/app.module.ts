@@ -31,6 +31,8 @@ import { BeneficiaryAccountsModule } from './modules/beneficiary-accounts/benefi
 import { PaymentRequestsModule } from './modules/payment-requests/payment-requests.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { DelegationsModule } from './modules/delegations/delegations.module';
 
 @Module({
   imports: [
@@ -72,6 +74,8 @@ import { AuditModule } from './modules/audit/audit.module';
     PaymentRequestsModule,
     UploadsModule,
     AuditModule,
+    NotificationsModule,
+    DelegationsModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })
