@@ -2,12 +2,13 @@
 
 import { useForm, useFieldArray, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type ExtractedInvoice } from '@/lib/api';
 import { useAuth } from '@/hooks/use-auth';
+import { useNotify } from '@/hooks/use-notify';
 import type {
   BankAccount,
   BeneficiaryAccount,
@@ -15,6 +16,7 @@ import type {
   Currency,
   LegalEntity,
   Paginated,
+  PaymentNature,
   PaymentType,
   Role,
 } from '@/types/domain';
@@ -23,7 +25,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { DialogFooter } from '@/components/ui/dialog';
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+
+/** Map a payment category name to the counterparty's trade nature. */
+function natureFromCategory(name?: string | null): PaymentNature | null {
+  if (!name) return null;
+  const n = name.toLowerCase();
+  if (n.includes('non-trade') || n.includes('non trade')) return 'NON_TRADE';
+  if (n.includes('trade')) return 'TRADE';
+  return null;
+}
 
 const documentSchema = z.object({
   documentCode: z.string().min(1).max(50),
@@ -201,6 +214,8 @@ export function PaymentRequestForm({
   };
 
   const { user } = useAuth();
+  const notify = useNotify();
+  const [quickCpOpen, setQuickCpOpen] = useState(false);
 
   const { data: paymentTypes } = useQuery({
     queryKey: ['payment-types-for-request'],
@@ -210,7 +225,7 @@ export function PaymentRequestForm({
     queryKey: ['roles-all'],
     queryFn: () => api.get<Role[]>('/roles'),
   });
-  const { data: counterparties } = useQuery({
+  const { data: counterparties, refetch: refetchCounterparties } = useQuery({
     queryKey: ['counterparties-all'],
     queryFn: () => api.get<Paginated<Counterparty>>('/counterparties?page=1&limit=200'),
   });
@@ -261,6 +276,10 @@ export function PaymentRequestForm({
   // accounts. The source bank account is no longer selected here.
   const accounts = sourceAccounts?.data ?? [];
   const selectedPaymentType = (paymentTypes?.data ?? []).find((p) => p.id === paymentTypeId);
+  // Trade vs non-trade for inline counterparty creation, derived (and locked)
+  // from the selected payment type's category. Null until a categorised type is
+  // chosen — the "New counterparty" action is disabled until then.
+  const quickNature = natureFromCategory(selectedPaymentType?.paymentCategory?.name);
   // A payment type may belong to several legal entities (multi-select); fall
   // back to the legacy single legalEntityId for older records. Confidential
   // (chairman-style) types carry no legal entity — for those we offer any
@@ -331,6 +350,27 @@ export function PaymentRequestForm({
   const { fields, append, remove } = useFieldArray({ control, name: 'documents' });
 
   return (
+    <>
+    <QuickCounterpartyDialog
+      open={quickCpOpen}
+      onOpenChange={setQuickCpOpen}
+      nature={quickNature}
+      onCreated={(cp) => {
+        void refetchCounterparties();
+        // Attach the new counterparty to the form in both cases. A Trade
+        // counterparty starts PENDING — it can be saved on a draft now, but the
+        // request can't be submitted until the KYC team approves it (enforced on
+        // submit by the backend). A Non-Trade counterparty is usable immediately.
+        setValue('counterpartyId', cp.id, { shouldValidate: true, shouldDirty: true });
+        if (cp.kycStatus === 'APPROVED') {
+          notify.success(`Counterparty "${cp.name}" added and selected`);
+        } else {
+          notify.success(
+            `Counterparty "${cp.name}" added to this draft and submitted to the KYC team. Save the draft now; it can be submitted once approved.`,
+          );
+        }
+      }}
+    />
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
       <div className="space-y-2">
         <Label htmlFor="paymentTypeId">Payment type <span className="text-destructive">*</span></Label>
@@ -381,10 +421,42 @@ export function PaymentRequestForm({
 
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="counterpartyId">Counterparty</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="counterpartyId">Counterparty</Label>
+            <button
+              type="button"
+              className="text-xs font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline"
+              disabled={!quickNature}
+              title={quickNature ? 'Add a new counterparty' : 'Select a payment type with a Trade / Non-Trade category first'}
+              onClick={() => setQuickCpOpen(true)}
+            >
+              <Plus className="mr-0.5 inline h-3 w-3" /> New
+            </button>
+          </div>
           <Select id="counterpartyId" placeholder="Select (vendor payments)"
-            options={[{ label: '— None —', value: '' }, ...(counterparties?.data ?? []).map((c) => ({ label: c.legalName ?? c.id, value: c.id }))]}
+            options={[
+              { label: '— None —', value: '' },
+              // Approved counterparties are usable immediately. A Trade
+              // counterparty awaiting KYC can be attached to a DRAFT (marked
+              // below) but the request can't be submitted until KYC approves it.
+              // Rejected counterparties are excluded — they can't be used.
+              ...(counterparties?.data ?? [])
+                .filter((c) => c.kycStatus === 'APPROVED' || c.kycStatus === 'PENDING')
+                .map((c) => ({
+                  label: `${c.legalName ?? c.name ?? c.id}${c.kycStatus === 'PENDING' ? ' — awaiting KYC' : ''}`,
+                  value: c.id,
+                })),
+            ]}
             {...register('counterpartyId')} />
+          {(() => {
+            const selected = (counterparties?.data ?? []).find((c) => c.id === counterpartyId);
+            if (selected?.kycStatus !== 'PENDING') return null;
+            return (
+              <p className="text-xs text-amber-600">
+                Awaiting KYC approval — you can save this as a draft, but it can&apos;t be submitted until the counterparty is approved.
+              </p>
+            );
+          })()}
         </div>
         <div className="space-y-2">
           <Label htmlFor="beneficiaryAccountId">Destination beneficiary</Label>
@@ -580,5 +652,111 @@ export function PaymentRequestForm({
         <Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</Button>
       </DialogFooter>
     </form>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Inline "quick create" counterparty (used from the payment request form)
+// ---------------------------------------------------------------------
+
+const quickCpSchema = z.object({
+  code: z
+    .string()
+    .min(2, 'Min 2 chars')
+    .max(40)
+    .regex(/^[A-Z0-9_-]+$/, 'Uppercase letters, digits, _ or - only'),
+  name: z.string().min(2, 'Required').max(200),
+  legalName: z.string().max(200).optional().or(z.literal('')),
+  role: z.enum(['VENDOR', 'CUSTOMER', 'BOTH']),
+  primaryContactEmail: z.string().email('Invalid email').optional().or(z.literal('')),
+});
+type QuickCpData = z.infer<typeof quickCpSchema>;
+
+function QuickCounterpartyDialog({
+  open, onOpenChange, nature, onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  nature: PaymentNature | null;
+  onCreated: (cp: Counterparty) => void;
+}) {
+  const notify = useNotify();
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<QuickCpData>({
+    resolver: zodResolver(quickCpSchema),
+    defaultValues: { role: 'VENDOR' },
+  });
+
+  const createMut = useMutation({
+    mutationFn: (d: QuickCpData) =>
+      api.post<Counterparty>('/counterparties', {
+        code: d.code.trim().toUpperCase(),
+        name: d.name.trim(),
+        legalName: d.legalName?.trim() || undefined,
+        role: d.role,
+        paymentNature: nature ?? undefined,
+        primaryContactEmail: d.primaryContactEmail?.trim() || undefined,
+      }),
+    onSuccess: (cp) => { reset({ role: 'VENDOR' }); onOpenChange(false); onCreated(cp); },
+    onError: (e: Error) => notify.error('Create failed', e),
+  });
+
+  const isTrade = nature === 'TRADE';
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) reset({ role: 'VENDOR' }); onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New counterparty</DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            {nature
+              ? isTrade
+                ? 'Trade payment — this will be sent to the KYC team for approval and can be used once approved.'
+                : 'Non-Trade payment — this is added directly and flagged to the KYC team for review.'
+              : 'Select a payment type first.'}
+          </p>
+        </DialogHeader>
+        <form onSubmit={handleSubmit((d) => createMut.mutate(d))} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="qcCode">Code <span className="text-destructive">*</span></Label>
+              <Input id="qcCode" placeholder="CP-0001" {...register('code')} />
+              {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="qcRole">Role <span className="text-destructive">*</span></Label>
+              <Select id="qcRole" options={[
+                { label: 'Vendor', value: 'VENDOR' },
+                { label: 'Customer', value: 'CUSTOMER' },
+                { label: 'Both', value: 'BOTH' },
+              ]} {...register('role')} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="qcName">Name <span className="text-destructive">*</span></Label>
+            <Input id="qcName" placeholder="Acme Supplies Pvt Ltd" {...register('name')} />
+            {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="qcLegal">Legal name</Label>
+            <Input id="qcLegal" placeholder="Acme Supplies Private Limited" {...register('legalName')} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="qcEmail">Primary contact email</Label>
+            <Input id="qcEmail" type="email" placeholder="ap@acme.com" {...register('primaryContactEmail')} />
+            {errors.primaryContactEmail && <p className="text-xs text-destructive">{errors.primaryContactEmail.message}</p>}
+          </div>
+          <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Nature: <span className="font-medium text-foreground">{nature === 'NON_TRADE' ? 'Non-Trade' : nature === 'TRADE' ? 'Trade' : '—'}</span>
+            {' '}(from the selected payment type&apos;s category)
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={!nature || createMut.isPending}>
+              {createMut.isPending ? 'Creating…' : isTrade ? 'Submit for KYC' : 'Add counterparty'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

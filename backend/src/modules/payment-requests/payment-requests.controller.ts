@@ -21,6 +21,8 @@ import {
   ApproveDto,
   CancelDto,
   RejectDto,
+  ReopenDto,
+  ResolveInvestigationDto,
   TreasuryCompleteDto,
   TreasuryDecisionDto,
   TreasurySubmitDto,
@@ -221,5 +223,26 @@ export class PaymentRequestsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.cancel(id, dto, user.id);
+  }
+
+  // Initiator reopens a completed payment when the counterparty reports
+  // non-receipt → routed back to the Treasury Team as UNDER_INVESTIGATION.
+  @Post(':id/reopen')
+  reopen(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ReopenDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.reopen(id, dto, user.id);
+  }
+
+  // Treasury Team resolves the investigation → back to COMPLETED.
+  @Post(':id/resolve-investigation')
+  resolveInvestigation(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ResolveInvestigationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.resolveInvestigation(id, dto, user.id);
   }
 }

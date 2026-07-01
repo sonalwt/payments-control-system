@@ -4,6 +4,17 @@ import { Country } from '../countries/country.entity';
 
 export type CounterpartyRole = 'VENDOR' | 'CUSTOMER' | 'BOTH';
 
+/** Whether the counterparty was raised for trade vs non-trade payments. */
+export type PaymentNature = 'TRADE' | 'NON_TRADE';
+
+/**
+ * KYC lifecycle. Trade counterparties created by non-admins start PENDING and
+ * must be approved by the KYC team before they can be used in a payment
+ * request. Non-trade self-service additions are APPROVED immediately but
+ * flagged (kycFlagged) so the KYC team can still review them.
+ */
+export type CounterpartyKycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
 export type TaxIdentifierType =
   | 'TRN'
   | 'GSTIN'
@@ -75,4 +86,28 @@ export class Counterparty extends BaseEntity {
 
   @Column({ name: 'kyc_done', type: 'boolean', default: false })
   kycDone!: boolean;
+
+  // Trade vs non-trade — captured at creation, drives the KYC routing.
+  @Column({ name: 'payment_nature', type: 'varchar', length: 10, nullable: true })
+  paymentNature?: PaymentNature | null;
+
+  // KYC review state. Defaults to APPROVED so pre-existing / admin-created
+  // counterparties remain immediately usable; self-service trade additions
+  // start PENDING (see CounterpartiesService.create).
+  @Column({ name: 'kyc_status', type: 'varchar', length: 10, default: 'APPROVED' })
+  kycStatus!: CounterpartyKycStatus;
+
+  // Non-trade self-service additions are usable immediately but flagged here so
+  // the KYC team still sees them in their review queue.
+  @Column({ name: 'kyc_flagged', type: 'boolean', default: false })
+  kycFlagged!: boolean;
+
+  @Column({ name: 'kyc_reviewed_by', type: 'uuid', nullable: true })
+  kycReviewedBy?: string | null;
+
+  @Column({ name: 'kyc_reviewed_at', type: 'timestamptz', nullable: true })
+  kycReviewedAt?: Date | null;
+
+  @Column({ name: 'kyc_rejection_reason', type: 'text', nullable: true })
+  kycRejectionReason?: string | null;
 }

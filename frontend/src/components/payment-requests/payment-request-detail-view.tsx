@@ -33,6 +33,7 @@ export const STATUS_STYLES: Record<string, string> = {
   TREASURY_SWIFT: 'bg-sky-50 text-sky-700 ring-sky-200',
   AWAITING_CLOSURE: 'bg-teal-50 text-teal-700 ring-teal-200',
   COMPLETED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  UNDER_INVESTIGATION: 'bg-orange-50 text-orange-700 ring-orange-200',
   REJECTED: 'bg-rose-50 text-rose-700 ring-rose-200',
   WITHDRAWN: 'bg-muted text-muted-foreground ring-border',
   CANCELLED: 'bg-muted text-muted-foreground ring-border',

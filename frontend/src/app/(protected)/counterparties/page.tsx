@@ -60,6 +60,27 @@ const ROLE_STYLES: Record<CounterpartyRole, string> = {
   BOTH: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800',
 };
 
+const KYC_STATUS_STYLES: Record<string, string> = {
+  APPROVED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800',
+  PENDING: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800',
+  REJECTED: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:ring-rose-800',
+};
+
+function KycBadge({ cp }: { cp: Counterparty }): React.ReactElement {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${KYC_STATUS_STYLES[cp.kycStatus] ?? KYC_STATUS_STYLES.PENDING}`}>
+        {cp.kycStatus === 'APPROVED' ? 'Approved' : cp.kycStatus === 'REJECTED' ? 'Rejected' : 'Pending'}
+      </span>
+      {cp.kycFlagged && (
+        <span className="inline-flex items-center rounded-md bg-orange-50 px-1.5 py-0.5 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-200" title="Flagged for KYC review">
+          review
+        </span>
+      )}
+    </span>
+  );
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }): React.ReactElement {
   return (
     <div className="space-y-0.5">
@@ -79,17 +100,11 @@ function CounterpartyDetails({ cp }: { cp: Counterparty }): React.ReactElement {
         <Field label="Legal name" value={cp.legalName} />
         <Field label="Country" value={cp.country ? `${cp.country.code} — ${cp.country.countryName}` : null} />
         <Field label="Status" value={cp.isActive ? 'Active' : 'Inactive'} />
-        <Field label="KYC" value={
-          <span
-            className={
-              cp.kycDone
-                ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
-                : 'inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800'
-            }
-          >
-            {cp.kycDone ? 'Done' : 'Pending'}
-          </span>
-        } />
+        <Field label="Nature" value={cp.paymentNature === 'TRADE' ? 'Trade' : cp.paymentNature === 'NON_TRADE' ? 'Non-Trade' : null} />
+        <Field label="KYC" value={<KycBadge cp={cp} />} />
+        {cp.kycStatus === 'REJECTED' && cp.kycRejectionReason && (
+          <Field label="KYC rejection reason" value={<span className="whitespace-pre-wrap">{cp.kycRejectionReason}</span>} />
+        )}
         <Field label="Contact name" value={cp.primaryContactName} />
         <Field label="Contact email" value={cp.primaryContactEmail} />
         <Field label="Contact phone" value={cp.primaryContactPhone} />
@@ -215,6 +230,7 @@ export default function CounterpartiesPage(): React.ReactElement {
               <TableHead>Code</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Role</TableHead>
+              <TableHead>Nature</TableHead>
               <TableHead>Country</TableHead>
               <TableHead>Tax IDs</TableHead>
               <TableHead>KYC</TableHead>
@@ -224,7 +240,7 @@ export default function CounterpartiesPage(): React.ReactElement {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={8} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((cp) => (
               <TableRow key={cp.id}>
                 <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{cp.code}</code></TableCell>
@@ -235,21 +251,14 @@ export default function CounterpartiesPage(): React.ReactElement {
                 <TableCell>
                   <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${ROLE_STYLES[cp.role]}`}>{cp.role}</span>
                 </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {cp.paymentNature === 'TRADE' ? 'Trade' : cp.paymentNature === 'NON_TRADE' ? 'Non-Trade' : '—'}
+                </TableCell>
                 <TableCell>{cp.country ? `${cp.country.code} — ${cp.country.countryName}` : '—'}</TableCell>
                 <TableCell className="text-muted-foreground">
                   {cp.taxIdentifiers.length === 0 ? '—' : cp.taxIdentifiers.map((t) => t.type).join(', ')}
                 </TableCell>
-                <TableCell>
-                  <span
-                    className={
-                      cp.kycDone
-                        ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
-                        : 'inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800'
-                    }
-                  >
-                    {cp.kycDone ? 'Done' : 'Pending'}
-                  </span>
-                </TableCell>
+                <TableCell><KycBadge cp={cp} /></TableCell>
                 <TableCell>
                   <span
                     className={
@@ -270,7 +279,7 @@ export default function CounterpartiesPage(): React.ReactElement {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={8} className="py-12 text-center text-muted-foreground">No counterparties yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="py-12 text-center text-muted-foreground">No counterparties yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

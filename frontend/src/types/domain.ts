@@ -178,9 +178,19 @@ export interface Counterparty extends AuditFields {
   notes?: string | null;
   isActive: boolean;
   kycDone: boolean;
+  // Trade vs non-trade nature + KYC review state (self-service creation).
+  paymentNature?: PaymentNature | null;
+  kycStatus: CounterpartyKycStatus;
+  kycFlagged: boolean;
+  kycReviewedBy?: string | null;
+  kycReviewedAt?: string | null;
+  kycRejectionReason?: string | null;
   // Legacy alias kept for older rows where country was a plain ISO code
   countryCode?: string;
 }
+
+export type PaymentNature = 'TRADE' | 'NON_TRADE';
+export type CounterpartyKycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
 export interface Employee extends AuditFields {
   employeeCode: string;
@@ -473,6 +483,7 @@ export type PaymentRequestStatus =
   | 'TREASURY_SWIFT'
   | 'AWAITING_CLOSURE'
   | 'COMPLETED'
+  | 'UNDER_INVESTIGATION'
   | 'REJECTED'
   | 'WITHDRAWN'
   | 'CANCELLED';
@@ -696,6 +707,10 @@ export interface PaymentRequest extends AuditFields {
   rejectionReason?: string | null;
   cancellationReason?: string | null;
   withdrawnReason?: string | null;
+  /** Reopen-on-non-receipt: set when the initiator reopens a COMPLETED request. */
+  reopenReason?: string | null;
+  reopenedAt?: string | null;
+  reopenedBy?: string | null;
   approvals?: PaymentRequestApproval[];
   documents?: PaymentRequestDocument[];
   rejections?: PaymentRequestRejection[];
