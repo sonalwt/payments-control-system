@@ -1,6 +1,7 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Country } from '../countries/country.entity';
+import { User } from '../users/user.entity';
 
 export type CounterpartyRole = 'VENDOR' | 'CUSTOMER' | 'BOTH';
 
@@ -104,6 +105,12 @@ export class Counterparty extends BaseEntity {
 
   @Column({ name: 'kyc_reviewed_by', type: 'uuid', nullable: true })
   kycReviewedBy?: string | null;
+
+  // Read-only relation for surfacing the reviewer's name. Reads select only
+  // id + fullName (see CounterpartiesService) so no sensitive user data leaks.
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'kyc_reviewed_by' })
+  kycReviewedByUser?: User | null;
 
   @Column({ name: 'kyc_reviewed_at', type: 'timestamptz', nullable: true })
   kycReviewedAt?: Date | null;

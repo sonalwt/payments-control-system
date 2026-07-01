@@ -183,6 +183,7 @@ export interface Counterparty extends AuditFields {
   kycStatus: CounterpartyKycStatus;
   kycFlagged: boolean;
   kycReviewedBy?: string | null;
+  kycReviewedByUser?: { id: string; fullName: string } | null;
   kycReviewedAt?: string | null;
   kycRejectionReason?: string | null;
   // Legacy alias kept for older rows where country was a plain ISO code
@@ -1037,6 +1038,8 @@ export interface AppNotification {
 export interface NotificationsResponse {
   data: AppNotification[];
   unreadCount: number;
+}
+
 export interface PrMessageAttachment {
   url: string;
   fileName: string;

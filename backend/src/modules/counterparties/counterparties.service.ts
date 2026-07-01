@@ -94,10 +94,12 @@ export class CounterpartiesService {
   }
 
   async findAll(query: CounterpartyQueryDto): Promise<PaginatedResult<Counterparty>> {
-    const { page = 1, limit = 20, search, role } = query;
+    const { page = 1, limit = 20, search, role, kyc } = query;
     const qb = this.repo
       .createQueryBuilder('cp')
       .leftJoinAndSelect('cp.country', 'country')
+      .leftJoin('cp.kycReviewedByUser', 'reviewer')
+      .addSelect(['reviewer.id', 'reviewer.fullName'])
       .orderBy('cp.name', 'ASC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -110,10 +112,20 @@ export class CounterpartiesService {
     if (role) {
       qb.andWhere('cp.role = :role', { role });
     }
+    if (kyc === 'FLAGGED') {
+      qb.andWhere('cp.kyc_flagged = true');
+    } else if (kyc) {
+      qb.andWhere('cp.kyc_status = :kyc', { kyc });
+    }
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
+  // NOTE: deliberately does NOT load the kycReviewedByUser relation. This method
+  // feeds the mutation paths (approve/reject/update/remove) which save the loaded
+  // entity, and kycReviewedByUser shares the kyc_reviewed_by column with the
+  // scalar kycReviewedBy — loading the relation would let TypeORM clobber the FK
+  // on save. The reviewer name is surfaced via findAll (read-only) instead.
   async findOne(id: string): Promise<Counterparty> {
     const cp = await this.repo.findOne({ where: { id }, relations: ['country'] });
     if (!cp) throw new NotFoundException(`Counterparty ${id} not found`);

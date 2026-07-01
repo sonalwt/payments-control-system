@@ -58,7 +58,6 @@ const NAV_GROUPS: NavGroup[] = [
     roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY],
     items: [
       { href: '/counterparties', label: 'Counterparties', icon: Briefcase },
-      { href: '/counterparties/kyc', label: 'Counterparty KYC', icon: ShieldCheck },
     ],
   },
   {
@@ -89,7 +88,7 @@ const NAV_GROUPS: NavGroup[] = [
     roles: [RoleCode.KYC_TEAM],
     items: [
       { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: Wallet2 },
-      { href: '/counterparties/kyc', label: 'Counterparty KYC', icon: Briefcase },
+      { href: '/counterparties', label: 'Counterparties', icon: Briefcase },
     ],
   },
   {
