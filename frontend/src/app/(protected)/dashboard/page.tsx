@@ -181,6 +181,7 @@ const ACTION_LABEL: Record<string, string> = {
   TREASURY_AUTHORISER: 'Awaiting your authorisation',
   TREASURY_SWIFT: 'Upload SWIFT copy + reference',
   AWAITING_CLOSURE: 'Close the payment request',
+  UNDER_INVESTIGATION: 'Investigate reopened payment',
 };
 
 /**

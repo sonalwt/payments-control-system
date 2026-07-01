@@ -27,12 +27,15 @@ import {
   ApproveDto,
   CancelDto,
   RejectDto,
+  ReopenDto,
+  ResolveInvestigationDto,
   TreasuryCompleteDto,
   TreasuryDecisionDto,
   TreasurySubmitDto,
   TreasurySwiftDto,
   WithdrawDto,
 } from './dto/action.dto';
+import { PaymentRequestMessage } from '../payment-request-messages/payment-request-message.entity';
 import { BeneficiaryAccountsService } from '../beneficiary-accounts/beneficiary-accounts.service';
 import { BeneficiaryAccount } from '../beneficiary-accounts/beneficiary-account.entity';
 import { CreateEmployeeReimbursementDto } from './dto/create-employee-reimbursement.dto';
@@ -424,6 +427,11 @@ export class PaymentRequestsService {
       if (tRoles.includes('TREASURY_AUTHORISER')) {
         orClauses.push(`(pr.status = 'TREASURY_AUTHORISER' AND pr.treasury_authoriser_role_id IS NULL)`);
       }
+      // Reopened (non-receipt) requests are visible to the whole Treasury Team
+      // so any member can pick up the investigation, not just the original actor.
+      if (tRoles.some((x) => ['TREASURY_MAKER_ONLINE', 'TREASURY_MAKER_OFFLINE', 'TREASURY_CHECKER', 'TREASURY_AUTHORISER'].includes(x))) {
+        orClauses.push(`(pr.status = 'UNDER_INVESTIGATION')`);
+      }
       orClauses.push(
         `(pr.treasury_maker_by = :viewerId OR pr.treasury_checker_by = :viewerId OR pr.treasury_authoriser_by = :viewerId)`,
       );
@@ -485,6 +493,9 @@ export class PaymentRequestsService {
           aw.push(`(pr.status IN ('TREASURY_MAKER', 'TREASURY_SWIFT') AND pr.treasury_maker_role_id IS NULL AND pr.tt_mode = 'OFFLINE_TT')`);
         if (r.includes('TREASURY_CHECKER')) aw.push(`(pr.status = 'TREASURY_CHECKER' AND pr.treasury_checker_role_id IS NULL)`);
         if (r.includes('TREASURY_AUTHORISER')) aw.push(`(pr.status = 'TREASURY_AUTHORISER' AND pr.treasury_authoriser_role_id IS NULL)`);
+        // Reopened (non-receipt) requests await the whole Treasury Team to investigate.
+        if (r.some((x) => ['TREASURY_MAKER_ONLINE', 'TREASURY_MAKER_OFFLINE', 'TREASURY_CHECKER', 'TREASURY_AUTHORISER'].includes(x)))
+          aw.push(`(pr.status = 'UNDER_INVESTIGATION')`);
         qb.andWhere(`(${aw.join(' OR ')})`, awParams);
       }
     }
@@ -656,8 +667,19 @@ export class PaymentRequestsService {
         pr.beneficiarySnapshot = this.snapshotBeneficiary(ben);
       }
 
-      // §1.3/§4.2 — counterparty snapshot
+      // §1.3/§4.2 — counterparty snapshot. A counterparty that has not cleared
+      // KYC (e.g. a Trade counterparty still awaiting the KYC team's approval,
+      // or a rejected one) cannot be used in a payment request.
       if (pr.counterparty) {
+        if (pr.counterparty.kycStatus !== 'APPROVED') {
+          const why =
+            pr.counterparty.kycStatus === 'PENDING'
+              ? 'is awaiting KYC approval'
+              : 'was rejected by the KYC team';
+          throw new BadRequestException(
+            `Counterparty "${pr.counterparty.name}" ${why} and cannot be used yet.`,
+          );
+        }
         pr.counterpartySnapshot = this.snapshotCounterparty(pr.counterparty);
       }
 
@@ -1566,6 +1588,226 @@ export class PaymentRequestsService {
     pr.cancellationReason = dto.reason;
     pr.updatedBy = actorId;
     return this.repo.save(pr);
+  }
+
+  /**
+   * Initiator reopens a COMPLETED request after the counterparty reported the
+   * payment was never received. The request is routed back to the Treasury Team
+   * as UNDER_INVESTIGATION, and the reopen reason is posted into the comments
+   * thread so the team picks up the investigation with full context.
+   */
+  async reopen(id: string, dto: ReopenDto, actorId: string): Promise<PaymentRequest> {
+    const result = await this.dataSource.transaction(async (em) => {
+      const pr = await em.findOne(PaymentRequest, { where: { id } });
+      if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
+      if (pr.status !== 'COMPLETED') {
+        throw new BadRequestException(
+          `Only a completed payment request can be reopened (current status: ${pr.status}).`,
+        );
+      }
+      if (pr.createdBy !== actorId) {
+        throw new ForbiddenException('Only the payment initiator can reopen this request.');
+      }
+
+      pr.status = 'UNDER_INVESTIGATION';
+      pr.reopenReason = dto.reason;
+      pr.reopenedAt = new Date();
+      pr.reopenedBy = actorId;
+      pr.updatedBy = actorId;
+      await em.save(pr);
+
+      // Track the reopen in the comments thread (§ requirement).
+      await this.postSystemMessage(
+        em,
+        pr.id,
+        actorId,
+        `🔁 Payment reopened — counterparty reported the payment was not received. ` +
+          `Routed back to the Treasury Team to investigate.\n\nReason: ${dto.reason}`,
+      );
+
+      return this.loadOne(pr.id, em.getRepository(PaymentRequest));
+    });
+
+    // Best-effort, post-commit — a mail failure must not roll back the reopen.
+    // Notify the Treasury Maker(s) so they pick up the investigation.
+    await this.notifyTreasuryMakersOfReopen(result, actorId, dto.reason);
+    return result;
+  }
+
+  /**
+   * Treasury Team resolves a reopened investigation, returning the request to
+   * COMPLETED. The resolution note is posted into the comments thread and the
+   * initiator is notified.
+   */
+  async resolveInvestigation(
+    id: string,
+    dto: ResolveInvestigationDto,
+    actorId: string,
+  ): Promise<PaymentRequest> {
+    const { result, initiatorId } = await this.dataSource.transaction(async (em) => {
+      const pr = await em.findOne(PaymentRequest, { where: { id } });
+      if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
+      if (pr.status !== 'UNDER_INVESTIGATION') {
+        throw new BadRequestException(`Cannot resolve in status ${pr.status}`);
+      }
+      await this.assertIsTreasuryTeam(em, actorId);
+
+      pr.status = 'COMPLETED';
+      pr.completedAt = new Date();
+      pr.updatedBy = actorId;
+      await em.save(pr);
+
+      const note = dto.comments?.trim();
+      await this.postSystemMessage(
+        em,
+        pr.id,
+        actorId,
+        `✅ Investigation resolved by the Treasury Team — request marked completed.` +
+          (note ? `\n\nNote: ${note}` : ''),
+      );
+
+      const result = await this.loadOne(pr.id, em.getRepository(PaymentRequest));
+      return { result, initiatorId: pr.createdBy ?? null };
+    });
+
+    if (initiatorId) {
+      await this.notifyInitiatorOfResolution(initiatorId, result, actorId, dto.comments);
+    }
+    return result;
+  }
+
+  /** Persist a system note into the payment request's comments thread. */
+  private async postSystemMessage(
+    em: EntityManager,
+    paymentRequestId: string,
+    senderId: string,
+    message: string,
+  ): Promise<void> {
+    await em.save(
+      em.create(PaymentRequestMessage, {
+        paymentRequestId,
+        senderId,
+        message,
+        attachments: [],
+      }),
+    );
+  }
+
+  /** Assert the actor holds one of the four Treasury Team roles. */
+  private async assertIsTreasuryTeam(em: EntityManager, actorId: string): Promise<void> {
+    const has = await em
+      .getRepository(UserRole)
+      .createQueryBuilder('ur')
+      .innerJoin('ur.role', 'r')
+      .where('ur.user_id = :uid', { uid: actorId })
+      .andWhere('r.code IN (:...codes)', {
+        codes: [
+          RoleCode.TREASURY_MAKER_ONLINE,
+          RoleCode.TREASURY_MAKER_OFFLINE,
+          RoleCode.TREASURY_CHECKER,
+          RoleCode.TREASURY_AUTHORISER,
+        ],
+      })
+      .getCount();
+    if (has > 0) return;
+    throw new ForbiddenException('Only the Treasury Team can resolve this investigation.');
+  }
+
+  /**
+   * Resolve the Treasury Maker(s) responsible for a request: holders of the
+   * matrix-pinned maker role when one was snapshotted, otherwise holders of the
+   * global maker role for the request's TT mode (online by default). Excludes
+   * inactive / platform-admin users; soft-deleted users are filtered by TypeORM.
+   */
+  private async findTreasuryMakers(
+    pr: PaymentRequest,
+  ): Promise<{ id: string; email: string; fullName: string }[]> {
+    const qb = this.repo.manager
+      .getRepository(User)
+      .createQueryBuilder('u')
+      .innerJoin('u.userRoles', 'ur')
+      .where('u.is_active = true')
+      .andWhere('u.is_platform_admin = false');
+    if (pr.treasuryMakerRoleId) {
+      qb.andWhere('ur.role_id = :rid', { rid: pr.treasuryMakerRoleId });
+    } else {
+      const code =
+        pr.ttMode === 'OFFLINE_TT'
+          ? RoleCode.TREASURY_MAKER_OFFLINE
+          : RoleCode.TREASURY_MAKER_ONLINE;
+      qb.innerJoin('ur.role', 'r').andWhere('r.code = :code', { code });
+    }
+    const users = await qb.select(['u.id', 'u.email', 'u.fullName']).getMany();
+    return users
+      .filter((u) => !!u.email)
+      .map((u) => ({ id: u.id, email: u.email, fullName: u.fullName }));
+  }
+
+  /** Email the Treasury Maker(s) that a completed payment was reopened to investigate. */
+  private async notifyTreasuryMakersOfReopen(
+    pr: PaymentRequest,
+    initiatorActorId: string,
+    reason: string,
+  ): Promise<void> {
+    const makers = await this.findTreasuryMakers(pr);
+    if (makers.length === 0) return;
+    const initiator = await this.repo.manager.findOne(User, {
+      where: { id: initiatorActorId },
+      select: ['id', 'fullName'],
+    });
+    const initName = initiator?.fullName ?? 'The payment initiator';
+    const subject = `Payment ${pr.requestNumber} reopened — non-receipt investigation`;
+    await Promise.all(
+      makers.map((m) => {
+        const text =
+          `Hello ${m.fullName},\n\n` +
+          `${initName} has reopened payment request ${pr.requestNumber} because the counterparty ` +
+          `reported the payment was not received. It is now back with the Treasury Team to investigate.\n\n` +
+          `Reason: ${reason}\n\n` +
+          `Please review and use the comments thread to coordinate.\n`;
+        const html =
+          `<p>Hello ${m.fullName},</p>` +
+          `<p>${initName} has reopened payment request <strong>${pr.requestNumber}</strong> because the ` +
+          `counterparty reported the payment was not received. It is now back with the Treasury Team to investigate.</p>` +
+          `<p><strong>Reason:</strong> ${reason}</p>` +
+          `<p>Please review and use the comments thread to coordinate.</p>`;
+        return this.mail.sendNotification(m.email, subject, text, html);
+      }),
+    );
+  }
+
+  /** Email the initiator that the Treasury Team resolved the investigation. */
+  private async notifyInitiatorOfResolution(
+    initiatorId: string,
+    pr: PaymentRequest,
+    actorId: string,
+    note?: string,
+  ): Promise<void> {
+    const [initiator, actor] = await Promise.all([
+      this.repo.manager.findOne(User, {
+        where: { id: initiatorId },
+        select: ['id', 'email', 'fullName'],
+      }),
+      this.repo.manager.findOne(User, {
+        where: { id: actorId },
+        select: ['id', 'fullName'],
+      }),
+    ]);
+    if (!initiator?.email) return;
+    const actorName = actor?.fullName ?? 'The Treasury Team';
+    const trimmed = note?.trim();
+    const subject = `Payment ${pr.requestNumber} — investigation resolved`;
+    const text =
+      `Hello ${initiator.fullName},\n\n` +
+      `${actorName} has resolved the investigation on payment request ${pr.requestNumber}, ` +
+      `which is now marked completed.\n` +
+      (trimmed ? `\nNote: ${trimmed}\n` : '');
+    const html =
+      `<p>Hello ${initiator.fullName},</p>` +
+      `<p>${actorName} has resolved the investigation on payment request <strong>${pr.requestNumber}</strong>, ` +
+      `which is now marked completed.</p>` +
+      (trimmed ? `<p><strong>Note:</strong> ${trimmed}</p>` : '');
+    await this.mail.sendNotification(initiator.email, subject, text, html);
   }
 
   // ===================================================================

@@ -88,6 +88,7 @@ const NAV_GROUPS: NavGroup[] = [
     roles: [RoleCode.KYC_TEAM],
     items: [
       { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: Wallet2 },
+      { href: '/counterparties', label: 'Counterparties', icon: Briefcase },
     ],
   },
   {

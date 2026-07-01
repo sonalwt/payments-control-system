@@ -2,26 +2,32 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { BadgeCheck, Eye, Pencil, Plus, Search, Trash2, XCircle } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Counterparty, CounterpartyRole, Paginated } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { useNotify } from '@/hooks/use-notify';
+import { useAuth } from '@/hooks/use-auth';
+import { hasAnyRole, RoleCode } from '@/lib/roles';
+import { formatDateTime } from '@/lib/datetime';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { ConfirmDelete } from '@/components/shared/confirm-delete';
 import { CounterpartyForm, type CounterpartyFormData } from './counterparty-form';
 
 const KEY = 'counterparties';
+type KycFilter = '' | 'PENDING' | 'FLAGGED' | 'APPROVED' | 'REJECTED';
 
 function normalize(d: CounterpartyFormData) {
   const blank = (v?: string) => (v && v.length > 0 ? v : undefined);
@@ -60,6 +66,27 @@ const ROLE_STYLES: Record<CounterpartyRole, string> = {
   BOTH: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800',
 };
 
+const KYC_STATUS_STYLES: Record<string, string> = {
+  APPROVED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800',
+  PENDING: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800',
+  REJECTED: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:ring-rose-800',
+};
+
+function KycBadge({ cp }: { cp: Counterparty }): React.ReactElement {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${KYC_STATUS_STYLES[cp.kycStatus] ?? KYC_STATUS_STYLES.PENDING}`}>
+        {cp.kycStatus === 'APPROVED' ? 'Approved' : cp.kycStatus === 'REJECTED' ? 'Rejected' : 'Pending'}
+      </span>
+      {cp.kycFlagged && (
+        <span className="inline-flex items-center rounded-md bg-orange-50 px-1.5 py-0.5 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-200" title="Flagged for KYC review">
+          review
+        </span>
+      )}
+    </span>
+  );
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }): React.ReactElement {
   return (
     <div className="space-y-0.5">
@@ -79,17 +106,24 @@ function CounterpartyDetails({ cp }: { cp: Counterparty }): React.ReactElement {
         <Field label="Legal name" value={cp.legalName} />
         <Field label="Country" value={cp.country ? `${cp.country.code} — ${cp.country.countryName}` : null} />
         <Field label="Status" value={cp.isActive ? 'Active' : 'Inactive'} />
-        <Field label="KYC" value={
-          <span
-            className={
-              cp.kycDone
-                ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
-                : 'inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800'
+        <Field label="Nature" value={cp.paymentNature === 'TRADE' ? 'Trade' : cp.paymentNature === 'NON_TRADE' ? 'Non-Trade' : null} />
+        <Field label="KYC" value={<KycBadge cp={cp} />} />
+        {(cp.kycStatus === 'APPROVED' || cp.kycStatus === 'REJECTED') && cp.kycReviewedByUser && (
+          <Field
+            label={cp.kycStatus === 'REJECTED' ? 'Rejected by' : 'Approved by'}
+            value={
+              <span>
+                {cp.kycReviewedByUser.fullName}
+                {cp.kycReviewedAt && (
+                  <span className="text-muted-foreground"> · {formatDateTime(cp.kycReviewedAt)}</span>
+                )}
+              </span>
             }
-          >
-            {cp.kycDone ? 'Done' : 'Pending'}
-          </span>
-        } />
+          />
+        )}
+        {cp.kycStatus === 'REJECTED' && cp.kycRejectionReason && (
+          <Field label="KYC rejection reason" value={<span className="whitespace-pre-wrap">{cp.kycRejectionReason}</span>} />
+        )}
         <Field label="Contact name" value={cp.primaryContactName} />
         <Field label="Contact email" value={cp.primaryContactEmail} />
         <Field label="Contact phone" value={cp.primaryContactPhone} />
@@ -141,19 +175,29 @@ export default function CounterpartiesPage(): React.ReactElement {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'' | CounterpartyRole>('');
+  const [kycFilter, setKycFilter] = useState<KycFilter>('');
   const [createOpen, setCreateOpen] = useState(false);
   const [viewing, setViewing] = useState<Counterparty | null>(null);
   const [editing, setEditing] = useState<Counterparty | null>(null);
   const [deleting, setDeleting] = useState<Counterparty | null>(null);
+  const [rejecting, setRejecting] = useState<Counterparty | null>(null);
   const notify = useNotify();
   const qc = useQueryClient();
+  const { user } = useAuth();
+
+  // The two responsibilities the merged page serves, gated to match the backend
+  // RBAC: masters management vs. the KYC review actions.
+  const canManage = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY]);
+  const canCreate = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY, RoleCode.INITIATOR]);
+  const canReviewKyc = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN, RoleCode.KYC_TEAM]);
 
   const params = useMemo(() => {
     const u = new URLSearchParams({ page: String(page), limit: '20' });
     if (search) u.set('search', search);
     if (roleFilter) u.set('role', roleFilter);
+    if (kycFilter) u.set('kyc', kycFilter);
     return u.toString();
-  }, [page, search, roleFilter]);
+  }, [page, search, roleFilter, kycFilter]);
 
   const { data, isLoading } = useQuery({
     queryKey: [KEY, params],
@@ -175,22 +219,35 @@ export default function CounterpartiesPage(): React.ReactElement {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setDeleting(null); notify.success('Deleted'); },
     onError: (e: Error) => notify.error('Delete failed', e),
   });
+  const approveMut = useMutation({
+    mutationFn: (id: string) => api.post<Counterparty>(`/counterparties/${id}/kyc/approve`, {}),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); notify.success('Counterparty approved'); },
+    onError: (e: Error) => notify.error('Approve failed', e),
+  });
+  const rejectMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post<Counterparty>(`/counterparties/${id}/kyc/reject`, { reason }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); setRejecting(null); notify.success('Counterparty rejected'); },
+    onError: (e: Error) => notify.error('Reject failed', e),
+  });
 
   return (
     <div>
       <PageHeader
         title="Counterparties"
-        description="Unified vendor & customer master (SoW §1.3). Each record carries a role, country, tax identifiers, addresses, and primary contact."
+        description="Unified vendor & customer master (SoW §1.3). Each record carries a role, country, tax identifiers, addresses, and primary contact. KYC reviewers approve or reject records here."
         actions={
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> New counterparty</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-2xl">
-              <DialogHeader><DialogTitle>Create counterparty</DialogTitle></DialogHeader>
-              <CounterpartyForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
-            </DialogContent>
-          </Dialog>
+          canCreate ? (
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button><Plus className="mr-2 h-4 w-4" /> New counterparty</Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-2xl">
+                <DialogHeader><DialogTitle>Create counterparty</DialogTitle></DialogHeader>
+                <CounterpartyForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </DialogContent>
+            </Dialog>
+          ) : undefined
         }
       />
       <Card>
@@ -208,6 +265,18 @@ export default function CounterpartiesPage(): React.ReactElement {
             value={roleFilter}
             onChange={(e) => { setPage(1); setRoleFilter(e.target.value as '' | CounterpartyRole); }}
           />
+          <Select
+            className="w-48"
+            options={[
+              { label: 'All KYC', value: '' },
+              { label: 'Pending approval (Trade)', value: 'PENDING' },
+              { label: 'Flagged (Non-Trade)', value: 'FLAGGED' },
+              { label: 'Approved', value: 'APPROVED' },
+              { label: 'Rejected', value: 'REJECTED' },
+            ]}
+            value={kycFilter}
+            onChange={(e) => { setPage(1); setKycFilter(e.target.value as KycFilter); }}
+          />
         </div>
         <Table>
           <TableHeader>
@@ -215,6 +284,7 @@ export default function CounterpartiesPage(): React.ReactElement {
               <TableHead>Code</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Role</TableHead>
+              <TableHead>Nature</TableHead>
               <TableHead>Country</TableHead>
               <TableHead>Tax IDs</TableHead>
               <TableHead>KYC</TableHead>
@@ -224,7 +294,7 @@ export default function CounterpartiesPage(): React.ReactElement {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={8} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((cp) => (
               <TableRow key={cp.id}>
                 <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{cp.code}</code></TableCell>
@@ -235,20 +305,20 @@ export default function CounterpartiesPage(): React.ReactElement {
                 <TableCell>
                   <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${ROLE_STYLES[cp.role]}`}>{cp.role}</span>
                 </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {cp.paymentNature === 'TRADE' ? 'Trade' : cp.paymentNature === 'NON_TRADE' ? 'Non-Trade' : '—'}
+                </TableCell>
                 <TableCell>{cp.country ? `${cp.country.code} — ${cp.country.countryName}` : '—'}</TableCell>
                 <TableCell className="text-muted-foreground">
                   {cp.taxIdentifiers.length === 0 ? '—' : cp.taxIdentifiers.map((t) => t.type).join(', ')}
                 </TableCell>
                 <TableCell>
-                  <span
-                    className={
-                      cp.kycDone
-                        ? 'inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800'
-                        : 'inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-800'
-                    }
-                  >
-                    {cp.kycDone ? 'Done' : 'Pending'}
-                  </span>
+                  <KycBadge cp={cp} />
+                  {(cp.kycStatus === 'APPROVED' || cp.kycStatus === 'REJECTED') && cp.kycReviewedByUser && (
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {cp.kycStatus === 'REJECTED' ? 'Rejected' : 'Approved'} by {cp.kycReviewedByUser.fullName}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>
                   <span
@@ -264,13 +334,39 @@ export default function CounterpartiesPage(): React.ReactElement {
                 <TableCell className="text-right">
                   <div className="inline-flex items-center gap-1 whitespace-nowrap">
                     <Button size="icon" variant="ghost" onClick={() => setViewing(cp)} title="View"><Eye className="h-4 w-4" /></Button>
-                    <Button size="icon" variant="ghost" onClick={() => setEditing(cp)} title="Edit"><Pencil className="h-4 w-4" /></Button>
-                    <Button size="icon" variant="ghost" onClick={() => setDeleting(cp)} title="Delete"><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                    {canReviewKyc && (
+                      <>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          disabled={approveMut.isPending || (cp.kycStatus === 'APPROVED' && !cp.kycFlagged)}
+                          onClick={() => approveMut.mutate(cp.id)}
+                          title="Approve KYC"
+                        >
+                          <BadgeCheck className="h-4 w-4 text-emerald-600" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          disabled={cp.kycStatus === 'REJECTED'}
+                          onClick={() => setRejecting(cp)}
+                          title="Reject KYC"
+                        >
+                          <XCircle className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </>
+                    )}
+                    {canManage && (
+                      <>
+                        <Button size="icon" variant="ghost" onClick={() => setEditing(cp)} title="Edit"><Pencil className="h-4 w-4" /></Button>
+                        <Button size="icon" variant="ghost" onClick={() => setDeleting(cp)} title="Delete"><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                      </>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={8} className="py-12 text-center text-muted-foreground">No counterparties yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="py-12 text-center text-muted-foreground">No counterparties yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -297,6 +393,44 @@ export default function CounterpartiesPage(): React.ReactElement {
         loading={deleteMut.isPending}
         onConfirm={() => deleting && deleteMut.mutate(deleting.id)}
       />
+      <RejectDialog
+        cp={rejecting}
+        onOpenChange={(o) => !o && setRejecting(null)}
+        submitting={rejectMut.isPending}
+        onSubmit={(reason) => rejecting && rejectMut.mutate({ id: rejecting.id, reason })}
+      />
     </div>
+  );
+}
+
+function RejectDialog({
+  cp, onOpenChange, onSubmit, submitting,
+}: {
+  cp: Counterparty | null;
+  onOpenChange: (o: boolean) => void;
+  onSubmit: (reason: string) => void;
+  submitting?: boolean;
+}) {
+  const [reason, setReason] = useState('');
+  return (
+    <Dialog open={!!cp} onOpenChange={(o) => { if (!o) setReason(''); onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Reject counterparty</DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            Rejecting {cp?.name} ({cp?.code}). It cannot be used in payment requests. The creator is notified with your reason.
+          </p>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="reason">Reason <span className="text-destructive">*</span></Label>
+          <Textarea id="reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this counterparty being rejected?" />
+        </div>
+        <DialogFooter>
+          <Button variant="destructive" disabled={submitting || reason.trim().length < 5} onClick={() => onSubmit(reason.trim())}>
+            {submitting ? 'Rejecting…' : 'Reject'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -46,6 +46,28 @@ export class CancelDto {
 }
 
 /**
+ * Initiator reopens a COMPLETED request because the counterparty reported the
+ * payment was never received. The reason is required and posted into the
+ * comments thread so the Treasury Team has the context for the investigation.
+ */
+export class ReopenDto {
+  @ApiProperty({ example: 'Counterparty confirms the funds have not arrived as of today.' })
+  @IsString()
+  @IsNotEmpty()
+  @Length(5, 4000)
+  reason!: string;
+}
+
+/** Treasury Team resolves an investigation back to COMPLETED — optional note. */
+export class ResolveInvestigationDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @Length(0, 4000)
+  comments?: string;
+}
+
+/**
  * Treasury maker submits the bank reference + SWIFT/MT103 copy received from
  * the bank, forwarding the request to the treasury checker.
  */

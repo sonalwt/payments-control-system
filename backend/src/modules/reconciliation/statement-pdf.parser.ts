@@ -354,6 +354,73 @@ export function parseStatementText(
   return { lines, warnings };
 }
 
+/** Minimum non-whitespace chars for a text layer to be treated as usable. */
+const MIN_TEXT_CHARS = 40;
+
+const collapsed = (s: string): number => s.replace(/\s+/g, '').length;
+
+/**
+ * Recovery extractor built on modern pdfjs-dist (the legacy/CommonJS build).
+ * The pdf.js bundled inside pdf-parse is from ~2017 and throws "bad XRef entry"
+ * on statements whose cross-reference table is malformed (some bank generators,
+ * e.g. Emirates NBD businessONLINE, emit these). Current pdf.js instead rebuilds
+ * a broken xref table by scanning the file, so it opens those statements.
+ *
+ * pdfjs yields individually-positioned text items rather than lines, so we group
+ * items by their y coordinate (top-to-bottom) and order each line left-to-right,
+ * reproducing the newline-delimited layout buildBlocks() expects.
+ */
+async function extractTextWithPdfjs(buffer: Buffer): Promise<string> {
+  // Lazy-require: the heavy pdfjs module (and its node DOMMatrix-polyfill
+  // warnings) only loads on the rare fallback path, never at app boot.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
+
+  let standardFontDataUrl: string | undefined;
+  try {
+    // Point pdfjs at its bundled standard fonts so it doesn't warn while
+    // mapping common fonts (forward slashes work on every platform).
+    standardFontDataUrl = require
+      .resolve('pdfjs-dist/package.json')
+      .replace(/\\/g, '/')
+      .replace(/package\.json$/, 'standard_fonts/');
+  } catch {
+    standardFontDataUrl = undefined;
+  }
+
+  const doc = await pdfjs.getDocument({
+    data: new Uint8Array(buffer),
+    isEvalSupported: false,
+    verbosity: 0, // errors only — silence font/eval informational warnings
+    standardFontDataUrl,
+  }).promise;
+
+  const Y_TOL = 2.5; // points: items within this y-distance share a line
+  let out = '';
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    const rows: { y: number; items: { x: number; str: string }[] }[] = [];
+    for (const it of content.items as Array<{ str?: string; transform: number[] }>) {
+      if (!it.str) continue;
+      const x = it.transform[4];
+      const y = it.transform[5];
+      let row = rows.find((r) => Math.abs(r.y - y) <= Y_TOL);
+      if (!row) {
+        row = { y, items: [] };
+        rows.push(row);
+      }
+      row.items.push({ x, str: it.str });
+    }
+    rows.sort((a, b) => b.y - a.y); // top of page first
+    for (const r of rows) {
+      r.items.sort((a, b) => a.x - b.x);
+      out += r.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim() + '\n';
+    }
+  }
+  return out;
+}
+
 /**
  * Extract the text layer from a statement PDF and parse it. Throws
  * StatementParseError for non-text (scanned) PDFs or unreadable layouts so the
@@ -363,32 +430,44 @@ export async function parseStatementPdf(
   buffer: Buffer,
   opts: ParseStatementOptions = {},
 ): Promise<PdfParseResult> {
-  // pdf-parse (bundled pdf.js) has a cold-start quirk: the first couple of
-  // parses after the worker is cold throw a spurious "bad XRef entry" /
-  // "Invalid PDF structure" on perfectly valid PDFs, then succeed on retry.
-  // Without this, the first statement upload(s) after a server start fail. Retry
-  // a few times before surfacing the error so a valid PDF parses on attempt 1.
+  // Primary: pdf-parse. It reconstructs the newline-delimited text layer the
+  // block parser is tuned for. It also has a cold-start quirk — the first
+  // parse(s) after the worker is cold can throw a spurious "bad XRef entry" on
+  // valid PDFs — so retry a few times before falling back.
   let text: string | null = null;
-  let lastErr: unknown = null;
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const parsed = await pdfParse(buffer);
-      text = parsed.text ?? '';
-      lastErr = null;
+      const t = parsed.text ?? '';
+      if (collapsed(t) >= MIN_TEXT_CHARS) {
+        text = t;
+        break;
+      }
+      // Opened but (near-)empty — a scanned image, or a layout/xref pdf-parse
+      // can't map. Stop retrying; let the pdfjs fallback attempt recovery.
       break;
-    } catch (err) {
-      lastErr = err;
+    } catch {
+      // Genuine parse failure (e.g. a malformed xref pdf-parse can't rebuild).
+      // Retry for the cold-start case, then fall back to pdfjs below.
     }
   }
-  if (lastErr !== null || text === null) {
+
+  // Fallback: modern pdfjs-dist, which recovers PDFs pdf-parse cannot open
+  // (notably "bad XRef entry") or returned no text for.
+  if (text === null) {
+    try {
+      const recovered = await extractTextWithPdfjs(buffer);
+      if (collapsed(recovered) >= MIN_TEXT_CHARS) text = recovered;
+    } catch {
+      // fall through to the error below
+    }
+  }
+
+  if (text === null) {
     throw new StatementParseError(
-      `Could not read this PDF: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+      'This PDF could not be read — it may be a scanned image (OCR required) or use a layout this parser does not recognise. Please verify the file or enter the statement manually.',
     );
   }
-  if (text.replace(/\s+/g, '').length < 40) {
-    throw new StatementParseError(
-      'This PDF has no readable text layer (it looks like a scanned image). OCR is required, or enter the statement manually.',
-    );
-  }
+
   return parseStatementText(text, opts);
 }

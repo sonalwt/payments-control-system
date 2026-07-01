@@ -50,6 +50,9 @@ type ApproveData = z.infer<typeof approveSchema>;
 const rejectSchema = z.object({ comments: z.string().min(5, 'Reason required (min 5 chars)') });
 type RejectData = z.infer<typeof rejectSchema>;
 
+const reopenSchema = z.object({ reason: z.string().min(5, 'Reason required (min 5 chars)') });
+type ReopenData = z.infer<typeof reopenSchema>;
+
 // One dialog drives all treasury maker/authoriser steps; which fields are
 // required is configured per use via `need`.
 type TreasuryActionData = {
@@ -110,6 +113,8 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const [treasurySwiftOpen, setTreasurySwiftOpen] = useState(false);
   const [treasuryCompleteOpen, setTreasuryCompleteOpen] = useState(false);
   const [treasuryRejectOpen, setTreasuryRejectOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [resolveOpen, setResolveOpen] = useState(false);
 
   // Document editing state (used when status = DRAFT)
   const [newDocCode, setNewDocCode] = useState('');
@@ -230,6 +235,19 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setTreasuryRejectOpen(false); notify.success('Rejected — returned to initiator'); },
     onError: (e: Error) => notify.error('Reject failed', e),
   });
+  const reopenMut = useMutation({
+    // Initiator reopens a completed payment (counterparty reported non-receipt)
+    // → routed back to the Treasury Team as UNDER_INVESTIGATION.
+    mutationFn: (d: ReopenData) => mut('reopen', d),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setReopenOpen(false); notify.success('Reopened — sent to the Treasury Team to investigate'); },
+    onError: (e: Error) => notify.error('Reopen failed', e),
+  });
+  const resolveMut = useMutation({
+    // Treasury Team resolves the investigation → back to COMPLETED.
+    mutationFn: (d: { comments?: string }) => mut('resolve-investigation', d),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['payment-request', id] }); setResolveOpen(false); notify.success('Investigation resolved — marked completed'); },
+    onError: (e: Error) => notify.error('Resolve failed', e),
+  });
 
   const attachDocMut = useMutation({
     mutationFn: () => api.post(`/payment-requests/${id}/documents`, {
@@ -278,6 +296,10 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   }
 
   const isMine = pr.createdBy === user?.id;
+  // A counterparty attached while still awaiting KYC (Trade flow) — or one the
+  // KYC team rejected — blocks submission until it is approved. The backend
+  // enforces this at submit; here we disable the button and explain why.
+  const counterpartyBlocksSubmit = !!pr.counterparty && pr.counterparty.kycStatus !== 'APPROVED';
   // Confidential (chairman-style) payments bypass the approval matrix and the
   // treasury maker/checker stages — the authoriser captures the reference +
   // SWIFT/MT103 copy when completing.
@@ -303,6 +325,9 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const canTreasuryAuthoriser = pr.treasuryAuthoriserRole
     ? userRoles.includes(pr.treasuryAuthoriserRole.code)
     : userRoles.includes('TREASURY_AUTHORISER');
+  // A reopened (non-receipt) request can be resolved by any Treasury Team member.
+  const canTreasuryTeam = ['TREASURY_MAKER_ONLINE', 'TREASURY_MAKER_OFFLINE', 'TREASURY_CHECKER', 'TREASURY_AUTHORISER']
+    .some((c) => userRoles.includes(c));
 
   // Active step authorisation hint: for ROLE-steps any holder can act; for
   // USER-steps only the assigned user. The backend re-checks regardless.
@@ -336,7 +361,12 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
         </Link>
       )}
       {pr.status === 'DRAFT' && isInitiator && isMine && (
-        <Button size="sm" onClick={() => submitMut.mutate()} disabled={submitMut.isPending}>
+        <Button
+          size="sm"
+          onClick={() => submitMut.mutate()}
+          disabled={submitMut.isPending || counterpartyBlocksSubmit}
+          title={counterpartyBlocksSubmit ? 'Counterparty is awaiting KYC approval' : undefined}
+        >
           <Send className="mr-1 h-4 w-4" /> Submit
         </Button>
       )}
@@ -353,6 +383,16 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       {pr.status === 'AWAITING_CLOSURE' && isMine && (
         <Button size="sm" onClick={() => closeMut.mutate()} disabled={closeMut.isPending}>
           <CheckCircle2 className="mr-1 h-4 w-4" /> Close payment request
+        </Button>
+      )}
+      {pr.status === 'COMPLETED' && isMine && (
+        <Button size="sm" variant="outline" onClick={() => setReopenOpen(true)} disabled={reopenMut.isPending}>
+          <RefreshCw className="mr-1 h-4 w-4" /> Reopen (not received)
+        </Button>
+      )}
+      {pr.status === 'UNDER_INVESTIGATION' && canTreasuryTeam && (
+        <Button size="sm" onClick={() => setResolveOpen(true)} disabled={resolveMut.isPending}>
+          <CheckCircle2 className="mr-1 h-4 w-4" /> Resolve investigation
         </Button>
       )}
       {pr.status === 'PENDING_APPROVAL' && isApprover && canActOnStep && (
@@ -455,6 +495,38 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
 
   return (
     <>
+      {pr.status === 'DRAFT' && isMine && counterpartyBlocksSubmit && (
+        <div className="mb-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+          <div>
+            <p className="font-medium">
+              {pr.counterparty?.kycStatus === 'REJECTED'
+                ? 'Counterparty was rejected by the KYC team'
+                : 'Counterparty is awaiting KYC approval'}
+            </p>
+            <p className="text-xs mt-0.5">
+              {pr.counterparty?.kycStatus === 'REJECTED' ? (
+                <>“{pr.counterparty?.name}” cannot be used in a payment. Edit this draft and choose a different counterparty before submitting.</>
+              ) : (
+                <>This request is saved as a draft. It can be submitted once the KYC team approves “{pr.counterparty?.name}”.</>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+      {pr.status === 'UNDER_INVESTIGATION' && (
+        <div className="mb-4 rounded-md border border-orange-400 bg-orange-50 p-3 text-sm text-orange-900 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-orange-600" />
+          <div>
+            <p className="font-medium">Reopened — counterparty reported non-receipt</p>
+            <p className="text-xs mt-0.5">
+              This completed payment was reopened by the initiator and is back with the Treasury Team to
+              investigate. Use the comments thread below to track the investigation.
+              {pr.reopenReason ? <> <span className="font-medium">Reason:</span> {pr.reopenReason}</> : null}
+            </p>
+          </div>
+        </div>
+      )}
       {balanceShortfall && sourceAcct && (() => {
         const ccy = pr.currency?.code ? `${pr.currency.code} ` : '';
         const money = (n: number | string): string =>
@@ -530,7 +602,78 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
       <RejectDialog open={treasuryRejectOpen} onOpenChange={setTreasuryRejectOpen}
         submitting={treasuryRejectMut.isPending}
         onSubmit={(d) => treasuryRejectMut.mutate(d)} />
+      <ReopenDialog open={reopenOpen} onOpenChange={setReopenOpen}
+        submitting={reopenMut.isPending}
+        onSubmit={(d) => reopenMut.mutate(d)} />
+      <ResolveInvestigationDialog open={resolveOpen} onOpenChange={setResolveOpen}
+        submitting={resolveMut.isPending}
+        onSubmit={(d) => resolveMut.mutate(d)} />
     </>
+  );
+}
+
+function ReopenDialog({
+  open, onOpenChange, onSubmit, submitting,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSubmit: (d: ReopenData) => void;
+  submitting?: boolean;
+}) {
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<ReopenData>({ resolver: zodResolver(reopenSchema) });
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Reopen payment request</DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            The counterparty reported the payment was not received. Reopening sends this back to the
+            Treasury Team to investigate. Your reason is added to the comments thread.
+          </p>
+        </DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="reopenReason">Reason <span className="text-destructive">*</span></Label>
+            <Textarea id="reopenReason" rows={3} placeholder="e.g. Counterparty confirms funds not received as of today." {...register('reason')} />
+            {errors.reason && <p className="text-xs text-destructive">{errors.reason.message}</p>}
+          </div>
+          <DialogFooter><Button type="submit" disabled={submitting}>{submitting ? 'Reopening…' : 'Reopen'}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ResolveInvestigationDialog({
+  open, onOpenChange, onSubmit, submitting,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSubmit: (d: { comments?: string }) => void;
+  submitting?: boolean;
+}) {
+  const { register, handleSubmit, reset } = useForm<{ comments?: string }>();
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Resolve investigation</DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            Mark this reopened payment as resolved and completed. Add an optional note (e.g. funds
+            re-sent, or receipt confirmed) — it is posted to the comments thread.
+          </p>
+        </DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="resolveComments">Note</Label>
+            <Textarea id="resolveComments" rows={3} placeholder="Optional note…" {...register('comments')} />
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={submitting}>{submitting ? 'Resolving…' : 'Resolve & complete'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

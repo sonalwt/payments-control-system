@@ -99,6 +99,16 @@ export class CreateCounterpartyDto {
   @IsEnum(['VENDOR', 'CUSTOMER', 'BOTH'])
   role!: 'VENDOR' | 'CUSTOMER' | 'BOTH';
 
+  /**
+   * Trade vs non-trade nature. Required for self-service (non-admin) creation —
+   * it drives the KYC routing (trade → KYC approval; non-trade → direct add,
+   * flagged to KYC). Prefilled from the payment type's category in the UI.
+   */
+  @ApiPropertyOptional({ enum: ['TRADE', 'NON_TRADE'] })
+  @IsOptional()
+  @IsEnum(['TRADE', 'NON_TRADE'])
+  paymentNature?: 'TRADE' | 'NON_TRADE';
+
   @ApiPropertyOptional({ description: 'Country master UUID' })
   @IsOptional()
   @IsUUID()

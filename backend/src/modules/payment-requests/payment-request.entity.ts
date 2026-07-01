@@ -34,6 +34,10 @@ export type PaymentRequestStatus =
   | 'TREASURY_SWIFT'
   | 'AWAITING_CLOSURE'
   | 'COMPLETED'
+  // Initiator reopened a COMPLETED request because the counterparty reported
+  // non-receipt; routed back to the Treasury Team to investigate, then either
+  // resolved back to COMPLETED or carried on through the comments thread.
+  | 'UNDER_INVESTIGATION'
   | 'REJECTED'
   | 'WITHDRAWN'
   | 'CANCELLED';
@@ -303,6 +307,20 @@ export class PaymentRequest extends BaseEntity {
 
   @Column({ name: 'withdrawn_reason', type: 'text', nullable: true })
   withdrawnReason?: string | null;
+
+  // Reopen-on-non-receipt (initiator reopens a COMPLETED request → UNDER_INVESTIGATION).
+  @Column({ name: 'reopen_reason', type: 'text', nullable: true })
+  reopenReason?: string | null;
+
+  @Column({ name: 'reopened_at', type: 'timestamptz', nullable: true })
+  reopenedAt?: Date | null;
+
+  @Column({ name: 'reopened_by', type: 'uuid', nullable: true })
+  reopenedBy?: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'reopened_by' })
+  reopenedByUser?: User | null;
 
   @OneToMany(() => PaymentRequestApproval, (a) => a.paymentRequest, {
     cascade: ['insert', 'update'],
