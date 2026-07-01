@@ -4,14 +4,16 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  BadgeCheck, Banknote, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard, Database, FileSearch, FileType2, FolderTree, Globe2, Handshake,
-  Landmark, ListChecks, LogOut, Receipt, ScrollText, ShieldCheck, TrendingUp, Users2, Wallet2,
+  BadgeCheck, Banknote, Briefcase, Building, Building2, ChevronDown, Coins, CreditCard,
+  Database, FileSearch, FileType2, FolderTree, Globe2, Handshake, Landmark, ListChecks,
+  LogOut, Receipt, ScrollText, ShieldCheck, TrendingUp, UserCheck, Users2, Wallet2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { hasAnyRole, RoleCode } from '@/lib/roles';
 import { Button } from '@/components/ui/button';
 import { ChangePasswordButton } from '@/components/layout/change-password-button';
+import { DelegateTasksDialog } from '@/components/layout/delegate-tasks-dialog';
 
 interface NavItem {
   href: string;
@@ -111,6 +113,7 @@ function groupHasActive(pathname: string | null, group: NavGroup): boolean {
 export function Sidebar(): React.ReactElement {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const [delegateOpen, setDelegateOpen] = useState(false);
 
   const visibleGroups = NAV_GROUPS.filter(
     (g) => !g.roles || hasAnyRole(user?.roles, g.roles),
@@ -208,6 +211,14 @@ export function Sidebar(): React.ReactElement {
           <p className="font-medium">{user?.fullName ?? 'Anonymous'}</p>
           <p className="truncate text-muted-foreground">{user?.email}</p>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start text-muted-foreground"
+          onClick={() => setDelegateOpen(true)}
+        >
+          <UserCheck className="mr-2 h-4 w-4" /> Delegate My Tasks
+        </Button>
         <ChangePasswordButton />
         <Button
           variant="ghost"
@@ -218,6 +229,8 @@ export function Sidebar(): React.ReactElement {
           <LogOut className="mr-2 h-4 w-4" /> Sign out
         </Button>
       </div>
+
+      <DelegateTasksDialog open={delegateOpen} onClose={() => setDelegateOpen(false)} />
     </aside>
   );
 }

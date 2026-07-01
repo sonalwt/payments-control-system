@@ -51,6 +51,11 @@ export class UsersController {
     return this.service.findOne(user.id);
   }
 
+  @Get('peers')
+  peers(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.findPeers(user.id);
+  }
+
   @Get(':id')
   @Roles(RoleCode.SUPER_ADMIN)
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {

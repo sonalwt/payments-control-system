@@ -5,6 +5,7 @@ import { ShieldAlert } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { Breadcrumbs } from './breadcrumbs';
+import { NotificationBell } from './notification-bell';
 import { useAuth } from '@/hooks/use-auth';
 import { hasAnyRole } from '@/lib/roles';
 import { requiredRolesFor } from '@/lib/route-permissions';
@@ -34,7 +35,10 @@ export function AppShell({ children }: { children: React.ReactNode }): React.Rea
       <Sidebar />
       <main className="flex flex-1 flex-col overflow-hidden">
         <header className="border-b bg-background px-6 py-4">
-          <Breadcrumbs />
+          <div className="flex items-center justify-between">
+            <Breadcrumbs />
+            <NotificationBell />
+          </div>
         </header>
         <div className="flex-1 overflow-auto bg-muted/30 p-6">
           {permitted ? children : <NoAccess />}

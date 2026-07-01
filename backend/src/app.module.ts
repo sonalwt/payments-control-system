@@ -36,6 +36,8 @@ import { IncomingReceiptsModule } from './modules/incoming-receipts/incoming-rec
 import { ReconciliationModule } from './modules/reconciliation/reconciliation.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { DelegationsModule } from './modules/delegations/delegations.module';
 import { EmployeeAuthModule } from './modules/employee-auth/employee-auth.module';
 import { EmployeePortalModule } from './modules/employee-portal/employee-portal.module';
 import { FxRatesModule } from './modules/fx-rates/fx-rates.module';
@@ -85,6 +87,8 @@ import { PaymentRequestMessagesModule } from './modules/payment-request-messages
     ReconciliationModule,
     UploadsModule,
     AuditModule,
+    NotificationsModule,
+    DelegationsModule,
     EmployeeAuthModule,
     EmployeePortalModule,
     FxRatesModule,
