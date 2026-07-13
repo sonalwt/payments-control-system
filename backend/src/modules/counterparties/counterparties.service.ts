@@ -33,32 +33,30 @@ export class CounterpartiesService {
       throw new ConflictException(`Counterparty "${dto.code}" already exists`);
     }
 
-    // Admins (counterparty masters) create approved counterparties as before.
-    // Non-admins self-serve: the payment nature drives the KYC routing.
-    const isAdmin =
-      actor.roles.includes(RoleCode.SUPER_ADMIN) ||
-      actor.roles.includes(RoleCode.COUNTERPARTY);
+    // Every counterparty added here goes through KYC review — regardless of who
+    // creates it. The payment nature drives the routing:
+    //   Trade     → PENDING, not usable until the KYC team approves it.
+    //   Non-Trade → APPROVED but flagged, so it is usable now yet still reviewed.
+    if (!dto.paymentNature) {
+      throw new BadRequestException(
+        'Payment nature (Trade / Non-Trade) is required to create a counterparty.',
+      );
+    }
 
-    let kycStatus: CounterpartyKycStatus = 'APPROVED';
-    let kycFlagged = false;
-    let route: 'KYC_APPROVAL' | 'KYC_FLAGGED' | null = null;
+    let kycStatus: CounterpartyKycStatus;
+    let kycFlagged: boolean;
+    let route: 'KYC_APPROVAL' | 'KYC_FLAGGED';
 
-    if (!isAdmin) {
-      if (!dto.paymentNature) {
-        throw new BadRequestException(
-          'Payment nature (Trade / Non-Trade) is required to create a counterparty.',
-        );
-      }
-      if (dto.paymentNature === 'TRADE') {
-        // Trade → routed to the KYC team; not usable until approved.
-        kycStatus = 'PENDING';
-        route = 'KYC_APPROVAL';
-      } else {
-        // Non-trade → added directly (usable now) but flagged to the KYC team.
-        kycStatus = 'APPROVED';
-        kycFlagged = true;
-        route = 'KYC_FLAGGED';
-      }
+    if (dto.paymentNature === 'TRADE') {
+      // Trade → routed to the KYC team; not usable until approved.
+      kycStatus = 'PENDING';
+      kycFlagged = false;
+      route = 'KYC_APPROVAL';
+    } else {
+      // Non-trade → added directly (usable now) but flagged to the KYC team.
+      kycStatus = 'APPROVED';
+      kycFlagged = true;
+      route = 'KYC_FLAGGED';
     }
 
     const cp = this.repo.create({
@@ -77,19 +75,16 @@ export class CounterpartiesService {
       isActive: dto.isActive ?? true,
       kycStatus,
       kycFlagged,
-      // kyc_done is the legacy "KYC verified" flag; only an admin create or a
-      // KYC approval sets it true. A non-trade direct add is usable but not yet
-      // KYC-verified.
-      kycDone: isAdmin ? (dto.kycDone ?? false) : false,
+      // kyc_done is the legacy "KYC verified" flag; it is never self-certified at
+      // creation — only a KYC approval sets it true.
+      kycDone: false,
       createdBy: actor.id,
       updatedBy: actor.id,
     });
     const saved = await this.repo.save(cp);
 
     // Best-effort: tell the KYC team. A mail failure must not fail creation.
-    if (route) {
-      await this.notifyKycTeamOfNewCounterparty(saved, actor.id, route);
-    }
+    await this.notifyKycTeamOfNewCounterparty(saved, actor.id, route);
     return saved;
   }
 

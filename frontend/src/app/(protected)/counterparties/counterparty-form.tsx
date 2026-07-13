@@ -41,6 +41,7 @@ export const counterpartySchema = z.object({
   name: z.string().min(2).max(200),
   legalName: z.string().max(200).optional().or(z.literal('')),
   role: z.enum(['VENDOR', 'CUSTOMER', 'BOTH']),
+  paymentNature: z.enum(['TRADE', 'NON_TRADE']),
   countryId: z.string().uuid().optional().or(z.literal('')),
   taxIdentifiers: z.array(taxSchema).optional(),
   addresses: z.array(addressSchema).optional(),
@@ -49,7 +50,6 @@ export const counterpartySchema = z.object({
   primaryContactPhone: z.string().max(50).optional().or(z.literal('')),
   notes: z.string().optional().or(z.literal('')),
   isActive: z.boolean().optional(),
-  kycDone: z.boolean().optional(),
 });
 export type CounterpartyFormData = z.infer<typeof counterpartySchema>;
 
@@ -84,6 +84,7 @@ export function CounterpartyForm({
       name: defaultValues?.name ?? '',
       legalName: defaultValues?.legalName ?? '',
       role: (defaultValues?.role ?? 'VENDOR') as 'VENDOR' | 'CUSTOMER' | 'BOTH',
+      paymentNature: (defaultValues?.paymentNature ?? 'TRADE') as 'TRADE' | 'NON_TRADE',
       countryId: defaultValues?.countryId ?? '',
       taxIdentifiers: defaultValues?.taxIdentifiers?.map((t) => ({
         type: t.type,
@@ -104,7 +105,6 @@ export function CounterpartyForm({
       primaryContactPhone: defaultValues?.primaryContactPhone ?? '',
       notes: defaultValues?.notes ?? '',
       isActive: defaultValues?.isActive ?? true,
-      kycDone: defaultValues?.kycDone ?? false,
     },
   });
 
@@ -143,14 +143,30 @@ export function CounterpartyForm({
           <Input id="legalName" placeholder="Acme Supplies Pvt Ltd" {...register('legalName')} />
         </div>
       </div>
-      <div className="space-y-2">
-        <Label htmlFor="countryId">Country</Label>
-        <Select
-          id="countryId"
-          placeholder="Select country"
-          options={countryOptions}
-          {...register('countryId')}
-        />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="paymentNature">Payment nature <span className="text-destructive">*</span></Label>
+          <Select
+            id="paymentNature"
+            options={[
+              { label: 'Trade', value: 'TRADE' },
+              { label: 'Non-Trade', value: 'NON_TRADE' },
+            ]}
+            {...register('paymentNature')}
+          />
+          <p className="text-xs text-muted-foreground">
+            Trade counterparties require KYC approval before they can be used in a payment.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="countryId">Country</Label>
+          <Select
+            id="countryId"
+            placeholder="Select country"
+            options={countryOptions}
+            {...register('countryId')}
+          />
+        </div>
       </div>
 
       <div className="rounded-md border p-3 space-y-2">
@@ -296,14 +312,6 @@ export function CounterpartyForm({
             {...register('isActive')}
           />
           <span className="text-sm">Active</span>
-        </label>
-        <label className="flex cursor-pointer items-center gap-2">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-border"
-            {...register('kycDone')}
-          />
-          <span className="text-sm">KYC done?</span>
         </label>
       </div>
 
