@@ -655,7 +655,7 @@ export default function DashboardPage(): React.ReactElement {
             <h1 className="text-xl font-bold">
               {user ? greeting(user.fullName) : 'Welcome'}
             </h1>
-            <p className="text-sm text-muted-foreground">{user?.email}</p>
+            <p className="text-sm text-muted-foreground">{user?.username}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {displayRoles.map((r) => (

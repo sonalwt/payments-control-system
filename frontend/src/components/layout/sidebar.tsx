@@ -208,7 +208,7 @@ export function Sidebar(): React.ReactElement {
       <div className="border-t p-3">
         <div className="mb-2 px-2 text-xs">
           <p className="font-medium">{user?.fullName ?? 'Anonymous'}</p>
-          <p className="truncate text-muted-foreground">{user?.email}</p>
+          <p className="truncate text-muted-foreground">{user?.username}</p>
         </div>
         <Button
           variant="ghost"

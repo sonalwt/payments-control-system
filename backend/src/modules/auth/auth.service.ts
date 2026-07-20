@@ -37,7 +37,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto): Promise<LoginResponseDto> {
-    const user = await this.users.findByEmailWithPassword(dto.email);
+    const user = await this.users.findByUsernameWithPassword(dto.username);
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -59,6 +59,7 @@ export class AuthService {
       expiresIn,
       user: {
         id: user.id,
+        username: user.username,
         email: user.email,
         fullName: user.fullName,
         roles,

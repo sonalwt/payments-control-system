@@ -9,7 +9,7 @@ import type { AuthMe, LoginResponse } from '@/types/domain';
 interface AuthCtx {
   user: AuthMe | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => void;
   hasRole: (role: string) => boolean;
 }
@@ -44,8 +44,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const res = await api.post<LoginResponse>('/auth/login', { email, password });
+  const login = useCallback(async (username: string, password: string) => {
+    const res = await api.post<LoginResponse>('/auth/login', { username, password });
     setToken(res.accessToken);
     const me = await api.get<AuthMe>('/auth/me');
     setUser(me);

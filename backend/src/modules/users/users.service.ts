@@ -24,12 +24,15 @@ export class UsersService {
   ) {}
 
   async create(dto: CreateUserDto, actorId: string): Promise<User> {
-    const existing = await this.repo.findOne({ where: { email: dto.email } });
-    if (existing) {
+    if (await this.repo.findOne({ where: { username: dto.username } })) {
+      throw new ConflictException(`User with username "${dto.username}" already exists`);
+    }
+    if (await this.repo.findOne({ where: { email: dto.email } })) {
       throw new ConflictException(`User with email "${dto.email}" already exists`);
     }
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     const user = this.repo.create({
+      username: dto.username,
       email: dto.email,
       fullName: dto.fullName,
       employeeCode: dto.employeeCode ?? null,
@@ -51,7 +54,10 @@ export class UsersService {
       .skip((page - 1) * limit)
       .take(limit);
     if (search) {
-      qb.andWhere('(u.fullName ILIKE :s OR u.email ILIKE :s)', { s: `%${search}%` });
+      qb.andWhere(
+        '(u.fullName ILIKE :s OR u.username ILIKE :s OR u.email ILIKE :s)',
+        { s: `%${search}%` },
+      );
     }
     if (roleCode) {
       qb.andWhere(
@@ -105,6 +111,15 @@ export class UsersService {
     return u;
   }
 
+  /** Load a user including the (normally hidden) password hash, by login username. */
+  async findByUsernameWithPassword(username: string): Promise<User | null> {
+    return this.repo
+      .createQueryBuilder('u')
+      .addSelect('u.passwordHash')
+      .where('u.username = :username', { username })
+      .getOne();
+  }
+
   async findByEmailWithPassword(email: string): Promise<User | null> {
     return this.repo
       .createQueryBuilder('u')
@@ -150,12 +165,13 @@ export class UsersService {
     const result: ImportResult = { created: 0, skipped: 0, errors: [] };
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const email = row['email'], fullName = row['full_name'], password = row['password'];
+      const username = row['username'], email = row['email'], fullName = row['full_name'], password = row['password'];
+      if (!username) { result.errors.push({ row: i + 2, message: 'username is required' }); result.skipped++; continue; }
       if (!email) { result.errors.push({ row: i + 2, message: 'email is required' }); result.skipped++; continue; }
       if (!fullName) { result.errors.push({ row: i + 2, message: 'full_name is required' }); result.skipped++; continue; }
       if (!password) { result.errors.push({ row: i + 2, message: 'password is required' }); result.skipped++; continue; }
       try {
-        await this.create({ email, fullName, password, employeeCode: row['employee_code'] || undefined, isActive: row['is_active'] !== 'false' }, actorId);
+        await this.create({ username, email, fullName, password, employeeCode: row['employee_code'] || undefined, isActive: row['is_active'] !== 'false' }, actorId);
         result.created++;
       } catch (e: unknown) {
         result.errors.push({ row: i + 2, message: e instanceof Error ? e.message : 'Unknown error' });

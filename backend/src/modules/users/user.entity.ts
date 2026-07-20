@@ -4,6 +4,10 @@ import { UserRole } from './user-role.entity';
 
 @Entity({ name: 'users' })
 export class User extends BaseEntity {
+  /** Login handle — distinct from fullName and email. Used to sign in. */
+  @Column({ type: 'citext', unique: true })
+  username!: string;
+
   @Column({ type: 'citext', unique: true })
   email!: string;
 

@@ -6,10 +6,20 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   MinLength,
 } from 'class-validator';
 
 export class CreateUserDto {
+  @ApiProperty({ example: 'jane.doe', description: 'Unique login handle' })
+  @IsString()
+  @IsNotEmpty()
+  @Length(3, 50)
+  @Matches(/^[a-zA-Z0-9._-]+$/, {
+    message: 'username may only contain letters, numbers, dot, underscore and hyphen',
+  })
+  username!: string;
+
   @ApiProperty({ example: 'jane.doe@acme.com' })
   @IsEmail()
   email!: string;

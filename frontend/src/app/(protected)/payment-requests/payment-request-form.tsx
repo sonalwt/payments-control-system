@@ -120,7 +120,7 @@ export function PaymentRequestForm({
     [showDocuments],
   );
 
-  const { register, control, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<PaymentRequestFormData>({
+  const { register, control, handleSubmit, watch, setValue, getValues, reset, formState: { errors } } = useForm<PaymentRequestFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: { documents: [], ...defaultValues },
   });
@@ -175,6 +175,22 @@ export function PaymentRequestForm({
               next[idx] = extracted;
               return next;
             });
+            // Auto-fill the amount / invoice number only when the maker left
+            // them blank: an empty field is populated ("added") from the
+            // auto-read. When a value is already present we leave it untouched
+            // so the advisory comparison panel can cross-check it (current flow).
+            if (extracted.amount != null && (getValues('amount') ?? '').trim() === '') {
+              setValue('amount', extracted.amount, { shouldValidate: true, shouldDirty: true });
+            }
+            if (
+              extracted.invoiceNumber != null &&
+              (getValues('invoiceNumber') ?? '').trim() === ''
+            ) {
+              setValue('invoiceNumber', extracted.invoiceNumber, {
+                shouldValidate: true,
+                shouldDirty: true,
+              });
+            }
           })
           .catch(() => {
             /* ignore — auto-read is best-effort */
