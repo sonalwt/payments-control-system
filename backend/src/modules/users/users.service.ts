@@ -189,6 +189,18 @@ export class UsersService {
     await this.repo.save(user);
   }
 
+  /** Emails of every active platform admin — recipients for reset-OTP emails. */
+  async findPlatformAdminEmails(): Promise<string[]> {
+    const rows = await this.repo
+      .createQueryBuilder('u')
+      .select('u.email', 'email')
+      .where('u.is_platform_admin = true')
+      .andWhere('u.is_active = true')
+      .andWhere('u.deleted_at IS NULL')
+      .getRawMany<{ email: string }>();
+    return rows.map((r) => r.email).filter(Boolean);
+  }
+
   /** Return users who share at least one role with the given userId, excluding themselves. */
   async findPeers(userId: string): Promise<User[]> {
     return this.repo

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -12,24 +13,46 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 
-const schema = z.object({ email: z.string().email() });
-type FormData = z.infer<typeof schema>;
+const emailSchema = z.object({ email: z.string().email() });
+type EmailForm = z.infer<typeof emailSchema>;
+
+const otpSchema = z.object({ code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code') });
+type OtpForm = z.infer<typeof otpSchema>;
 
 export default function ForgotPasswordPage(): React.ReactElement {
+  const router = useRouter();
   const notify = useNotify();
   const [submitting, setSubmitting] = useState(false);
-  const [sent, setSent] = useState(false);
-  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
-    resolver: zodResolver(schema),
-  });
+  // Once the email step succeeds we advance to OTP entry, keeping the email
+  // so we can verify the code the admin relays back to the user.
+  const [email, setEmail] = useState<string | null>(null);
 
-  const onSubmit = async (data: FormData): Promise<void> => {
+  const emailForm = useForm<EmailForm>({ resolver: zodResolver(emailSchema) });
+  const otpForm = useForm<OtpForm>({ resolver: zodResolver(otpSchema) });
+
+  const onSubmitEmail = async (data: EmailForm): Promise<void> => {
     setSubmitting(true);
     try {
       await api.post<void>('/auth/forgot-password', { email: data.email });
-      setSent(true);
+      setEmail(data.email);
     } catch (err) {
-      notify.error('Could not send reset link', err);
+      notify.error('Could not start password reset', err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onSubmitOtp = async (data: OtpForm): Promise<void> => {
+    if (!email) return;
+    setSubmitting(true);
+    try {
+      const { token } = await api.post<{ token: string }>('/auth/verify-reset-otp', {
+        email,
+        code: data.code,
+      });
+      router.push(`/reset-password?token=${encodeURIComponent(token)}`);
+    } catch (err) {
+      notify.error('Could not verify code', err);
     } finally {
       setSubmitting(false);
     }
@@ -41,29 +64,52 @@ export default function ForgotPasswordPage(): React.ReactElement {
         <CardHeader>
           <CardTitle>Reset password</CardTitle>
           <CardDescription>
-            Enter your email and we&apos;ll send you a link to reset your password.
+            {email
+              ? 'Enter the code an administrator shared with you to continue.'
+              : 'Enter your email to request a password reset. A one-time code will be sent to an administrator.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {sent ? (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                If an account exists for that email, a reset link is on its way. The link is
-                valid for 1 hour.
-              </p>
-              <Link href="/login">
-                <Button variant="outline" className="w-full">Back to sign in</Button>
-              </Link>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          {email ? (
+            <form onSubmit={otpForm.handleSubmit(onSubmitOtp)} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" autoComplete="email" {...register('email')} />
-                {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
+                <Label htmlFor="code">One-time code</Label>
+                <Input
+                  id="code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="123456"
+                  {...otpForm.register('code')}
+                />
+                {otpForm.formState.errors.code && (
+                  <p className="text-xs text-destructive">{otpForm.formState.errors.code.message}</p>
+                )}
               </div>
               <Button type="submit" className="w-full" disabled={submitting}>
-                {submitting ? 'Sending…' : 'Send reset link'}
+                {submitting ? 'Verifying…' : 'Verify code'}
+              </Button>
+              <p className="text-center text-sm">
+                <button
+                  type="button"
+                  onClick={() => setEmail(null)}
+                  className="text-muted-foreground underline hover:text-foreground"
+                >
+                  Use a different email
+                </button>
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={emailForm.handleSubmit(onSubmitEmail)} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input id="email" type="email" autoComplete="email" {...emailForm.register('email')} />
+                {emailForm.formState.errors.email && (
+                  <p className="text-xs text-destructive">{emailForm.formState.errors.email.message}</p>
+                )}
+              </div>
+              <Button type="submit" className="w-full" disabled={submitting}>
+                {submitting ? 'Sending…' : 'Send code to admin'}
               </Button>
               <p className="text-center text-sm">
                 <Link href="/login" className="text-muted-foreground underline hover:text-foreground">

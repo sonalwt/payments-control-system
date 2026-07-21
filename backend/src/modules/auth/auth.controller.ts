@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyResetOtpDto, VerifyResetOtpResponseDto } from './dto/verify-reset-otp.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -32,6 +33,13 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   forgotPassword(@Body() dto: ForgotPasswordDto): Promise<void> {
     return this.service.forgotPassword(dto.email);
+  }
+
+  @Public()
+  @Post('verify-reset-otp')
+  @HttpCode(HttpStatus.OK)
+  verifyResetOtp(@Body() dto: VerifyResetOtpDto): Promise<VerifyResetOtpResponseDto> {
+    return this.service.verifyResetOtp(dto.email, dto.code);
   }
 
   @Public()
