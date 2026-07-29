@@ -32,6 +32,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     const { roles, entityIds } = await this.users.loadRoleCodes(user.id);
     return {
       id: user.id,
+      username: user.username,
       email: user.email,
       fullName: user.fullName,
       roles,

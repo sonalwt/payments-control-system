@@ -36,6 +36,7 @@ function normalize(d: CounterpartyFormData) {
     name: d.name,
     legalName: blank(d.legalName),
     role: d.role,
+    paymentNature: d.paymentNature,
     countryId: blank(d.countryId),
     taxIdentifiers: (d.taxIdentifiers ?? []).map((t) => ({
       type: t.type,
@@ -56,7 +57,6 @@ function normalize(d: CounterpartyFormData) {
     primaryContactPhone: blank(d.primaryContactPhone),
     notes: blank(d.notes),
     isActive: d.isActive ?? true,
-    kycDone: d.kycDone ?? false,
   };
 }
 

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -59,6 +60,8 @@ import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class PaymentRequestsService {
+  private readonly logger = new Logger(PaymentRequestsService.name);
+
   constructor(
     @InjectRepository(PaymentRequest)
     private readonly repo: Repository<PaymentRequest>,
@@ -1222,14 +1225,21 @@ export class PaymentRequestsService {
     });
 
     // Notify the authoriser of the completed (confidential) payment + balance.
-    // Best-effort and post-commit: a mail failure must not roll back the action.
+    // Fire-and-forget, post-commit: a mail failure or slow send must not roll
+    // back the action or hold the HTTP response open.
     if (balanceUpdate) {
-      await this.notifyAuthoriserOfCompletion(actorId, result, balanceUpdate);
+      this.fireNotification(
+        this.notifyAuthoriserOfCompletion(actorId, result, balanceUpdate),
+        `Completion notification for ${result.requestNumber}`,
+      );
     }
     // Standard flow: tell the treasury maker the request is back with them to
     // upload the SWIFT copy (and complete the payment).
     if (!isConfidential && makerId) {
-      await this.notifyTreasuryMakerForSwift(makerId, result, actorId);
+      this.fireNotification(
+        this.notifyTreasuryMakerForSwift(makerId, result, actorId),
+        `SWIFT-handoff notification for ${result.requestNumber}`,
+      );
     }
 
     return result;
@@ -1313,15 +1323,21 @@ export class PaymentRequestsService {
       return { result, initiatorId: pr.createdBy ?? null, balanceUpdate };
     });
 
-    // Email the acting maker the resulting bank balance (best-effort, post-commit).
+    // Email the acting maker the resulting bank balance (fire-and-forget, post-commit).
     if (balanceUpdate) {
-      await this.notifyAuthoriserOfCompletion(actorId, result, balanceUpdate);
+      this.fireNotification(
+        this.notifyAuthoriserOfCompletion(actorId, result, balanceUpdate),
+        `Balance notification for ${result.requestNumber}`,
+      );
     }
 
     // Tell the initiator the payment is executed (SWIFT attached) and ask them
     // to close the request.
     if (initiatorId) {
-      await this.notifyInitiatorToClose(initiatorId, result, actorId);
+      this.fireNotification(
+        this.notifyInitiatorToClose(initiatorId, result, actorId),
+        `Close-request notification for ${result.requestNumber}`,
+      );
     }
     return result;
   }
@@ -1346,6 +1362,22 @@ export class PaymentRequestsService {
       await em.save(pr);
       return this.loadOne(pr.id, em.getRepository(PaymentRequest));
     });
+  }
+
+  /**
+   * Dispatch a best-effort, post-commit notification without blocking the HTTP
+   * response. The action is already committed by the time this runs; awaiting a
+   * slow SMTP send would hold the response open (observed ~111s) and leave the
+   * client UI frozen (e.g. a disabled Reject button). Errors are logged and
+   * swallowed — a mail failure must never surface after the response is sent.
+   */
+  private fireNotification(task: Promise<unknown>, context: string): void {
+    void task.catch((err) =>
+      this.logger.error(
+        `${context} failed`,
+        err instanceof Error ? err.stack : String(err),
+      ),
+    );
   }
 
   /** Email the acting treasury authoriser a confirmation + new bank balance. */
@@ -1530,11 +1562,16 @@ export class PaymentRequestsService {
       return { result, notify };
     });
 
-    // Best-effort, post-commit: notify whoever the request was returned to (the
-    // treasury maker on a checker/authoriser bounce, or the initiator on a final
-    // rejection). A mail failure must not fail the rejection.
+    // Fire-and-forget, post-commit: notify whoever the request was returned to
+    // (the treasury maker on a checker/authoriser bounce, or the initiator on a
+    // final rejection). Awaiting a slow SMTP send here would hold the HTTP
+    // response open (observed ~111s), leaving the client's Reject button
+    // disabled the whole time.
     if (notify.recipientId) {
-      await this.notifyRejection(notify.recipientId, result, actorId, dto.comments, notify.returnedTo);
+      this.fireNotification(
+        this.notifyRejection(notify.recipientId, result, actorId, dto.comments, notify.returnedTo),
+        `Rejection notification for ${result.requestNumber}`,
+      );
     }
     return result;
   }
@@ -1628,9 +1665,13 @@ export class PaymentRequestsService {
       return this.loadOne(pr.id, em.getRepository(PaymentRequest));
     });
 
-    // Best-effort, post-commit — a mail failure must not roll back the reopen.
-    // Notify the Treasury Maker(s) so they pick up the investigation.
-    await this.notifyTreasuryMakersOfReopen(result, actorId, dto.reason);
+    // Fire-and-forget, post-commit — a mail failure or slow send must not roll
+    // back the reopen or hold the response. Notify the Treasury Maker(s) so they
+    // pick up the investigation.
+    this.fireNotification(
+      this.notifyTreasuryMakersOfReopen(result, actorId, dto.reason),
+      `Reopen notification for ${result.requestNumber}`,
+    );
     return result;
   }
 
@@ -1671,7 +1712,10 @@ export class PaymentRequestsService {
     });
 
     if (initiatorId) {
-      await this.notifyInitiatorOfResolution(initiatorId, result, actorId, dto.comments);
+      this.fireNotification(
+        this.notifyInitiatorOfResolution(initiatorId, result, actorId, dto.comments),
+        `Resolution notification for ${result.requestNumber}`,
+      );
     }
     return result;
   }

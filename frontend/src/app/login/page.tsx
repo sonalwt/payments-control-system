@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 
 const schema = z.object({
-  email: z.string().email(),
+  username: z.string().min(1, 'Username is required'),
   password: z.string().min(8),
 });
 type FormData = z.infer<typeof schema>;
@@ -33,7 +33,7 @@ export default function LoginPage(): React.ReactElement {
   const onSubmit = async (data: FormData): Promise<void> => {
     setSubmitting(true);
     try {
-      await login(data.email, data.password);
+      await login(data.username, data.password);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Invalid credentials';
       notify.error('Sign in failed', message);
@@ -52,10 +52,10 @@ export default function LoginPage(): React.ReactElement {
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" autoComplete="email" {...register('email')} />
-              {errors.email && (
-                <p className="text-xs text-destructive">{errors.email.message}</p>
+              <Label htmlFor="username">Username</Label>
+              <Input id="username" type="text" autoComplete="username" {...register('username')} />
+              {errors.username && (
+                <p className="text-xs text-destructive">{errors.username.message}</p>
               )}
             </div>
             <div className="space-y-2">

@@ -157,18 +157,28 @@ export class DocumentExtractionService {
   }
 
   /**
-   * Heuristic: the amount next to the strongest label we can find. Labels are
-   * tried most-specific first. `\b` around the label stops "total" matching
-   * inside "Subtotal"; the `[^\d\n]{0,12}` gap lets a currency code/symbol or
-   * "(USD)" sit between the label and the number.
+   * Heuristic: the amount on the line carrying the strongest label we can find.
+   * Labels are tried most-specific first. A leading `\b` stops "total" matching
+   * inside "Subtotal"; there is deliberately no trailing boundary so a label
+   * that runs straight into its value ("TotalUSD 12,345.67", "Total12,345.67")
+   * still matches. We then take the LAST number on that line: pdf-parse flattens
+   * a table row into one line and the amount is the right-most (value) column,
+   * which may sit well past the label behind other cells — e.g.
+   * "TOTAL AMOUNT DUE:   ICBC STANDARD BANK PLC$3,131,537.52".
    */
   private findAmount(text: string, labels: string[]): string | null {
+    const lines = text.split(/\r?\n/);
     for (const label of labels) {
-      const re = new RegExp(`\\b${label}\\b[^\\d\\n]{0,12}(\\d[\\d.,]*\\d|\\d)`, 'i');
-      const m = text.match(re);
-      if (m) {
-        const normalised = this.normaliseAmount(m[1]);
-        if (normalised) return normalised;
+      const labelRe = new RegExp(`\\b${label}`, 'i');
+      for (const line of lines) {
+        const m = labelRe.exec(line);
+        if (!m) continue;
+        const after = line.slice(m.index + m[0].length);
+        const nums = after.match(/\d[\d.,]*\d|\d/g);
+        if (nums && nums.length) {
+          const normalised = this.normaliseAmount(nums[nums.length - 1]);
+          if (normalised) return normalised;
+        }
       }
     }
     return null;

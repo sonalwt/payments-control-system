@@ -96,6 +96,7 @@ export interface Role {
 }
 
 export interface User extends AuditFields {
+  username: string;
   email: string;
   fullName: string;
   employeeCode?: string | null;
@@ -903,6 +904,7 @@ export interface ReconciliationException {
 
 export interface AuthMe {
   id: string;
+  username: string;
   email: string;
   fullName: string;
   roles: string[];
@@ -912,7 +914,7 @@ export interface AuthMe {
 export interface LoginResponse {
   accessToken: string;
   expiresIn: string;
-  user: { id: string; email: string; fullName: string; roles: string[] };
+  user: { id: string; username: string; email: string; fullName: string; roles: string[] };
 }
 
 // =====================================================================

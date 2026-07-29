@@ -65,6 +65,60 @@ export class MailService {
   }
 
   /**
+   * Email a password-reset OTP to an administrator. The code authorises a
+   * reset for `resetForEmail`; the requesting user never receives it. Like
+   * the other auth emails, failures are logged but not thrown so the endpoint
+   * responds identically regardless of delivery outcome.
+   */
+  async sendPasswordResetOtp(
+    to: string | string[],
+    code: string,
+    ttlMinutes: number,
+    resetForEmail: string,
+  ): Promise<void> {
+    const mail = this.config.getOrThrow<MailConfig>('mail');
+    const transporter = this.getTransporter();
+    const recipients = Array.isArray(to) ? to : [to];
+
+    if (!transporter) {
+      // Dev fallback so the flow is testable without SMTP credentials.
+      this.logger.warn(
+        `Password reset OTP for ${resetForEmail} (to admin ${recipients.join(', ')}): ` +
+          `${code} (valid ${ttlMinutes} min)`,
+      );
+      return;
+    }
+
+    try {
+      const info = await transporter.sendMail({
+        from: mail.from,
+        to: recipients,
+        subject: 'Password reset code for a Payments Control System user',
+        text:
+          `A password reset was requested for ${resetForEmail}.\n\n` +
+          `Share this code with the user to let them set a new password: ${code}\n\n` +
+          `It is valid for ${ttlMinutes} minutes and can be used once.\n\n` +
+          `If this request was not expected, do not share the code.`,
+        html:
+          `<p>A password reset was requested for <strong>${resetForEmail}</strong>.</p>` +
+          `<p>Share this code with the user to let them set a new password: ` +
+          `<strong style="font-size:1.2em;letter-spacing:2px">${code}</strong></p>` +
+          `<p>It is valid for ${ttlMinutes} minutes and can be used once.</p>` +
+          `<p>If this request was not expected, do not share the code.</p>`,
+      });
+      this.logger.log(
+        `Password reset OTP email accepted for admin(s) ${recipients.join(', ')} ` +
+          `(reset-for=${resetForEmail}, messageId=${info.messageId})`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to send password reset OTP email for ${resetForEmail}`,
+        err as Error,
+      );
+    }
+  }
+
+  /**
    * Generic transactional notification (state-transition emails, §11.3).
    * Failures are logged but never thrown so business flows are not blocked
    * when SMTP is unavailable.

@@ -6,6 +6,12 @@ export interface AppConfig {
   apiPrefix: string;
   corsOrigin: string;
   frontendUrl: string;
+  /**
+   * Fixed recipient for password-reset OTP emails. When empty, the OTP is
+   * sent to every active platform admin instead. Password-reset codes are
+   * always delivered to an admin, never to the requesting user.
+   */
+  adminEmail: string;
 }
 
 export default registerAs<AppConfig>('app', () => ({
@@ -15,4 +21,5 @@ export default registerAs<AppConfig>('app', () => ({
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
   // Public base URL of the frontend, used to build links in emails.
   frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+  adminEmail: process.env.ADMIN_EMAIL ?? '',
 }));

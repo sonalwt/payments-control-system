@@ -830,7 +830,7 @@ function TreasuryActionDialog({
     ttDocumentUrl: docField === 'ttDocumentUrl' ? z.string().min(1, `${need.document!.label} required`) : z.string().optional(),
     swiftCopyUrl: docField === 'swiftCopyUrl' ? z.string().min(1, `${need.document!.label} required`) : z.string().optional(),
   });
-  const { register, handleSubmit, reset, setValue, watch, formState: { errors } } =
+  const { register, handleSubmit, reset, setValue, getValues, watch, formState: { errors } } =
     useForm<TreasuryActionData>({ resolver: zodResolver(schema) });
 
   function resetAll() {
@@ -855,7 +855,25 @@ function TreasuryActionDialog({
       setUploadState('done');
       // Fire-and-forget SWIFT auto-read (PDFs only) when this step uses it.
       if (need.document?.autoReadSwift && file.type === 'application/pdf') {
-        api.extractRemittance(file).then(setExtraction).catch(() => { /* best-effort */ });
+        api
+          .extractRemittance(file)
+          .then((extracted) => {
+            setExtraction(extracted);
+            // Auto-fill the reference number only when the maker left it blank
+            // (mirrors the invoice auto-read). A value already present is kept
+            // so the advisory comparison panel can cross-check it.
+            if (
+              need.reference &&
+              extracted.referenceNumber != null &&
+              (getValues('referenceNumber') ?? '').trim() === ''
+            ) {
+              setValue('referenceNumber', extracted.referenceNumber, {
+                shouldValidate: true,
+                shouldDirty: true,
+              });
+            }
+          })
+          .catch(() => { /* best-effort */ });
       }
     } catch (err) {
       setUploadState('error');
