@@ -11,7 +11,6 @@ import type {
   PaymentRequest,
   PaymentRequestApproval,
   PaymentRequestStatus,
-  PaymentType,
 } from '@/types/domain';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -29,6 +28,7 @@ import { usePrMessageSummary } from '@/hooks/use-pr-message-summary';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
 import { PaymentRequestForm, type PaymentRequestFormData } from './payment-request-form';
 import { useAuth } from '@/hooks/use-auth';
+import { useIsPaymentMaker } from '@/hooks/use-payment-maker';
 
 const KEY = 'payment-requests';
 
@@ -140,12 +140,7 @@ export default function PaymentRequestsPage(): React.ReactElement {
   const qc = useQueryClient();
   const { user } = useAuth();
 
-  const { data: makerCheck } = useQuery({
-    queryKey: ['payment-types-mine-check'],
-    queryFn: () => api.get<Paginated<PaymentType>>('/payment-types?mine=true&limit=1'),
-    enabled: !!user,
-  });
-  const canCreate = !!user && (makerCheck?.total ?? 0) > 0;
+  const canCreate = useIsPaymentMaker();
 
   // Filter-only params (no pagination) — shared by the list query and export.
   const filterParams = useMemo(() => {

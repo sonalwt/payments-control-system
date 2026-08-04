@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { hasAnyRole, RoleCode } from '@/lib/roles';
+import { useIsPaymentMaker } from '@/hooks/use-payment-maker';
 import { Button } from '@/components/ui/button';
 import { ChangePasswordButton } from '@/components/layout/change-password-button';
 import { DelegateTasksDialog } from '@/components/layout/delegate-tasks-dialog';
@@ -27,6 +28,12 @@ interface NavGroup {
   icon: React.ComponentType<{ className?: string }>;
   items: NavItem[];
   roles?: readonly RoleCode[];
+  /**
+   * Show by payment-maker eligibility instead of `roles`. Initiators are not a
+   * single role — they are whichever team-role holders are configured as Maker
+   * on a payment type — so a static role list cannot express this group.
+   */
+  makerOnly?: boolean;
 }
 
 const TOP_LEVEL: NavItem[] = [];
@@ -58,6 +65,17 @@ const NAV_GROUPS: NavGroup[] = [
     roles: [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY],
     items: [
       { href: '/counterparties', label: 'Counterparties', icon: Briefcase },
+    ],
+  },
+  {
+    // Masters an initiator consults while raising a payment request: the
+    // counterparty being paid and its beneficiary account.
+    label: 'Master Data',
+    icon: Database,
+    makerOnly: true,
+    items: [
+      { href: '/counterparties',       label: 'Counterparties',       icon: Briefcase },
+      { href: '/beneficiary-accounts', label: 'Beneficiary Accounts', icon: Wallet2 },
     ],
   },
   {
@@ -113,9 +131,16 @@ export function Sidebar(): React.ReactElement {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const [delegateOpen, setDelegateOpen] = useState(false);
+  const isPaymentMaker = useIsPaymentMaker();
 
-  const visibleGroups = NAV_GROUPS.filter(
-    (g) => !g.roles || hasAnyRole(user?.roles, g.roles),
+  // SUPER_ADMIN already reaches both maker pages under Masters / Counterparty,
+  // so the maker group is suppressed for them rather than duplicating links.
+  const isAdmin = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN]);
+
+  const visibleGroups = NAV_GROUPS.filter((g) =>
+    g.makerOnly
+      ? isPaymentMaker && !isAdmin
+      : !g.roles || hasAnyRole(user?.roles, g.roles),
   );
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
@@ -154,8 +179,11 @@ export function Sidebar(): React.ReactElement {
 
         {visibleGroups.map((group) => {
           const GroupIcon = group.icon;
-          const open = openGroups[group.label] ?? false;
           const hasActive = groupHasActive(pathname, group);
+          // Groups that appear after the initial render (the maker group waits
+          // on a fetch) have no entry in `openGroups` yet — fall back to
+          // auto-expanding the one holding the current page.
+          const open = openGroups[group.label] ?? hasActive;
           return (
             <div key={group.label}>
               <button

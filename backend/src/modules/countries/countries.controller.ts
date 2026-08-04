@@ -46,12 +46,17 @@ export class CountriesController {
     return this.service.create(dto, user.id);
   }
 
+  // Reads are open to any authenticated user — the country list is a lookup
+  // that payment makers need to fill in counterparty and beneficiary forms.
+  // Writes stay SUPER_ADMIN via the controller-level @Roles.
   @Get()
+  @Roles()
   findAll(@Query() query: PaginationQueryDto) {
     return this.service.findAll(query);
   }
 
   @Get(':id')
+  @Roles()
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.findOne(id);
   }

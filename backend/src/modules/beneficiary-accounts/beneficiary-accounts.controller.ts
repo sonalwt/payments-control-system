@@ -76,13 +76,17 @@ export class BeneficiaryAccountsController {
     return this.service.findChangeRequest(id);
   }
 
+  // Raising a beneficiary change request is the payment maker's job. Maker
+  // eligibility is data-driven (not a role), so the guard is opened and the
+  // service enforces the real rule. Verification/approval below stays with the
+  // KYC team, so the maker cannot bring their own beneficiary into use.
   @Post('change-requests')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.INITIATOR)
+  @Roles()
   createChangeRequest(
     @Body() dto: CreateChangeRequestDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.service.createChangeRequest(dto, user.id);
+    return this.service.createChangeRequest(dto, user);
   }
 
   @Post('change-requests/:id/verify')
@@ -115,8 +119,10 @@ export class BeneficiaryAccountsController {
     return this.service.rejectChangeRequest(id, dto, user.id);
   }
 
+  // Cancelling is restricted to the requester by the service itself
+  // (cr.requestedBy must match the actor), so any authenticated user may call.
   @Post('change-requests/:id/cancel')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.INITIATOR)
+  @Roles()
   cancelChangeRequest(
     @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: AuthenticatedUser,

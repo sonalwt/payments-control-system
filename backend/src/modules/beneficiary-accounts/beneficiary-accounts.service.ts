@@ -18,6 +18,9 @@ import {
   PaginatedResult,
   PaginationQueryDto,
 } from '../../common/dto/pagination.dto';
+import { RoleCode } from '../../common/enums/role.enum';
+import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { assertPaymentMakerOrRole } from '../../common/helpers/payment-maker';
 
 /** SoW §6.3 — default cooling-off window after a beneficiary change. */
 const DEFAULT_COOLING_OFF_HOURS = 24;
@@ -106,8 +109,19 @@ export class BeneficiaryAccountsService {
 
   async createChangeRequest(
     dto: CreateChangeRequestDto,
-    actorId: string,
+    actor: AuthenticatedUser,
   ): Promise<BeneficiaryAccountChangeRequest> {
+    // Raising a beneficiary change is the payment maker's job; there is no
+    // initiator role to gate on, so eligibility is resolved from the payment
+    // types the user makes for. The KYC team still verifies and approves.
+    await assertPaymentMakerOrRole(
+      this.repo.manager,
+      actor,
+      [RoleCode.SUPER_ADMIN, RoleCode.KYC_TEAM],
+      'Only payment makers or an administrator may raise a beneficiary change request.',
+    );
+    const actorId = actor.id;
+
     // Shape validation
     if (dto.changeType === 'ADD' && dto.beneficiaryAccountId) {
       throw new BadRequestException('ADD must not target an existing beneficiary');

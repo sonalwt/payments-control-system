@@ -28,12 +28,17 @@ export class BanksController {
     return this.service.create(dto, user.id);
   }
 
+  // Reads are open to any authenticated user — the bank list is a lookup
+  // payment makers need when adding a beneficiary account. Writes stay
+  // SUPER_ADMIN via the controller-level @Roles.
   @Get()
+  @Roles()
   findAll(@Query() query: PaginationQueryDto) {
     return this.service.findAll(query);
   }
 
   @Get(':id')
+  @Roles()
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.findOne(id);
   }

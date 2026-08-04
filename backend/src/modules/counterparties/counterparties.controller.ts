@@ -22,10 +22,15 @@ import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-
 export class CounterpartiesController {
   constructor(private readonly service: CounterpartiesService) {}
 
-  // Self-service creation: initiators may also create counterparties. The
+  // Self-service creation: payment makers may also create counterparties. The
   // service routes Trade additions to the KYC team and flags Non-Trade ones.
+  //
+  // Eligibility cannot be expressed as a role list — makers are whichever
+  // team-role holders are configured as Maker on a payment type — so the guard
+  // is opened to any authenticated user and the service enforces the real rule
+  // (see CounterpartiesService.assertMayCreate).
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY, RoleCode.INITIATOR)
+  @Roles()
   create(@Body() dto: CreateCounterpartyDto, @CurrentUser() user: AuthenticatedUser) {
     return this.service.create(dto, user);
   }

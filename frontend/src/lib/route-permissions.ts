@@ -80,6 +80,25 @@ const RULES: RouteRule[] = [
 ];
 
 /**
+ * Masters a payment initiator needs while raising a request.
+ *
+ * These cannot be expressed as a role list: initiators are whichever team-role
+ * holders are configured as Maker on a payment type, so `AppShell` grants
+ * access to them by maker eligibility (see `useIsPaymentMaker`) in addition to
+ * the role rules above. The backend GETs for both are already open to any
+ * authenticated user, so this only relaxes the client-side guard.
+ */
+const PAYMENT_MAKER_ROUTES = ['/counterparties', '/beneficiary-accounts'] as const;
+
+/** True when `pathname` is one of the initiator-accessible master routes. */
+export function isPaymentMakerRoute(pathname: string | null): boolean {
+  if (!pathname) return false;
+  return PAYMENT_MAKER_ROUTES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
+}
+
+/**
  * Returns the role list required for `pathname`, or null if the route is open
  * to any authenticated user (dashboard, login, etc.).
  */
