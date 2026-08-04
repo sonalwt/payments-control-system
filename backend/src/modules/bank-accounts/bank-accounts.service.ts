@@ -72,16 +72,19 @@ export class BankAccountsService {
     actorId: string,
     isCounterparty = false,
   ): Promise<BankAccount> {
+    // Banks issue per-currency sub-accounts that share one account number, so
+    // the identity of an account is (bank, number, currency).
     const existing = await this.repo.findOne({
       where: {
         accountNumber: dto.accountNumber,
         bankId: dto.bankId,
+        currencyId: dto.currencyId,
         isCounterparty,
       },
     });
     if (existing) {
       throw new ConflictException(
-        `Bank account ${dto.accountNumber} already exists for this bank`,
+        `Bank account ${dto.accountNumber} already exists for this bank in this currency`,
       );
     }
     const derivedNickname = await this.resolveNicknameFromLegalEntity(dto.legalEntityId);
@@ -96,6 +99,23 @@ export class BankAccountsService {
       accountNumber: dto.accountNumber,
       branchName: dto.branchName ?? null,
       branchCode: dto.branchCode ?? null,
+      accountHolderName: dto.accountHolderName ?? null,
+      swiftBic: dto.swiftBic ?? null,
+      iban: dto.iban ?? null,
+      abaNumber: dto.abaNumber ?? null,
+      bankCode: dto.bankCode ?? null,
+      sortCode: dto.sortCode ?? null,
+      customerId: dto.customerId ?? null,
+      bankAddress: dto.bankAddress ?? null,
+      correspondentBank: dto.correspondentBank ?? null,
+      correspondentSwift: dto.correspondentSwift ?? null,
+      contactName: dto.contactName ?? null,
+      contactPhone: dto.contactPhone ?? null,
+      contactPhoneAlt: dto.contactPhoneAlt ?? null,
+      contactEmail: dto.contactEmail ?? null,
+      fax: dto.fax ?? null,
+      authSignatory: dto.authSignatory ?? null,
+      registeredEmail: dto.registeredEmail ?? null,
       openingBalance: dto.openingBalance ?? 0,
       minimumBalance: dto.minimumBalance ?? 0,
       remainingBalance: dto.remainingBalance ?? 0,

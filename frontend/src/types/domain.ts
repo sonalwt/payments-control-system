@@ -403,6 +403,23 @@ export interface BankAccount extends AuditFields {
   accountNumber: string;
   branchName?: string | null;
   branchCode?: string | null;
+  // Bank-account master sheet details.
+  accountHolderName?: string | null;
+  swiftBic?: string | null;
+  abaNumber?: string | null;
+  bankCode?: string | null;
+  sortCode?: string | null;
+  customerId?: string | null;
+  bankAddress?: string | null;
+  correspondentBank?: string | null;
+  correspondentSwift?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactPhoneAlt?: string | null;
+  contactEmail?: string | null;
+  fax?: string | null;
+  authSignatory?: string | null;
+  registeredEmail?: string | null;
   openingBalance: number | string;
   minimumBalance: number | string;
   remainingBalance: number | string;

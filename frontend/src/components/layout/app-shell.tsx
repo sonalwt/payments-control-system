@@ -8,12 +8,14 @@ import { Breadcrumbs } from './breadcrumbs';
 import { NotificationBell } from './notification-bell';
 import { useAuth } from '@/hooks/use-auth';
 import { hasAnyRole } from '@/lib/roles';
-import { requiredRolesFor } from '@/lib/route-permissions';
+import { isPaymentMakerRoute, requiredRolesFor } from '@/lib/route-permissions';
+import { useIsPaymentMaker } from '@/hooks/use-payment-maker';
 
 export function AppShell({ children }: { children: React.ReactNode }): React.ReactElement | null {
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const isPaymentMaker = useIsPaymentMaker();
 
   React.useEffect(() => {
     if (!loading && !user) router.replace('/login');
@@ -28,7 +30,12 @@ export function AppShell({ children }: { children: React.ReactNode }): React.Rea
   }
 
   const required = requiredRolesFor(pathname);
-  const permitted = required === null || hasAnyRole(user.roles, required);
+  const permitted =
+    required === null ||
+    hasAnyRole(user.roles, required) ||
+    // Initiators reach the counterparty / beneficiary masters by maker
+    // eligibility rather than by holding one of the listed roles.
+    (isPaymentMaker && isPaymentMakerRoute(pathname));
 
   return (
     <div className="flex h-screen">

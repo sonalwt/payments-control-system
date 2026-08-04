@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { useNotify } from '@/hooks/use-notify';
 import { useAuth } from '@/hooks/use-auth';
+import { useIsPaymentMaker } from '@/hooks/use-payment-maker';
 import { hasAnyRole, RoleCode } from '@/lib/roles';
 import { formatDateTime } from '@/lib/datetime';
 import { DataTablePagination } from '@/components/shared/data-table-pagination';
@@ -188,7 +189,13 @@ export default function CounterpartiesPage(): React.ReactElement {
   // The two responsibilities the merged page serves, gated to match the backend
   // RBAC: masters management vs. the KYC review actions.
   const canManage = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY]);
-  const canCreate = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY, RoleCode.INITIATOR]);
+  // Adding a counterparty is open to payment makers too. That is not a role —
+  // makers are whichever team-role holders a payment type names as Maker — so
+  // it is resolved from the data, matching the backend rule and the route
+  // guard in route-permissions.ts.
+  const isPaymentMaker = useIsPaymentMaker();
+  const canCreate =
+    isPaymentMaker || hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY]);
   const canReviewKyc = hasAnyRole(user?.roles, [RoleCode.SUPER_ADMIN, RoleCode.KYC_TEAM]);
 
   const params = useMemo(() => {

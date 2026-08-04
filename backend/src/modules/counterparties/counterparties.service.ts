@@ -19,6 +19,7 @@ import { RoleCode } from '../../common/enums/role.enum';
 import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/user.entity';
 import { MailService } from '../mail/mail.service';
+import { assertPaymentMakerOrRole } from '../../common/helpers/payment-maker';
 
 @Injectable()
 export class CounterpartiesService {
@@ -29,6 +30,15 @@ export class CounterpartiesService {
   ) {}
 
   async create(dto: CreateCounterpartyDto, actor: AuthenticatedUser): Promise<Counterparty> {
+    // Payment makers may add counterparties as well as admins/counterparty
+    // users. Safe because every record still passes through KYC review below
+    // before a Trade counterparty can be paid.
+    await assertPaymentMakerOrRole(
+      this.repo.manager,
+      actor,
+      [RoleCode.SUPER_ADMIN, RoleCode.COUNTERPARTY],
+      'Only payment makers, counterparty users or an administrator may add a counterparty.',
+    );
     if (await this.repo.findOne({ where: { code: dto.code } })) {
       throw new ConflictException(`Counterparty "${dto.code}" already exists`);
     }

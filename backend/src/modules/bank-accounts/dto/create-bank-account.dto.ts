@@ -78,6 +78,110 @@ export class CreateBankAccountDto {
   @Length(0, 50)
   branchCode?: string;
 
+  // ---- Bank-account master sheet details ------------------------------------
+
+  @ApiPropertyOptional({ example: 'ACME Trading Pte Ltd', description: 'Account holder name as printed by the bank' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 200)
+  accountHolderName?: string;
+
+  @ApiPropertyOptional({ example: 'HSBCSGSG', description: "The account's own SWIFT / BIC" })
+  @IsOptional()
+  @IsString()
+  @Length(0, 20)
+  swiftBic?: string;
+
+  @ApiPropertyOptional({ example: 'GB82UBIN23562602310009' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 60)
+  iban?: string;
+
+  @ApiPropertyOptional({ example: '061000227', description: 'US ABA / Fedwire routing number' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 40)
+  abaNumber?: string;
+
+  @ApiPropertyOptional({ example: '7214', description: 'Local clearing bank code' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 50)
+  bankCode?: string;
+
+  @ApiPropertyOptional({ example: '23-56-26', description: 'UK sort code' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 150)
+  sortCode?: string;
+
+  @ApiPropertyOptional({ example: '000000477', description: "The bank's customer / CIF id" })
+  @IsOptional()
+  @IsString()
+  @Length(0, 60)
+  customerId?: string;
+
+  @ApiPropertyOptional({ description: 'Branch address of the account-holding bank' })
+  @IsOptional()
+  @IsString()
+  bankAddress?: string;
+
+  @ApiPropertyOptional({ example: 'JP Morgan Chase Bank, New York, USA', description: 'Intermediary / correspondent bank' })
+  @IsOptional()
+  @IsString()
+  correspondentBank?: string;
+
+  @ApiPropertyOptional({ example: 'CHASUS33', description: 'Intermediary / correspondent SWIFT' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 100)
+  correspondentSwift?: string;
+
+  @ApiPropertyOptional({ example: 'Connie Low', description: 'Relationship manager' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 150)
+  contactName?: string;
+
+  @ApiPropertyOptional({ example: '(65) 6596 5442', description: 'Relationship manager telephone' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 60)
+  contactPhone?: string;
+
+  @ApiPropertyOptional({ example: '(65) 8612 6710', description: 'Relationship manager mobile' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 60)
+  contactPhoneAlt?: string;
+
+  @ApiPropertyOptional({ example: 'connie.low@sc.com', description: 'Relationship manager email' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 150)
+  contactEmail?: string;
+
+  @ApiPropertyOptional({ description: 'Bank fax number' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 80)
+  fax?: string;
+
+  @ApiPropertyOptional({ example: 'Nanda Kumar Pillai', description: 'Authorised signatory on the account' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 200)
+  authSignatory?: string;
+
+  @ApiPropertyOptional({ description: 'Email registered with the bank for this account' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 150)
+  registeredEmail?: string;
+
+  // ---------------------------------------------------------------------------
+
   @ApiPropertyOptional({ example: 100000, default: 0 })
   @IsOptional()
   @Type(() => Number)

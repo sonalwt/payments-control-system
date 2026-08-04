@@ -40,6 +40,23 @@ const schema = z.object({
   accountNumber: z.string().min(1).max(50),
   branchName: z.string().max(120).optional().or(z.literal('')),
   branchCode: z.string().max(30).optional().or(z.literal('')),
+  accountHolderName: z.string().max(200).optional().or(z.literal('')),
+  swiftBic: z.string().max(20).optional().or(z.literal('')),
+  iban: z.string().max(60).optional().or(z.literal('')),
+  abaNumber: z.string().max(40).optional().or(z.literal('')),
+  bankCode: z.string().max(50).optional().or(z.literal('')),
+  sortCode: z.string().max(150).optional().or(z.literal('')),
+  customerId: z.string().max(60).optional().or(z.literal('')),
+  bankAddress: z.string().optional().or(z.literal('')),
+  correspondentBank: z.string().optional().or(z.literal('')),
+  correspondentSwift: z.string().max(100).optional().or(z.literal('')),
+  contactName: z.string().max(150).optional().or(z.literal('')),
+  contactPhone: z.string().max(60).optional().or(z.literal('')),
+  contactPhoneAlt: z.string().max(60).optional().or(z.literal('')),
+  contactEmail: z.string().max(150).optional().or(z.literal('')),
+  fax: z.string().max(80).optional().or(z.literal('')),
+  authSignatory: z.string().max(200).optional().or(z.literal('')),
+  registeredEmail: z.string().max(150).optional().or(z.literal('')),
   openingBalance: z.coerce.number().min(0).optional(),
   minimumBalance: z.coerce.number().min(0).optional(),
   remainingBalance: z.coerce.number().min(0).optional(),
@@ -107,6 +124,23 @@ function BankAccountForm({
       accountNumber: defaultValues?.accountNumber ?? '',
       branchName: defaultValues?.branchName ?? '',
       branchCode: defaultValues?.branchCode ?? '',
+      accountHolderName: defaultValues?.accountHolderName ?? '',
+      swiftBic: defaultValues?.swiftBic ?? '',
+      iban: defaultValues?.iban ?? '',
+      abaNumber: defaultValues?.abaNumber ?? '',
+      bankCode: defaultValues?.bankCode ?? '',
+      sortCode: defaultValues?.sortCode ?? '',
+      customerId: defaultValues?.customerId ?? '',
+      bankAddress: defaultValues?.bankAddress ?? '',
+      correspondentBank: defaultValues?.correspondentBank ?? '',
+      correspondentSwift: defaultValues?.correspondentSwift ?? '',
+      contactName: defaultValues?.contactName ?? '',
+      contactPhone: defaultValues?.contactPhone ?? '',
+      contactPhoneAlt: defaultValues?.contactPhoneAlt ?? '',
+      contactEmail: defaultValues?.contactEmail ?? '',
+      fax: defaultValues?.fax ?? '',
+      authSignatory: defaultValues?.authSignatory ?? '',
+      registeredEmail: defaultValues?.registeredEmail ?? '',
       openingBalance:
         defaultValues?.openingBalance != null
           ? Number(defaultValues.openingBalance)
@@ -186,14 +220,112 @@ function BankAccountForm({
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="branchName">Branch name</Label>
-          <Input id="branchName" {...register('branchName')} />
+          <Label htmlFor="accountHolderName">Account holder name</Label>
+          <Input id="accountHolderName" placeholder="As printed by the bank" {...register('accountHolderName')} />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="branchCode">Branch code</Label>
-          <Input id="branchCode" {...register('branchCode')} />
+          <Label htmlFor="authSignatory">Authorised signatory</Label>
+          <Input id="authSignatory" {...register('authSignatory')} />
         </div>
       </div>
+
+      {/* Clearing identifiers — which ones apply depends on the jurisdiction. */}
+      <div className="space-y-4 rounded-md border p-3">
+        <div>
+          <Label className="text-sm">Bank &amp; clearing details</Label>
+          <p className="text-xs text-muted-foreground">
+            SWIFT/IBAN plus the local clearing identifiers. Leave blank the ones your bank does not use.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="swiftBic">SWIFT / BIC</Label>
+            <Input id="swiftBic" placeholder="HSBCSGSG" {...register('swiftBic')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="iban">IBAN</Label>
+            <Input id="iban" placeholder="GB82UBIN23562602310009" {...register('iban')} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="branchName">Branch name</Label>
+            <Input id="branchName" {...register('branchName')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="branchCode">Branch code</Label>
+            <Input id="branchCode" {...register('branchCode')} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="bankCode">Bank code</Label>
+            <Input id="bankCode" {...register('bankCode')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sortCode">Sort code</Label>
+            <Input id="sortCode" placeholder="23-56-26" {...register('sortCode')} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="abaNumber">ABA / routing number</Label>
+            <Input id="abaNumber" placeholder="061000227" {...register('abaNumber')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="customerId">Customer ID</Label>
+            <Input id="customerId" {...register('customerId')} />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="bankAddress">Bank address</Label>
+          <Input id="bankAddress" {...register('bankAddress')} />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="correspondentBank">Intermediary bank</Label>
+            <Input id="correspondentBank" placeholder="JP Morgan Chase Bank, New York, USA" {...register('correspondentBank')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="correspondentSwift">Intermediary SWIFT</Label>
+            <Input id="correspondentSwift" placeholder="CHASUS33" {...register('correspondentSwift')} />
+          </div>
+        </div>
+      </div>
+
+      {/* Relationship-manager contact details from the bank-account master. */}
+      <div className="space-y-4 rounded-md border p-3">
+        <Label className="text-sm">Bank contact</Label>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="contactName">Relationship manager</Label>
+            <Input id="contactName" {...register('contactName')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="contactEmail">RM email</Label>
+            <Input id="contactEmail" {...register('contactEmail')} />
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="contactPhone">RM telephone</Label>
+            <Input id="contactPhone" {...register('contactPhone')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="contactPhoneAlt">RM mobile</Label>
+            <Input id="contactPhoneAlt" {...register('contactPhoneAlt')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="fax">Fax</Label>
+            <Input id="fax" {...register('fax')} />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="registeredEmail">Registered email with bank</Label>
+          <Input id="registeredEmail" {...register('registeredEmail')} />
+        </div>
+      </div>
+
       <div className="grid grid-cols-3 gap-4">
         <div className="space-y-2">
           <Label htmlFor="openingBalance">Opening balance</Label>
@@ -322,7 +454,39 @@ function BankAccountDetails({ account: a }: { account: BankAccount }): React.Rea
         <Field label="Minimum balance" value={a.minimumBalance != null ? Number(a.minimumBalance).toLocaleString() : null} />
         <Field label="Remaining balance" value={a.remainingBalance != null ? Number(a.remainingBalance).toLocaleString() : null} />
         <Field label="Chairman-designated" value={a.isChairmanDesignated ? 'Yes' : 'No'} />
+        <Field label="Account holder" value={a.accountHolderName} />
+        <Field label="Authorised signatory" value={a.authSignatory} />
       </div>
+
+      <div className="rounded-md border p-3">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide">Bank &amp; clearing details</div>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="SWIFT / BIC" value={a.swiftBic} />
+          <Field label="IBAN" value={a.iban} />
+          <Field label="Bank code" value={a.bankCode} />
+          <Field label="Sort code" value={a.sortCode} />
+          <Field label="ABA / routing" value={a.abaNumber} />
+          <Field label="Customer ID" value={a.customerId} />
+          <Field label="Intermediary bank" value={a.correspondentBank} />
+          <Field label="Intermediary SWIFT" value={a.correspondentSwift} />
+        </div>
+        <div className="mt-4">
+          <Field label="Bank address" value={a.bankAddress} />
+        </div>
+      </div>
+
+      <div className="rounded-md border p-3">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide">Bank contact</div>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Relationship manager" value={a.contactName} />
+          <Field label="RM email" value={a.contactEmail} />
+          <Field label="RM telephone" value={a.contactPhone} />
+          <Field label="RM mobile" value={a.contactPhoneAlt} />
+          <Field label="Fax" value={a.fax} />
+          <Field label="Registered email" value={a.registeredEmail} />
+        </div>
+      </div>
+
       <Field label="Charge bands" value={
         a.chargeBands && a.chargeBands.length > 0 ? (
           <div className="space-y-0.5">
@@ -341,15 +505,25 @@ function BankAccountDetails({ account: a }: { account: BankAccount }): React.Rea
   );
 }
 
+/** Optional text fields are sent only when filled — blanks must not overwrite. */
+const OPTIONAL_TEXT_FIELDS = [
+  'branchName', 'branchCode', 'accountHolderName', 'swiftBic', 'iban', 'abaNumber',
+  'bankCode', 'sortCode', 'customerId', 'bankAddress', 'correspondentBank',
+  'correspondentSwift', 'contactName', 'contactPhone', 'contactPhoneAlt',
+  'contactEmail', 'fax', 'authSignatory', 'registeredEmail',
+] as const;
+
 function normalize(d: FormData) {
+  const text = Object.fromEntries(
+    OPTIONAL_TEXT_FIELDS.map((k) => [k, d[k] ? d[k] : undefined]),
+  );
   return {
     bankId: d.bankId,
     legalEntityId: d.legalEntityId ? d.legalEntityId : undefined,
     currencyId: d.currencyId,
     accountTypeId: d.accountTypeId,
     accountNumber: d.accountNumber,
-    branchName: d.branchName ? d.branchName : undefined,
-    branchCode: d.branchCode ? d.branchCode : undefined,
+    ...text,
     openingBalance: d.openingBalance,
     minimumBalance: d.minimumBalance,
     remainingBalance: d.remainingBalance,
@@ -412,7 +586,10 @@ export default function BankAccountsPage(): React.ReactElement {
             </DialogTrigger>
             <DialogContent className="sm:max-w-2xl">
               <DialogHeader><DialogTitle>Create bank account</DialogTitle></DialogHeader>
-              <BankAccountForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              {/* Body scrolls on its own so the title and close button stay put. */}
+              <div className="max-h-[70vh] overflow-y-auto pr-1">
+                <BankAccountForm submitting={createMut.isPending} onSubmit={(d) => createMut.mutate(d)} />
+              </div>
             </DialogContent>
           </Dialog>
         }
@@ -427,19 +604,19 @@ export default function BankAccountsPage(): React.ReactElement {
             <TableRow>
               <TableHead>Bank / Legal entity</TableHead>
               <TableHead>Account #</TableHead>
-              <TableHead>Type</TableHead>
               <TableHead>Currency</TableHead>
               <TableHead className="text-right">Min</TableHead>
               <TableHead className="text-right">Remaining</TableHead>
               <TableHead>Charges</TableHead>
               <TableHead>Chairman</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="w-36 text-right">Actions</TableHead>
+              {/* Wide enough for three 40px icon buttons plus cell padding. */}
+              <TableHead className="w-40 whitespace-nowrap text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={10} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
             ) : data && data.data.length > 0 ? data.data.map((a) => {
               // Highlight accounts whose remaining balance is below the minimum
               // (same rule as the dashboard "Urgent attention" alert).
@@ -455,7 +632,6 @@ export default function BankAccountsPage(): React.ReactElement {
                   <div className="text-xs text-muted-foreground">{a.bankNickname ?? '—'}</div>
                 </TableCell>
                 <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{a.accountNumber}</code></TableCell>
-                <TableCell className="text-muted-foreground">{a.accountTypeMaster?.name ?? '—'}</TableCell>
                 <TableCell>{a.currency?.code ?? a.currency?.name ?? '—'}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {a.minimumBalance != null ? Number(a.minimumBalance).toLocaleString() : '—'}
@@ -505,14 +681,17 @@ export default function BankAccountsPage(): React.ReactElement {
                   </span>
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button size="icon" variant="ghost" onClick={() => setViewing(a)} title="View"><Eye className="h-4 w-4" /></Button>
-                  <Button size="icon" variant="ghost" onClick={() => setEditing(a)} title="Edit"><Pencil className="h-4 w-4" /></Button>
-                  <Button size="icon" variant="ghost" onClick={() => setDeleting(a)} title="Delete"><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  {/* Keep the three actions on one row regardless of column width. */}
+                  <div className="flex flex-nowrap items-center justify-end">
+                    <Button size="icon" variant="ghost" className="shrink-0" onClick={() => setViewing(a)} title="View"><Eye className="h-4 w-4" /></Button>
+                    <Button size="icon" variant="ghost" className="shrink-0" onClick={() => setEditing(a)} title="Edit"><Pencil className="h-4 w-4" /></Button>
+                    <Button size="icon" variant="ghost" className="shrink-0" onClick={() => setDeleting(a)} title="Delete"><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  </div>
                 </TableCell>
               </TableRow>
               );
             }) : (
-              <TableRow><TableCell colSpan={10} className="py-12 text-center text-muted-foreground">No bank accounts yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="py-12 text-center text-muted-foreground">No bank accounts yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -522,14 +701,18 @@ export default function BankAccountsPage(): React.ReactElement {
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader><DialogTitle>Bank account details</DialogTitle></DialogHeader>
-          {viewing && <BankAccountDetails account={viewing} />}
+          <div className="max-h-[70vh] overflow-y-auto pr-1">
+            {viewing && <BankAccountDetails account={viewing} />}
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader><DialogTitle>Edit bank account</DialogTitle></DialogHeader>
-          {editing && <BankAccountForm defaultValues={editing} submitting={updateMut.isPending} onSubmit={(d) => updateMut.mutate({ id: editing.id, i: d })} />}
+          <div className="max-h-[70vh] overflow-y-auto pr-1">
+            {editing && <BankAccountForm defaultValues={editing} submitting={updateMut.isPending} onSubmit={(d) => updateMut.mutate({ id: editing.id, i: d })} />}
+          </div>
         </DialogContent>
       </Dialog>
       <ConfirmDelete

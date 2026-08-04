@@ -69,16 +69,16 @@ export class BankAccount extends BaseEntity {
   @Column({ name: 'correspondent_bank', type: 'text', nullable: true })
   correspondentBank?: string | null;
 
-  @Column({ name: 'correspondent_swift', type: 'varchar', length: 20, nullable: true })
+  @Column({ name: 'correspondent_swift', type: 'varchar', length: 100, nullable: true })
   correspondentSwift?: string | null;
 
   @Column({ name: 'contact_name', type: 'varchar', length: 150, nullable: true })
   contactName?: string | null;
 
-  @Column({ name: 'contact_phone', type: 'varchar', length: 40, nullable: true })
+  @Column({ name: 'contact_phone', type: 'varchar', length: 60, nullable: true })
   contactPhone?: string | null;
 
-  @Column({ name: 'contact_phone_alt', type: 'varchar', length: 40, nullable: true })
+  @Column({ name: 'contact_phone_alt', type: 'varchar', length: 60, nullable: true })
   contactPhoneAlt?: string | null;
 
   @Column({ name: 'contact_email', type: 'varchar', length: 150, nullable: true })
@@ -89,6 +89,30 @@ export class BankAccount extends BaseEntity {
 
   @Column({ name: 'branch_code', type: 'varchar', length: 50, nullable: true })
   branchCode?: string | null;
+
+  // Clearing identifiers carried on the bank-account master sheet. Which ones
+  // apply depends on the jurisdiction (ABA in the US, sort code in the UK,
+  // branch/bank code in APAC).
+  @Column({ name: 'aba_number', type: 'varchar', length: 40, nullable: true })
+  abaNumber?: string | null;
+
+  @Column({ name: 'bank_code', type: 'varchar', length: 50, nullable: true })
+  bankCode?: string | null;
+
+  @Column({ name: 'sort_code', type: 'varchar', length: 150, nullable: true })
+  sortCode?: string | null;
+
+  @Column({ name: 'customer_id', type: 'varchar', length: 60, nullable: true })
+  customerId?: string | null;
+
+  @Column({ name: 'fax', type: 'varchar', length: 80, nullable: true })
+  fax?: string | null;
+
+  @Column({ name: 'auth_signatory', type: 'varchar', length: 200, nullable: true })
+  authSignatory?: string | null;
+
+  @Column({ name: 'registered_email', type: 'varchar', length: 150, nullable: true })
+  registeredEmail?: string | null;
 
   @Column({
     name: 'opening_balance',
