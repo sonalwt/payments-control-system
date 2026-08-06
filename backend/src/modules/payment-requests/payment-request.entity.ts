@@ -70,8 +70,14 @@ export class PaymentRequest extends BaseEntity {
   @Column({ name: 'request_number', type: 'varchar', length: 30, unique: true })
   requestNumber!: string;
 
-  @Column({ name: 'payment_type_id', type: 'uuid' })
-  paymentTypeId!: string;
+  /**
+   * NULL only while an integration-created draft awaits classification: the
+   * webhook cannot choose a payment type (it selects the approval matrix, i.e.
+   * who authorises the payment), so a maker picks one before submitting.
+   * submit() refuses a request that still has none.
+   */
+  @Column({ name: 'payment_type_id', type: 'uuid', nullable: true })
+  paymentTypeId?: string | null;
 
   @ManyToOne(() => PaymentType, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'payment_type_id' })
@@ -298,6 +304,15 @@ export class PaymentRequest extends BaseEntity {
 
   @Column({ name: 'beneficiary_snapshot', type: 'jsonb', nullable: true })
   beneficiarySnapshot?: Record<string, unknown> | null;
+
+  // Integration origin — set when the request was raised by an upstream system
+  // (e.g. the invoicing app) through the webhook rather than by a maker in the
+  // UI. The pair is uniquely indexed so a retried delivery is idempotent.
+  @Column({ name: 'external_source', type: 'varchar', length: 50, nullable: true })
+  externalSource?: string | null;
+
+  @Column({ name: 'external_reference', type: 'varchar', length: 200, nullable: true })
+  externalReference?: string | null;
 
   @Column({ name: 'rejection_reason', type: 'text', nullable: true })
   rejectionReason?: string | null;

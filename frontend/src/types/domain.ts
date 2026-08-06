@@ -657,8 +657,12 @@ export interface BeneficiaryAccountChangeRequest extends AuditFields {
 
 export interface PaymentRequest extends AuditFields {
   requestNumber: string;
-  paymentTypeId: string;
-  paymentType?: PaymentType;
+  /** Null while an integration draft awaits a maker choosing the payment type. */
+  paymentTypeId?: string | null;
+  paymentType?: PaymentType | null;
+  /** Set when an upstream system raised this request (e.g. the invoicing app). */
+  externalSource?: string | null;
+  externalReference?: string | null;
   counterpartyId?: string | null;
   counterparty?: Counterparty | null;
   employeeId?: string | null;
@@ -1046,7 +1050,13 @@ export interface Delegation {
 export interface AppNotification {
   id: string;
   userId: string;
-  type: 'DELEGATION_ASSIGNED' | 'DELEGATION_CANCELLED';
+  type:
+    | 'DELEGATION_ASSIGNED'
+    | 'DELEGATION_CANCELLED'
+    /** An integration draft is waiting for a maker to choose a payment type. */
+    | 'PAYMENT_REQUEST_DRAFT_PENDING'
+    /** An inbound invoice could not be mapped to the masters (admins only). */
+    | 'INTEGRATION_INVOICE_UNRESOLVED';
   title: string;
   message: string;
   isRead: boolean;

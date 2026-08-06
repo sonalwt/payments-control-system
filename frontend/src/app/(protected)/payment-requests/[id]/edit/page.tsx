@@ -12,8 +12,16 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useNotify } from '@/hooks/use-notify';
 import { useAuth } from '@/hooks/use-auth';
+import { useIsPaymentMaker } from '@/hooks/use-payment-maker';
 import { PaymentRequestForm, type PaymentRequestFormData } from '../../payment-request-form';
 import { RejectionHistory } from '@/components/payment-requests/rejection-history';
+
+/**
+ * Payment category the invoicing integration is scoped to. Mirrors the
+ * backend's INTEGRATION_PAYMENT_CATEGORY, which is the authority — this only
+ * shapes the dropdown so a maker is not offered a type that would be rejected.
+ */
+const INTEGRATION_CATEGORY = 'Trade Payments';
 
 export default function EditPaymentRequestPage(): React.ReactElement {
   const params = useParams();
@@ -22,6 +30,7 @@ export default function EditPaymentRequestPage(): React.ReactElement {
   const qc = useQueryClient();
   const notify = useNotify();
   const { user } = useAuth();
+  const isPaymentMaker = useIsPaymentMaker();
 
   const { data: pr, isLoading } = useQuery({
     queryKey: ['payment-request', id],
@@ -54,7 +63,9 @@ export default function EditPaymentRequestPage(): React.ReactElement {
   const defaultValues = useMemo<Partial<PaymentRequestFormData> | undefined>(() => {
     if (!pr) return undefined;
     return {
-      paymentTypeId: pr.paymentTypeId,
+      // Empty on an unclassified integration draft — the form's schema then
+      // requires the maker to choose one before the draft can be saved.
+      paymentTypeId: pr.paymentTypeId ?? '',
       counterpartyId: pr.counterpartyId ?? '',
       beneficiaryAccountId: pr.beneficiaryAccountId ?? '',
       legalEntityId: pr.legalEntityId ?? '',
@@ -82,9 +93,14 @@ export default function EditPaymentRequestPage(): React.ReactElement {
     </Link>
   );
 
-  // Only the creator may edit, and only while the request is a DRAFT.
+  // The creator may edit their own draft. An integration draft has no creator
+  // in the human sense — it belongs to the service account until someone picks
+  // it up — so any payment maker may open it to choose the payment type, which
+  // is what claims it. The backend enforces both rules.
   const isMine = pr.createdBy === user?.id;
-  if (pr.status !== 'DRAFT' || !isMine) {
+  const isUnclaimedIntegrationDraft = !pr.paymentTypeId && !!pr.externalSource;
+  const canEdit = isMine || (isUnclaimedIntegrationDraft && isPaymentMaker);
+  if (pr.status !== 'DRAFT' || !canEdit) {
     return (
       <div className="space-y-4">
         <PageHeader
@@ -97,6 +113,11 @@ export default function EditPaymentRequestPage(): React.ReactElement {
             <p>
               This request is currently in <strong>{pr.status.replace(/_/g, ' ')}</strong> status.
               Only requests in <strong>DRAFT</strong> status can be edited.
+            </p>
+          ) : isUnclaimedIntegrationDraft ? (
+            <p>
+              This draft arrived from {pr.externalSource} and is waiting for a payment type.
+              Only a payment maker can classify it.
             </p>
           ) : (
             <p>Only the creator of a draft payment request can edit it.</p>
@@ -123,6 +144,9 @@ export default function EditPaymentRequestPage(): React.ReactElement {
           submitLabel="Save changes"
           submitting={updateMut.isPending}
           onSubmit={(d) => updateMut.mutate(d)}
+          // Invoices from the upstream system are trade spend only, so the
+          // dropdown offers just those types. The backend enforces it too.
+          restrictToCategory={isUnclaimedIntegrationDraft ? INTEGRATION_CATEGORY : undefined}
         />
       </Card>
     </div>

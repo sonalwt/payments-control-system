@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dialog';
 import { useNotify } from '@/hooks/use-notify';
 import { useAuth } from '@/hooks/use-auth';
+import { useIsPaymentMaker } from '@/hooks/use-payment-maker';
 import { PaymentRequestDetailView } from '@/components/payment-requests/payment-request-detail-view';
 import { PaymentRequestChat } from '@/components/payment-requests/payment-request-chat';
 
@@ -104,6 +105,7 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   const notify = useNotify();
   const qc = useQueryClient();
   const { user } = useAuth();
+  const isPaymentMaker = useIsPaymentMaker();
   const userRoles = user?.roles ?? [];
 
   const [approveOpen, setApproveOpen] = useState(false);
@@ -296,6 +298,12 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   }
 
   const isMine = pr.createdBy === user?.id;
+  // An integration draft belongs to the service account until a maker chooses
+  // its payment type (which claims it), so any payment maker may open it to
+  // edit. Submit stays gated on isMine — by then the claim has transferred
+  // ownership, so the person submitting is the one who classified it.
+  const isUnclaimedIntegrationDraft = !pr.paymentTypeId && !!pr.externalSource;
+  const canEdit = isMine || (isUnclaimedIntegrationDraft && isPaymentMaker);
   // A counterparty attached while still awaiting KYC (Trade flow) — or one the
   // KYC team rejected — blocks submission until it is approved. The backend
   // enforces this at submit; here we disable the button and explain why.
@@ -353,10 +361,11 @@ export default function PaymentRequestDetailPage(): React.ReactElement {
   // Lifecycle buttons — passed as the header `actions` slot of the shared view.
   const actions = (
     <div className="flex gap-2">
-      {pr.status === 'DRAFT' && isMine && (
+      {pr.status === 'DRAFT' && canEdit && (
         <Link href={`/payment-requests/${id}/edit`}>
           <Button size="sm" variant="outline">
-            <Pencil className="mr-1 h-4 w-4" /> Edit
+            <Pencil className="mr-1 h-4 w-4" />
+            {isUnclaimedIntegrationDraft ? 'Select payment type' : 'Edit'}
           </Button>
         </Link>
       )}

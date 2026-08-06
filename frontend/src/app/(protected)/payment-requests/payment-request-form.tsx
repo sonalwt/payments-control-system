@@ -16,6 +16,7 @@ import type {
   Currency,
   LegalEntity,
   Paginated,
+  PaymentCategory,
   PaymentNature,
   PaymentType,
   Role,
@@ -99,12 +100,19 @@ function compareInvoice(
 
 export function PaymentRequestForm({
   onSubmit, submitting, defaultValues, submitLabel = 'Save as draft', showDocuments = true,
+  restrictToCategory,
 }: {
   onSubmit: (d: PaymentRequestFormData) => void;
   submitting?: boolean;
   defaultValues?: Partial<PaymentRequestFormData>;
   submitLabel?: string;
   showDocuments?: boolean;
+  /**
+   * Limit the payment type dropdown to one category, by name. Used when
+   * classifying a draft that arrived from the invoicing system, which only
+   * carries one kind of spend. The backend enforces the same rule.
+   */
+  restrictToCategory?: string;
 }): React.ReactElement {
   // §4.1 — when the documents section is shown (create flow), at least one
   // supporting document is mandatory. The edit flow hides documents, so it
@@ -241,6 +249,13 @@ export function PaymentRequestForm({
     queryKey: ['roles-all'],
     queryFn: () => api.get<Role[]>('/roles'),
   });
+  // Only needed to resolve restrictToCategory (a name) to an id.
+  const { data: paymentCategories } = useQuery({
+    queryKey: ['payment-categories-all'],
+    queryFn: async () =>
+      (await api.get<Paginated<PaymentCategory>>('/payment-categories?page=1&limit=100')).data,
+    enabled: !!restrictToCategory,
+  });
   const { data: counterparties, refetch: refetchCounterparties } = useQuery({
     queryKey: ['counterparties-all'],
     queryFn: () => api.get<Paginated<Counterparty>>('/counterparties?page=1&limit=200'),
@@ -278,9 +293,14 @@ export function PaymentRequestForm({
   );
   // A payment type is creatable if the user holds any of its maker roles
   // (multi-select makerRoleIds, or the legacy single makerRole).
+  const restrictedCategoryId = restrictToCategory
+    ? (paymentCategories ?? []).find((c) => c.name === restrictToCategory)?.id
+    : undefined;
   const paymentTypeOptions = (paymentTypes?.data ?? [])
     .filter((p) => {
       if (!p.isActive) return false;
+      // Integration drafts are scoped to a single category (see restrictToCategory).
+      if (restrictToCategory && p.paymentCategoryId !== restrictedCategoryId) return false;
       const ids = p.makerRoleIds?.length ? p.makerRoleIds : p.makerRoleId ? [p.makerRoleId] : [];
       if (ids.some((id) => heldRoleIds.has(id))) return true;
       return !!p.makerRole?.code && !!user?.roles?.includes(p.makerRole.code);

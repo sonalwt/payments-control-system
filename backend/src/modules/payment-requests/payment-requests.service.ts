@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { RoleCode } from '../../common/enums/role.enum';
@@ -71,6 +72,7 @@ export class PaymentRequestsService {
     private readonly dataSource: DataSource,
     private readonly s3: S3Service,
     private readonly mail: MailService,
+    private readonly config: ConfigService,
   ) {}
 
   // ===================================================================
@@ -99,6 +101,10 @@ export class PaymentRequestsService {
         purposeDescription: dto.purposeDescription ?? null,
         invoiceNumber: dto.invoiceNumber ?? null,
         dueDate: dto.dueDate ?? null,
+        // Integration origin (webhook); null for UI-raised requests. Persisted
+        // in the same insert so the unique index enforces webhook idempotency.
+        externalSource: dto.externalSource ?? null,
+        externalReference: dto.externalReference ?? null,
         status: 'DRAFT' as PaymentRequestStatus,
         createdBy: actorId,
         updatedBy: actorId,
@@ -119,6 +125,65 @@ export class PaymentRequestsService {
           });
           await em.save(doc);
         }
+      }
+
+      return this.loadOne(saved.id, em.getRepository(PaymentRequest));
+    });
+  }
+
+  /**
+   * Creates a DRAFT raised by an upstream system (the invoicing webhook), with
+   * **no payment type yet**.
+   *
+   * The payment type selects the approval matrix — who authorises the money —
+   * so it is never inferred from an integration payload. A maker classifies the
+   * draft afterwards (see update(), which transfers ownership), and submit()
+   * refuses anything still unclassified.
+   *
+   * create() cannot be reused because it gates on assertCanMake(), which needs
+   * a payment type to check against. Numbering and document handling stay here
+   * rather than in the webhook so every payment request is born the same way.
+   */
+  async createFromIntegration(
+    dto: Omit<CreatePaymentRequestDto, 'paymentTypeId'>,
+    actorId: string,
+  ): Promise<PaymentRequest> {
+    return this.dataSource.transaction(async (em) => {
+      const requestNumber = await this.nextRequestNumber(em);
+      const pr = em.create(PaymentRequest, {
+        requestNumber,
+        paymentTypeId: null,
+        counterpartyId: dto.counterpartyId ?? null,
+        employeeId: null,
+        beneficiaryAccountId: dto.beneficiaryAccountId ?? null,
+        legalEntityId: dto.legalEntityId ?? null,
+        sourceAccountId: null,
+        currencyId: dto.currencyId,
+        amount: dto.amount,
+        purposeDescription: dto.purposeDescription ?? null,
+        invoiceNumber: dto.invoiceNumber ?? null,
+        dueDate: dto.dueDate ?? null,
+        externalSource: dto.externalSource ?? null,
+        externalReference: dto.externalReference ?? null,
+        status: 'DRAFT' as PaymentRequestStatus,
+        createdBy: actorId,
+        updatedBy: actorId,
+      });
+      const saved = await em.save(pr);
+
+      for (const d of dto.documents ?? []) {
+        await em.save(
+          em.create(PaymentRequestDocument, {
+            paymentRequestId: saved.id,
+            documentCode: d.documentCode,
+            documentLabel: d.documentLabel ?? null,
+            fileName: d.fileName,
+            fileUrl: d.fileUrl,
+            fileSizeBytes: d.fileSizeBytes ?? null,
+            mimeType: d.mimeType ?? null,
+            uploadedBy: actorId,
+          }),
+        );
       }
 
       return this.loadOne(saved.id, em.getRepository(PaymentRequest));
@@ -281,6 +346,8 @@ export class PaymentRequestsService {
       // When 'true', return only requests awaiting the viewer's action now
       // (their active approval step, or a treasury stage they own).
       awaitingAction?: string;
+      // When 'true', return only integration drafts still awaiting a payment type.
+      unclassified?: string;
     },
     viewer?: AuthenticatedUser,
   ): Promise<PaginatedResult<PaymentRequest>> {
@@ -316,6 +383,10 @@ export class PaymentRequestsService {
 
     if (query.status) qb.andWhere('pr.status = :status', { status: query.status });
     if (query.paymentTypeId) qb.andWhere('pr.payment_type_id = :pt', { pt: query.paymentTypeId });
+    // "Awaiting classification" — integration drafts with no payment type yet.
+    if (query.unclassified === 'true') {
+      qb.andWhere('pr.payment_type_id IS NULL').andWhere('pr.external_source IS NOT NULL');
+    }
     if (search) {
       qb.andWhere(
         '(pr.request_number ILIKE :s OR pr.invoice_number ILIKE :s OR counterparty.legal_name ILIKE :s)',
@@ -395,6 +466,31 @@ export class PaymentRequestsService {
           )
       ))`;
       orClauses.push(delegatedAwaiting);
+
+      // (2c) Integration drafts awaiting classification. These are owned by the
+      //      integration service account, so clause (1) hides them from every
+      //      human, and they have no approval rows yet (those appear at submit),
+      //      so clause (2) cannot reach them either. Anyone configured as a
+      //      Maker on at least one live payment type may pick one up — the same
+      //      eligibility test used by /payment-types?mine=true. The clause stops
+      //      matching once a maker classifies the draft, because claiming it
+      //      transfers created_by to them and clause (1) takes over.
+      orClauses.push(`(
+        pr.payment_type_id IS NULL
+        AND pr.external_source IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM payment_types ptm
+          WHERE ptm.is_active AND ptm.deleted_at IS NULL
+            AND (
+              ptm.maker_user_id = :viewerId
+              OR EXISTS (
+                SELECT 1 FROM user_roles urm
+                WHERE urm.user_id = :viewerId
+                  AND (urm.role_id = ANY(ptm.maker_role_ids) OR urm.role_id = ptm.maker_role_id)
+              )
+            )
+        )
+      )`);
 
       // (3) Treasury visibility: a treasury maker / checker / authoriser sees
       //     the requests currently awaiting their stage (the maker stage is
@@ -480,6 +576,9 @@ export class PaymentRequestsService {
         aw.push(delegatedAwaiting);
         // Executed payments returned to the initiator to close.
         aw.push(`(pr.status = 'AWAITING_CLOSURE' AND pr.created_by = :viewerId)`);
+        // Integration drafts still needing a payment type. The outer visibility
+        // clause (2c) has already limited these to viewers eligible to classify.
+        aw.push(`(pr.status = 'DRAFT' AND pr.payment_type_id IS NULL AND pr.external_source IS NOT NULL)`);
         // Matrix-pinned stage roles awaiting this viewer.
         aw.push(`(
           (pr.status IN ('TREASURY_MAKER', 'TREASURY_SWIFT') AND pr.treasury_maker_role_id IS NOT NULL AND EXISTS (
@@ -566,6 +665,23 @@ export class PaymentRequestsService {
     if (pr.status !== 'DRAFT') {
       throw new BadRequestException('Only DRAFT payment requests can be edited.');
     }
+
+    // An integration draft arrives unclassified and owned by the service
+    // account. Choosing its payment type is what decides the approval chain, so
+    // it carries the same maker check as creating a request, and the type must
+    // sit in the category the integration is scoped to. The maker then adopts
+    // the draft: they become the initiator for every downstream gate (edit /
+    // submit / withdraw) and for the approval chain's notifications.
+    //
+    // Deliberately limited to this claim. Editing a manually created draft is
+    // untouched — this change does not tighten the existing flow.
+    const isUnclassifiedClaim =
+      !pr.paymentTypeId && !!dto.paymentTypeId && !!pr.externalSource;
+    if (isUnclassifiedClaim) {
+      await this.assertCanMake(actorId, dto.paymentTypeId!);
+      await this.assertIntegrationCategory(dto.paymentTypeId!);
+    }
+
     Object.assign(pr, {
       paymentTypeId: dto.paymentTypeId ?? pr.paymentTypeId,
       counterpartyId: dto.counterpartyId ?? pr.counterpartyId,
@@ -579,6 +695,7 @@ export class PaymentRequestsService {
       invoiceNumber: dto.invoiceNumber ?? pr.invoiceNumber,
       dueDate: dto.dueDate ?? pr.dueDate,
       updatedBy: actorId,
+      ...(isUnclassifiedClaim ? { createdBy: actorId } : {}),
     });
     return this.repo.save(pr);
   }
@@ -615,7 +732,9 @@ export class PaymentRequestsService {
    */
   private findActiveMatrix(
     em: EntityManager,
-    paymentTypeId: string,
+    // Null only for an unclassified draft; `= NULL` matches no matrix, and both
+    // callers already treat "no matrix" as a blocking, explained error.
+    paymentTypeId: string | null | undefined,
     currencyId: string,
   ): Promise<ApprovalMatrix | null> {
     return em
@@ -641,6 +760,15 @@ export class PaymentRequestsService {
       if (!pr) throw new NotFoundException(`Payment request ${id} not found`);
       if (pr.status !== 'DRAFT') {
         throw new BadRequestException(`Cannot submit in status ${pr.status}`);
+      }
+      // Integration drafts arrive without one. Guarding here rather than
+      // letting the matrix lookup fail keeps the message actionable — a NULL
+      // payment type matches no matrix and would otherwise surface as
+      // "no active approval matrix found for this payment type".
+      if (!pr.paymentTypeId) {
+        throw new BadRequestException(
+          'Select a payment type before submitting this request.',
+        );
       }
 
       // §6 — destination beneficiary must be payable.
@@ -888,10 +1016,11 @@ export class PaymentRequestsService {
 
         // Skip any matrix step whose approver matches the checker that just
         // approved step 1 — prevents the same role/user appearing twice.
-        const paymentType = await em.findOne(PaymentType, {
-          where: { id: pr.paymentTypeId },
-          select: ['id', 'checkerRoleId', 'checkerUserId'],
-        });
+        const paymentType = await this.loadPaymentType(em, pr.paymentTypeId, [
+          'id',
+          'checkerRoleId',
+          'checkerUserId',
+        ]);
         const stepsToSeed = matrixSteps.filter((s) => {
           if (paymentType?.checkerRoleId && s.approverRoleId === paymentType.checkerRoleId) return false;
           if (paymentType?.checkerUserId && s.approverUserId === paymentType.checkerUserId) return false;
@@ -1186,10 +1315,10 @@ export class PaymentRequestsService {
         await this.assertHasRole(em, actorId, RoleCode.TREASURY_AUTHORISER);
       }
 
-      const paymentType = await em.findOne(PaymentType, {
-        where: { id: pr.paymentTypeId },
-        select: ['id', 'isConfidential'],
-      });
+      const paymentType = await this.loadPaymentType(em, pr.paymentTypeId, [
+        'id',
+        'isConfidential',
+      ]);
       const isConfidential = !!paymentType?.isConfidential;
 
       // §2.5 — the balance is debited at completion. For the standard flow the
@@ -1522,10 +1651,10 @@ export class PaymentRequestsService {
       // request to the initiator as REJECTED.
       let bounceToMaker = pr.status === 'TREASURY_CHECKER';
       if (pr.status === 'TREASURY_AUTHORISER') {
-        const paymentType = await em.findOne(PaymentType, {
-          where: { id: pr.paymentTypeId },
-          select: ['id', 'isConfidential'],
-        });
+        const paymentType = await this.loadPaymentType(em, pr.paymentTypeId, [
+          'id',
+          'isConfidential',
+        ]);
         bounceToMaker = !paymentType?.isConfidential;
       }
 
@@ -2010,6 +2139,38 @@ export class PaymentRequestsService {
   }
 
   /**
+   * The invoicing integration carries one kind of spend, so a draft it raised
+   * may only be classified as a payment type in that category (configured by
+   * INTEGRATION_PAYMENT_CATEGORY, "Trade Payments" by default). Without this a
+   * maker could route an inbound supplier invoice down, say, the payroll
+   * approval chain.
+   *
+   * Matched on the category name — payment_categories has no code column.
+   * An empty setting disables the restriction.
+   */
+  private async assertIntegrationCategory(paymentTypeId: string): Promise<void> {
+    const expected = this.config.get<string>('app.integrationPaymentCategory') ?? '';
+    if (!expected) return;
+
+    const rows: Array<{ payment_type: string; category: string | null }> =
+      await this.dataSource.query(
+        `SELECT pt.name AS payment_type, pc.name AS category
+           FROM payment_types pt
+           LEFT JOIN payment_categories pc ON pc.id = pt.payment_category_id
+          WHERE pt.id = $1`,
+        [paymentTypeId],
+      );
+    const row = rows[0];
+    if (!row) throw new NotFoundException(`Payment type ${paymentTypeId} not found`);
+    if (row.category === expected) return;
+
+    throw new BadRequestException(
+      `"${row.payment_type}" is a ${row.category ?? 'uncategorised'} payment type. ` +
+        `Requests received from the invoicing system must be classified as ${expected}.`,
+    );
+  }
+
+  /**
    * Append a rejection to the request's permanent history. Kept in a dedicated
    * append-only table so it survives resubmission (which wipes the approval
    * chain). attempt_no is the 1-based position in this request's rejection log.
@@ -2111,7 +2272,10 @@ export class PaymentRequestsService {
     em: EntityManager,
     step: PaymentRequestApproval,
     actorId: string,
-    paymentTypeId: string,
+    // Null only for an unclassified draft, which cannot reach an approval step.
+    // The delegation lookup below compares it in SQL, where NULL simply fails to
+    // match a type-scoped delegation and leaves the wildcard ones — safe either way.
+    paymentTypeId: string | null | undefined,
   ): Promise<void> {
     if (step.approverType === 'USER') {
       if (step.approverUserId === actorId) return;
@@ -2197,6 +2361,22 @@ export class PaymentRequestsService {
     const seq = Number(rows[0].n);
     const year = dubaiYear();
     return `PR-${year}-${String(seq).padStart(5, '0')}`;
+  }
+
+  /**
+   * Loads a request's payment type, or null when it is still an unclassified
+   * integration draft. Every caller runs after submit(), which refuses a
+   * request without a type, so null is unreachable in practice — the lookup
+   * stays null-safe rather than asserting, because the callers already treat a
+   * missing type as "no checker / not confidential", which is the safe default.
+   */
+  private loadPaymentType(
+    em: EntityManager,
+    paymentTypeId: string | null | undefined,
+    select: (keyof PaymentType)[],
+  ): Promise<PaymentType | null> {
+    if (!paymentTypeId) return Promise.resolve(null);
+    return em.findOne(PaymentType, { where: { id: paymentTypeId }, select });
   }
 
   private snapshotCounterparty(cp: Counterparty): Record<string, unknown> {
