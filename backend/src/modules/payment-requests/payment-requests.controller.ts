@@ -75,6 +75,7 @@ export class PaymentRequestsController {
       dateTo?: string;
       awaitingAction?: string;
       unclassified?: string;
+      dealId?: string;
     },
     @CurrentUser() viewer: AuthenticatedUser,
   ) {

@@ -107,6 +107,7 @@ export class InvoiceWebhookService {
           amount: dto.amount,
           invoiceNumber: this.sanitiseInvoiceNumber(dto.invoiceNumber),
           dueDate: dto.dueDate,
+          dealId: dto.dealId,
           purposeDescription: this.buildPurpose(dto, !!resolved.beneficiaryAccountId),
           documents: dto.documents?.map((d) => ({
             documentCode: d.documentCode ?? 'INVOICE',
@@ -155,8 +156,14 @@ export class InvoiceWebhookService {
    * with the request and is read by everyone who reviews it — so the maker can
    * check them against the master and raise the account properly if needed.
    */
-  private buildPurpose(dto: InvoiceWebhookDto, beneficiaryMatched: boolean): string {
+  private buildPurpose(
+    dto: InvoiceWebhookDto,
+    beneficiaryMatched: boolean,
+  ): string | undefined {
+    // The deal reference has its own column, so the purpose stays free text.
     if (beneficiaryMatched) return dto.purposeDescription;
+    // purposeDescription is optional; without one the bank block stands alone.
+    const head = dto.purposeDescription ? `${dto.purposeDescription}\n\n` : '';
 
     const b = dto.supplierBankAccount;
     const lines = [
@@ -170,7 +177,7 @@ export class InvoiceWebhookService {
     ].filter((l): l is string => l !== null);
 
     return (
-      `${dto.purposeDescription}\n\n` +
+      `${head}` +
       `--- Supplier bank account as printed on the invoice ---\n` +
       `${lines.join('\n')}\n` +
       `(Not found on the beneficiary master. Verify before selecting a beneficiary.)`
@@ -217,8 +224,8 @@ export class InvoiceWebhookService {
 
       const title = `${pr.requestNumber} needs a payment type`;
       const message =
-        `Invoice ${dto.invoiceNumber} from ${dto.counterpartyName} ` +
-        `(${dto.currency} ${dto.amount}) arrived from ${dto.externalSystem} and is saved as a draft.\n\n` +
+        `Invoice ${dto.invoiceNumber} for deal ${dto.dealId}, from ${dto.counterpartyName} ` +
+        `(${dto.currency} ${dto.amount}), arrived from ${dto.externalSystem} and is saved as a draft.\n\n` +
         'Open it, select the payment type, check the details and submit it for approval.' +
         (warnings.length > 0 ? `\n\nNeeds attention:\n${warnings.map((w) => `• ${w}`).join('\n')}` : '');
 
@@ -231,6 +238,7 @@ export class InvoiceWebhookService {
         amount: dto.amount,
         currency: dto.currency,
         invoiceNumber: dto.invoiceNumber,
+        dealId: dto.dealId,
       };
 
       for (const maker of makers) {

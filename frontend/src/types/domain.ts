@@ -681,6 +681,8 @@ export interface PaymentRequest extends AuditFields {
   purposeDescription?: string | null;
   invoiceNumber?: string | null;
   dueDate?: string | null;
+  /** Trade deal this payment settles, when there is one. */
+  dealId?: string | null;
   status: PaymentRequestStatus;
   submittedAt?: string | null;
   approvedAt?: string | null;

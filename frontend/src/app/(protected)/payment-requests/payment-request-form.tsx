@@ -64,6 +64,7 @@ export const paymentRequestSchema = z.object({
     .optional()
     .or(z.literal('')),
   dueDate: z.string().optional().or(z.literal('')),
+  dealId: z.string().max(100, 'Deal reference is too long').optional().or(z.literal('')),
   documents: z.array(documentSchema).optional(),
 });
 export type PaymentRequestFormData = z.infer<typeof paymentRequestSchema>;
@@ -531,9 +532,16 @@ export function PaymentRequestForm({
           <p className="text-xs text-muted-foreground">§4.1 — alphanumeric only; spaces are not permitted.</p>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="purposeDescription">Purpose</Label>
-          <Textarea id="purposeDescription" rows={2} {...register('purposeDescription')} />
+          <Label htmlFor="dealId">Deal reference</Label>
+          <Input id="dealId" placeholder="DL-2026-0042" {...register('dealId')} />
+          {errors.dealId && <p className="text-xs text-destructive">{errors.dealId.message}</p>}
+          <p className="text-xs text-muted-foreground">Optional — the trade deal this payment settles.</p>
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="purposeDescription">Purpose</Label>
+        <Textarea id="purposeDescription" rows={2} {...register('purposeDescription')} />
       </div>
 
       {showDocuments && (

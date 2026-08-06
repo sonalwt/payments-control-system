@@ -101,6 +101,7 @@ export class PaymentRequestsService {
         purposeDescription: dto.purposeDescription ?? null,
         invoiceNumber: dto.invoiceNumber ?? null,
         dueDate: dto.dueDate ?? null,
+        dealId: dto.dealId ?? null,
         // Integration origin (webhook); null for UI-raised requests. Persisted
         // in the same insert so the unique index enforces webhook idempotency.
         externalSource: dto.externalSource ?? null,
@@ -163,6 +164,7 @@ export class PaymentRequestsService {
         purposeDescription: dto.purposeDescription ?? null,
         invoiceNumber: dto.invoiceNumber ?? null,
         dueDate: dto.dueDate ?? null,
+        dealId: dto.dealId ?? null,
         externalSource: dto.externalSource ?? null,
         externalReference: dto.externalReference ?? null,
         status: 'DRAFT' as PaymentRequestStatus,
@@ -348,6 +350,8 @@ export class PaymentRequestsService {
       awaitingAction?: string;
       // When 'true', return only integration drafts still awaiting a payment type.
       unclassified?: string;
+      // Exact trade deal reference.
+      dealId?: string;
     },
     viewer?: AuthenticatedUser,
   ): Promise<PaginatedResult<PaymentRequest>> {
@@ -389,10 +393,12 @@ export class PaymentRequestsService {
     }
     if (search) {
       qb.andWhere(
-        '(pr.request_number ILIKE :s OR pr.invoice_number ILIKE :s OR counterparty.legal_name ILIKE :s)',
+        '(pr.request_number ILIKE :s OR pr.invoice_number ILIKE :s OR pr.deal_id ILIKE :s OR counterparty.legal_name ILIKE :s)',
         { s: `%${search}%` },
       );
     }
+    // Exact deal lookup — "everything paid against DL-2026-0042".
+    if (query.dealId) qb.andWhere('pr.deal_id = :dealId', { dealId: query.dealId });
 
     // Role-based visibility — works with any custom role codes in the DB.
     // No hardcoded role enum values are used here. Auto-scoped to the viewer:
@@ -694,6 +700,7 @@ export class PaymentRequestsService {
       purposeDescription: dto.purposeDescription ?? pr.purposeDescription,
       invoiceNumber: dto.invoiceNumber ?? pr.invoiceNumber,
       dueDate: dto.dueDate ?? pr.dueDate,
+      dealId: dto.dealId ?? pr.dealId,
       updatedBy: actorId,
       ...(isUnclassifiedClaim ? { createdBy: actorId } : {}),
     });

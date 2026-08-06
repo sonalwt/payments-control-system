@@ -72,6 +72,7 @@ function pendingAssignee(pr: PaymentRequest): string | null {
 const CSV_COLUMNS: { header: string; value: (pr: PaymentRequest) => string }[] = [
   { header: 'Request #', value: (pr) => pr.requestNumber },
   { header: 'Invoice #', value: (pr) => pr.invoiceNumber ?? '' },
+  { header: 'Deal', value: (pr) => pr.dealId ?? '' },
   { header: 'Payment Type', value: (pr) => pr.paymentType?.name ?? '' },
   { header: 'Legal Entity', value: (pr) => pr.paymentType?.legalEntity?.name ?? '' },
   { header: 'Counterparty', value: (pr) => pr.counterparty?.legalName ?? pr.employee?.fullName ?? '' },
@@ -210,6 +211,7 @@ export default function PaymentRequestsPage(): React.ReactElement {
       amount: d.amount,
       purposeDescription: d.purposeDescription || undefined,
       invoiceNumber: d.invoiceNumber || undefined,
+      dealId: d.dealId || undefined,
       dueDate: d.dueDate || undefined,
       documents: d.documents?.map((doc) => ({
         documentCode: doc.documentCode,
@@ -264,7 +266,7 @@ export default function PaymentRequestsPage(): React.ReactElement {
         <div className="flex flex-wrap items-center gap-2 border-b p-4">
           <Search className="h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by request number, invoice or counterparty"
+            placeholder="Search by request number, invoice, deal or counterparty"
             value={search}
             onChange={(e) => { setPage(1); setSearch(e.target.value); }}
             className="max-w-md"

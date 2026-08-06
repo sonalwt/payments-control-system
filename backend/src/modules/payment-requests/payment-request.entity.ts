@@ -160,6 +160,14 @@ export class PaymentRequest extends BaseEntity {
   @Column({ name: 'due_date', type: 'date', nullable: true })
   dueDate?: string | null;
 
+  /**
+   * Trade deal this payment settles. Not unique — a deal is commonly settled by
+   * several invoices. Set by the invoicing integration, and available to makers
+   * raising a trade payment by hand.
+   */
+  @Column({ name: 'deal_id', type: 'varchar', length: 100, nullable: true })
+  dealId?: string | null;
+
   @Column({ type: 'varchar', length: 40, default: 'DRAFT' })
   status!: PaymentRequestStatus;
 
