@@ -123,6 +123,7 @@ function validPayload(seed: Seeded, invoiceId: string): Record<string, unknown> 
     },
     amount: '12500.50',
     invoiceNumber: invoiceId,
+    dealId: `DL-${invoiceId}`,
     dueDate: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
     purposeDescription: 'Automated webhook test',
     documents: [
@@ -351,11 +352,13 @@ async function run(): Promise<void> {
     check('linked the supplier bank account', !!created.json?.matched?.beneficiary, created.json?.matched);
 
     const prId = created.json?.paymentRequestId as string;
-    const stored: Array<{ payment_type_id: string | null; created_by: string }> = await db.query(
-      `SELECT payment_type_id, created_by FROM payment_requests WHERE id = $1`,
-      [prId],
-    );
+    const stored: Array<{ payment_type_id: string | null; created_by: string; deal_id: string | null }> =
+      await db.query(
+        `SELECT payment_type_id, created_by, deal_id FROM payment_requests WHERE id = $1`,
+        [prId],
+      );
     check('stored with no payment type', stored[0]?.payment_type_id === null, stored[0]);
+    check('deal reference stored', stored[0]?.deal_id === `DL-${id('A')}`, stored[0]);
 
     // 2 — every eligible maker is told there is a draft to classify.
     const notified: Array<{ n: string }> = await db.query(
@@ -425,7 +428,53 @@ async function run(): Promise<void> {
     );
     check('no beneficiary account was auto-created', beneCount[0].n === '1', beneCount[0]);
 
-    // 5 — payload validation.
+    // 5 — dueDate and purposeDescription are optional; the deal reference is
+    //     not, and must reach the request whether or not a purpose was sent.
+    console.log('\nOptional fields');
+    const bare = validPayload(seeded, id('H')) as any;
+    delete bare.dueDate;
+    delete bare.purposeDescription;
+    const bareRes = await post(bare);
+    check(
+      'creates without dueDate or purposeDescription',
+      bareRes.json?.outcome === 'CREATED',
+      bareRes.json,
+    );
+    const bareRow: Array<{ deal_id: string | null; purpose_description: string | null }> =
+      await db.query(
+        `SELECT deal_id, purpose_description FROM payment_requests WHERE id = $1`,
+        [bareRes.json?.paymentRequestId],
+      );
+    check(
+      'deal reference stored in its own column',
+      bareRow[0]?.deal_id === `DL-${id('H')}`,
+      bareRow[0],
+    );
+    check(
+      'purpose left empty rather than synthesised',
+      !bareRow[0]?.purpose_description,
+      bareRow[0],
+    );
+
+    const noDeal = validPayload(seeded, id('I')) as any;
+    delete noDeal.dealId;
+    check('missing dealId -> 400', (await post(noDeal)).status === 400);
+
+    // The whole point of a column: the deal is queryable.
+    const byDeal = await asUser(
+      (await login(seeded.maker.username)) ?? '',
+      'GET',
+      `/payment-requests?dealId=${encodeURIComponent(`DL-${id('H')}`)}`,
+    );
+    check(
+      'requests can be filtered by deal',
+      (byDeal.json?.data ?? []).some(
+        (r: { id: string }) => r.id === bareRes.json?.paymentRequestId,
+      ),
+      { total: byDeal.json?.total },
+    );
+
+    // 6 — payload validation.
     console.log('\nRejecting malformed payloads');
     const withType = { ...validPayload(seeded, id('C')), paymentTypeName: 'Anything' };
     const withTypeRes = await post(withType);

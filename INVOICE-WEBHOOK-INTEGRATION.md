@@ -46,20 +46,21 @@ no status-polling API.
 
 ## Request fields
 
-Every field is required **except `dueDate`**.
+Every field is required **except `dueDate` and `purposeDescription`**.
 
 | Field | Type | Notes |
 |---|---|---|
 | `externalInvoiceId` | string | The invoicing app's own invoice id. **Must be stable** — this is the duplicate key |
 | `externalSystem` | string | Name of the sending system, e.g. `"invoicing"` |
+| `dealId` | string | Trade deal this invoice settles. Recorded on the request so makers and approvers can tie the payment back to the deal |
 | `currency` | string | Code or name, e.g. `"AED"` |
 | `counterpartyName` | string | Supplier name, matched against the PCS counterparty master |
 | `legalEntityName` | string | Name or code of the entity being billed |
 | `supplierBankAccount` | object | The account printed on the invoice — see below |
 | `amount` | string \| number | `"12500.50"`. No thousands separators, no currency symbol, max 4 decimals |
 | `invoiceNumber` | string | Spaces and unsupported characters are normalised automatically |
-| `purposeDescription` | string | What the payment is for; shown to approvers |
 | `documents` | array | Non-empty. See below |
+| `purposeDescription` | string | *Optional.* Free text; the deal reference already identifies the payment |
 | `dueDate` | string | *Optional.* `"2026-09-15"` |
 
 ### `supplierBankAccount`
@@ -95,6 +96,7 @@ curl -X POST https://<pcs-host>/api/v1/webhooks/invoices \
   -d '{
     "externalInvoiceId": "INV-2026-0501",
     "externalSystem": "invoicing",
+    "dealId": "DL-2026-0042",
     "currency": "AED",
     "counterpartyName": "Globex Supplies L.L.C.",
     "legalEntityName": "Radiant World Capital Pte Ltd",
@@ -188,6 +190,11 @@ and cooling-off process.
 
 **Duplicates** are keyed on `(externalSystem, externalInvoiceId)`. A redelivery
 returns the original request and creates nothing.
+
+**The deal reference** is stored in its own `deal_id` column, shown on the
+request, included in the maker's notification and the CSV export, and both
+searchable and filterable (`GET /payment-requests?dealId=DL-2026-0042`). It is
+not unique — a deal is commonly settled by several invoices.
 
 ## Reference data
 
@@ -334,20 +341,33 @@ ALTER TABLE payment_requests ALTER COLUMN payment_type_id DROP NOT NULL;
 COMMENT ON COLUMN payment_requests.payment_type_id IS
   'NULL only for integration-created drafts awaiting classification by a maker.';
 
+-- 4. Trade deal reference.
+--    backend/src/database/migration_payment_request_deal_id.sql
+--    Not unique: a deal is commonly settled by several invoices.
+ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS deal_id varchar(100);
+
+COMMENT ON COLUMN payment_requests.deal_id IS
+  'Upstream trade deal reference this payment settles. Not unique — a deal may be settled by several invoices.';
+
+CREATE INDEX IF NOT EXISTS idx_pr_deal_id
+  ON payment_requests (deal_id)
+  WHERE deal_id IS NOT NULL AND deleted_at IS NULL;
+
 COMMIT;
 ```
 
 ### Verify
 
 ```sql
--- all three must report is_nullable = YES
+-- all four must report is_nullable = YES
 SELECT column_name, is_nullable FROM information_schema.columns
  WHERE table_name = 'payment_requests'
-   AND column_name IN ('payment_type_id','external_source','external_reference');
+   AND column_name IN ('payment_type_id','external_source','external_reference','deal_id');
 
--- must return one row
+-- must return both indexes
 SELECT indexname FROM pg_indexes
- WHERE tablename = 'payment_requests' AND indexname = 'uq_pr_external_ref';
+ WHERE tablename = 'payment_requests'
+   AND indexname IN ('uq_pr_external_ref','idx_pr_deal_id');
 
 -- must return both
 SELECT table_name FROM information_schema.tables
@@ -357,6 +377,9 @@ SELECT table_name FROM information_schema.tables
 There are **no new tables** beyond step 1, and no column for supplier bank
 details — unmatched details are appended to `purpose_description`, where the
 maker and approvers already read.
+
+`deal_id` is also available to manually created requests: it is an optional
+field on the payment request form, not something only the integration can set.
 
 ### Reversibility
 

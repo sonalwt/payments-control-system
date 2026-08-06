@@ -187,6 +187,7 @@ export function PaymentRequestDetailView({
             <Field label="Currency" value={pr.currency?.code ?? '—'} />
             <Field label="Amount" value={Number(pr.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} />
             <Field label="Invoice #" value={pr.invoiceNumber ?? '—'} />
+            {pr.dealId && <Field label="Deal" value={pr.dealId} />}
             <Field label="Due date" value={pr.dueDate ?? '—'} />
             <Field label="Beneficiary" value={pr.beneficiaryAccount?.accountHolderName ?? '—'} />
             <Field label="Beneficiary acc #" value={pr.beneficiaryAccount?.accountNumber ?? '—'} />

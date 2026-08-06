@@ -116,6 +116,13 @@ export class CreatePaymentRequestDto {
   @IsDateString()
   dueDate?: string;
 
+  /** Trade deal this payment settles, when there is one. */
+  @ApiPropertyOptional({ description: 'Trade deal reference.', example: 'DL-2026-0042' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  dealId?: string;
+
   @ApiPropertyOptional({ type: [AttachDocumentDto] })
   @IsOptional()
   @IsArray()

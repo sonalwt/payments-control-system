@@ -49,6 +49,7 @@ export default function EditPaymentRequestPage(): React.ReactElement {
       amount: d.amount,
       purposeDescription: d.purposeDescription || undefined,
       invoiceNumber: d.invoiceNumber || undefined,
+      dealId: d.dealId || undefined,
       dueDate: d.dueDate || undefined,
     }),
     onSuccess: () => {
@@ -74,6 +75,7 @@ export default function EditPaymentRequestPage(): React.ReactElement {
       amount: String(pr.amount),
       purposeDescription: pr.purposeDescription ?? '',
       invoiceNumber: pr.invoiceNumber ?? '',
+      dealId: pr.dealId ?? '',
       dueDate: pr.dueDate ?? '',
     };
   }, [pr]);

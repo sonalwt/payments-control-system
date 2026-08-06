@@ -214,10 +214,23 @@ export class InvoiceWebhookDto {
   @IsDateString()
   dueDate?: string;
 
-  @ApiProperty({ description: 'What the payment is for; shown to approvers.' })
+  @ApiProperty({
+    description:
+      'Trade deal this invoice settles, as referenced in the upstream system. Recorded on the request so makers and approvers can tie the payment back to the deal.',
+    example: 'DL-2026-0042',
+  })
   @IsString()
   @IsNotEmpty()
-  purposeDescription!: string;
+  @Length(1, 100)
+  dealId!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Free-text description of what the payment is for. Optional — the deal reference above already identifies the payment.',
+  })
+  @IsOptional()
+  @IsString()
+  purposeDescription?: string;
 
   @ApiProperty({
     type: [InvoiceWebhookDocumentDto],
