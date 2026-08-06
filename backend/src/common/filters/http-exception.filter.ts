@@ -18,7 +18,12 @@ interface ErrorBody {
   error: string;
   path: string;
   timestamp: string;
+  /** Extra structured detail carried by the thrown exception (see `details`). */
+  [key: string]: unknown;
 }
+
+/** Keys the filter builds itself; anything else on the thrown payload is extra. */
+const RESERVED_ERROR_KEYS = new Set(['statusCode', 'message', 'error', 'path', 'timestamp']);
 
 /** Mutating HTTP verbs — read-only requests are not audited. */
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -60,6 +65,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string | string[] = 'Internal server error';
     let error = 'InternalServerError';
+    // Structured detail a thrower attached alongside message/error (e.g. the
+    // integration webhook's per-field resolution issues). Forwarded verbatim so
+    // callers get something actionable instead of just a sentence.
+    let details: Record<string, unknown> = {};
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -70,6 +79,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
         const r = res as Record<string, unknown>;
         message = (r.message as string | string[]) ?? message;
         error = (r.error as string) ?? exception.name;
+        details = Object.fromEntries(
+          Object.entries(r).filter(([k]) => !RESERVED_ERROR_KEYS.has(k)),
+        );
       }
     } else if (exception instanceof QueryFailedError) {
       const e = exception as QueryFailedError & {
@@ -118,6 +130,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     this.auditBlocked(request, status, message);
 
     const body: ErrorBody = {
+      ...details,
       statusCode: status,
       message,
       error,

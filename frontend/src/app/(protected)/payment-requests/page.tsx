@@ -128,6 +128,12 @@ const STATUS_STYLES: Record<PaymentRequestStatus, string> = {
   CANCELLED: 'bg-muted text-muted-foreground ring-border',
 };
 
+/**
+ * Sentinel for the status filter. Drafts awaiting a payment type are all DRAFT,
+ * so this selects them by origin rather than status and maps to ?unclassified.
+ */
+const UNCLASSIFIED = '__UNCLASSIFIED';
+
 export default function PaymentRequestsPage(): React.ReactElement {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -146,7 +152,8 @@ export default function PaymentRequestsPage(): React.ReactElement {
   const filterParams = useMemo(() => {
     const u = new URLSearchParams();
     if (search) u.set('search', search);
-    if (status) u.set('status', status);
+    if (status === UNCLASSIFIED) u.set('unclassified', 'true');
+    else if (status) u.set('status', status);
     if (period === 'today' || period === 'month') {
       u.set('activityPeriod', period);
     } else if (period === 'custom') {
@@ -301,6 +308,9 @@ export default function PaymentRequestsPage(): React.ReactElement {
               <Select
                 options={[
                   { label: 'All statuses', value: '' },
+                  // Not a status — a view over drafts that arrived from an
+                  // upstream system and still need a payment type.
+                  { label: 'Awaiting classification', value: UNCLASSIFIED },
                   { label: 'Draft', value: 'DRAFT' },
                   { label: 'Pending approval', value: 'PENDING_APPROVAL' },
                   { label: 'Treasury — maker', value: 'TREASURY_MAKER' },
@@ -405,7 +415,9 @@ export default function PaymentRequestsPage(): React.ReactElement {
                   </span>
                 </TableCell>
                 <TableCell className="text-right">
-                  {pr.status === 'DRAFT' && pr.createdBy === user?.id && (
+                  {pr.status === 'DRAFT' &&
+                    (pr.createdBy === user?.id ||
+                      (!pr.paymentTypeId && !!pr.externalSource && canCreate)) && (
                     <Link href={`/payment-requests/${pr.id}/edit`}>
                       <Button size="icon" variant="ghost" title="Edit"><Pencil className="h-4 w-4" /></Button>
                     </Link>

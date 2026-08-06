@@ -15,6 +15,7 @@
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
     "import:bank-details": "ts-node src/database/import-bank-details.ts",
+    "test:webhook": "ts-node src/database/test-invoice-webhook.ts",
     "seed": "ts-node src/database/seed.ts",
     "seed:all": "ts-node src/database/seed.ts --all",
     "db:setup": "npm run migration:run && npm run seed:all"

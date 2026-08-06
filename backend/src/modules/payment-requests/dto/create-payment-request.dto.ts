@@ -122,4 +122,18 @@ export class CreatePaymentRequestDto {
   @ValidateNested({ each: true })
   @Type(() => AttachDocumentDto)
   documents?: AttachDocumentDto[];
+
+  /** Set by the integration webhook; not used by the UI. */
+  @ApiPropertyOptional({ description: 'Originating system for integration-created requests.' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 50)
+  externalSource?: string;
+
+  /** Idempotency key from the originating system (its invoice id). */
+  @ApiPropertyOptional({ description: 'Upstream invoice id; unique per external source.' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 200)
+  externalReference?: string;
 }
