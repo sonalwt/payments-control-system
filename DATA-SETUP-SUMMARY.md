@@ -163,7 +163,7 @@ _Generated from the current database._
 | Employee | Ahmed Al-Farsi | EMP2000106 | AED | PAY_TO | ACTIVE | Intesa Sanpaolo |
 | Employee | James Carter | EMP2000053 | GBP | PAY_TO | ACTIVE | HSBC |
 | Employee | Olivia Brown | EMP2000159 | USD | PAY_TO | ACTIVE | MCB - The Mauritius Commercial Bank Ltd |
-| Employee | Sonal Tamboli | 0291234567 | SGD | PAY_TO | ACTIVE | HSBC |
+| Employee | Priya Nair | 0291234567 | SGD | PAY_TO | ACTIVE | HSBC |
 | Employee | Wei Chen | EMP2000000 | SGD | PAY_TO | ACTIVE | Garanti Bank |
 
 ## Payment Requests

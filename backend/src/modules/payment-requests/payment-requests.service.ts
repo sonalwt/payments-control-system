@@ -147,7 +147,9 @@ export class PaymentRequestsService {
    */
   async createFromIntegration(
     dto: Omit<CreatePaymentRequestDto, 'paymentTypeId'>,
-    actorId: string,
+    // Null when no service account is configured — the request was not created
+    // by a PCS user, and the maker who classifies it takes ownership then.
+    actorId: string | null,
   ): Promise<PaymentRequest> {
     return this.dataSource.transaction(async (em) => {
       const requestNumber = await this.nextRequestNumber(em);
