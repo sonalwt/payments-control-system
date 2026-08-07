@@ -16,7 +16,6 @@ import type {
   Currency,
   LegalEntity,
   Paginated,
-  PaymentCategory,
   PaymentNature,
   PaymentType,
   Role,
@@ -101,7 +100,7 @@ function compareInvoice(
 
 export function PaymentRequestForm({
   onSubmit, submitting, defaultValues, submitLabel = 'Save as draft', showDocuments = true,
-  restrictToCategory,
+  restrictToCategory, restrictToLegalEntityId,
 }: {
   onSubmit: (d: PaymentRequestFormData) => void;
   submitting?: boolean;
@@ -114,6 +113,13 @@ export function PaymentRequestForm({
    * carries one kind of spend. The backend enforces the same rule.
    */
   restrictToCategory?: string;
+  /**
+   * Limit the payment type dropdown to types belonging to this legal entity.
+   * Each payment type is bound to exactly one entity, so when the entity is
+   * already known — an invoice states who is billed — offering types from other
+   * entities would only let the maker re-attribute the request by accident.
+   */
+  restrictToLegalEntityId?: string;
 }): React.ReactElement {
   // §4.1 — when the documents section is shown (create flow), at least one
   // supporting document is mandatory. The edit flow hides documents, so it
@@ -134,17 +140,8 @@ export function PaymentRequestForm({
     defaultValues: { documents: [], ...defaultValues },
   });
 
-  // Hydrate the form when default values arrive asynchronously (edit mode).
   const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    if (!hydrated && defaultValues) {
-      reset({ documents: [], ...defaultValues });
-      setPaymentTypeId(defaultValues.paymentTypeId ?? '');
-      setLegalEntityId(defaultValues.legalEntityId ?? '');
-      setCurrencyId(defaultValues.currencyId ?? '');
-      setHydrated(true);
-    }
-  }, [defaultValues, hydrated, reset]);
+  const [beneficiaryRestored, setBeneficiaryRestored] = useState(false);
 
   const [docUploadStates, setDocUploadStates] = useState<DocUploadState[]>([]);
   // Warn-only invoice auto-read results, keyed by document index. Advisory:
@@ -250,13 +247,6 @@ export function PaymentRequestForm({
     queryKey: ['roles-all'],
     queryFn: () => api.get<Role[]>('/roles'),
   });
-  // Only needed to resolve restrictToCategory (a name) to an id.
-  const { data: paymentCategories } = useQuery({
-    queryKey: ['payment-categories-all'],
-    queryFn: async () =>
-      (await api.get<Paginated<PaymentCategory>>('/payment-categories?page=1&limit=100')).data,
-    enabled: !!restrictToCategory,
-  });
   const { data: counterparties, refetch: refetchCounterparties } = useQuery({
     queryKey: ['counterparties-all'],
     queryFn: () => api.get<Paginated<Counterparty>>('/counterparties?page=1&limit=200'),
@@ -287,6 +277,36 @@ export function PaymentRequestForm({
     enabled: !!counterpartyId,
   });
 
+  // Hydrate the form (edit mode) only once the option lists its selects are
+  // built from have arrived. A native <select> silently drops a value that has
+  // no matching <option>, and nothing re-applies it when the options turn up
+  // later — which blanked counterparty, legal entity and currency on drafts
+  // that arrive pre-filled from the invoicing integration.
+  // sourceAccounts is included because the currency options are derived from
+  // the legal entity's bank accounts, not from the currency master.
+  const optionsReady =
+    !!paymentTypes && !!counterparties && !!currencies && !!legalEntities && !!sourceAccounts;
+  useEffect(() => {
+    if (hydrated || !defaultValues || !optionsReady) return;
+    reset({ documents: [], ...defaultValues });
+    setPaymentTypeId(defaultValues.paymentTypeId ?? '');
+    setLegalEntityId(defaultValues.legalEntityId ?? '');
+    setCurrencyId(defaultValues.currencyId ?? '');
+    setHydrated(true);
+  }, [defaultValues, hydrated, optionsReady, reset]);
+
+  // The beneficiary list can only be fetched once a counterparty is known, so
+  // it arrives a round-trip after the reset above and needs re-applying. Done
+  // once, so a maker who then picks a different account keeps their choice.
+  useEffect(() => {
+    if (beneficiaryRestored || !hydrated || !beneficiaries) return;
+    if (defaultValues?.beneficiaryAccountId) {
+      setValue('beneficiaryAccountId', defaultValues.beneficiaryAccountId, { shouldValidate: true });
+    }
+    setBeneficiaryRestored(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beneficiaries, hydrated, beneficiaryRestored]);
+
   // Role IDs the current user holds (user.roles are role codes; maker roles
   // on a payment type are stored as role IDs).
   const heldRoleIds = new Set(
@@ -294,14 +314,22 @@ export function PaymentRequestForm({
   );
   // A payment type is creatable if the user holds any of its maker roles
   // (multi-select makerRoleIds, or the legacy single makerRole).
-  const restrictedCategoryId = restrictToCategory
-    ? (paymentCategories ?? []).find((c) => c.name === restrictToCategory)?.id
-    : undefined;
   const paymentTypeOptions = (paymentTypes?.data ?? [])
     .filter((p) => {
       if (!p.isActive) return false;
       // Integration drafts are scoped to a single category (see restrictToCategory).
-      if (restrictToCategory && p.paymentCategoryId !== restrictedCategoryId) return false;
+      // Compared on the category name already returned with each payment type —
+      // /payment-categories is SUPER_ADMIN-only, so a maker cannot read it.
+      if (restrictToCategory && p.paymentCategory?.name !== restrictToCategory) return false;
+      // Only types belonging to the already-known legal entity (see the prop).
+      if (restrictToLegalEntityId) {
+        const entities = p.legalEntityIds?.length
+          ? p.legalEntityIds
+          : p.legalEntityId
+            ? [p.legalEntityId]
+            : [];
+        if (!entities.includes(restrictToLegalEntityId)) return false;
+      }
       const ids = p.makerRoleIds?.length ? p.makerRoleIds : p.makerRoleId ? [p.makerRoleId] : [];
       if (ids.some((id) => heldRoleIds.has(id))) return true;
       return !!p.makerRole?.code && !!user?.roles?.includes(p.makerRole.code);
@@ -336,8 +364,15 @@ export function PaymentRequestForm({
       : selectedPaymentType
         ? Array.from(entityIdsWithAccounts).filter((id): id is string => !!id)
         : [];
+  // The list is driven by the selected payment type, but always includes the
+  // entity already on the request. Without that, a draft that arrives with an
+  // entity but no payment type yet — every integration draft — would render an
+  // empty dropdown and appear to have lost it, taking the currency (derived
+  // from the entity's accounts) down with it.
   const legalEntityOptions = (legalEntities?.data ?? [])
-    .filter((le) => le.isActive && paymentTypeLegalEntityIds.includes(le.id))
+    .filter(
+      (le) => le.isActive && (paymentTypeLegalEntityIds.includes(le.id) || le.id === legalEntityId),
+    )
     .map((le) => ({ label: `${le.code} — ${le.name}`, value: le.id }));
 
   // Distinct currencies available across the selected legal entity's active
@@ -356,15 +391,18 @@ export function PaymentRequestForm({
     value: id,
   }));
 
-  // Keep the legal entity valid for the chosen payment type: auto-select when
-  // there is only one, and clear a stale selection that no longer belongs.
+  // Keep the legal entity valid for the chosen payment type: fill it in when
+  // the type allows only one, and clear a stale selection that no longer
+  // belongs. It never overwrites an entity that is already set and valid —
+  // every payment type is bound to a single entity, so overwriting silently
+  // re-attributed a request (e.g. one billed to a specific entity by the
+  // invoicing system) to whichever entity the chosen type happened to carry.
   useEffect(() => {
     if (!paymentTypeId || !legalEntities) return;
+    if (legalEntityId && paymentTypeLegalEntityIds.includes(legalEntityId)) return;
     if (paymentTypeLegalEntityIds.length === 1) {
-      if (legalEntityId !== paymentTypeLegalEntityIds[0]) {
-        setField('legalEntityId', paymentTypeLegalEntityIds[0], setLegalEntityId);
-      }
-    } else if (legalEntityId && !paymentTypeLegalEntityIds.includes(legalEntityId)) {
+      setField('legalEntityId', paymentTypeLegalEntityIds[0], setLegalEntityId);
+    } else if (legalEntityId) {
       setField('legalEntityId', '', setLegalEntityId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -413,15 +451,27 @@ export function PaymentRequestForm({
         <Label htmlFor="paymentTypeId">Payment type <span className="text-destructive">*</span></Label>
         <input type="hidden" {...register('paymentTypeId')} />
         <Select id="paymentTypeId"
-          placeholder={paymentTypeOptions.length === 0 ? 'No payment types available for your role' : 'Select payment type'}
+          placeholder={
+            paymentTypeOptions.length > 0
+              ? 'Select payment type'
+              // Say which restriction emptied the list, so "nothing here" is
+              // diagnosable rather than just wrong-looking.
+              : restrictToLegalEntityId
+                ? `No ${restrictToCategory ?? 'payment'} types for this legal entity and your role`
+                : restrictToCategory
+                  ? `No ${restrictToCategory} types available for your role`
+                  : 'No payment types available for your role'
+          }
           disabled={paymentTypeOptions.length === 0}
           options={paymentTypeOptions}
           value={paymentTypeId}
           onChange={(e) => {
+            // Downstream selections are NOT cleared here. The effects below
+            // already drop a legal entity or currency that the new payment type
+            // does not allow, and auto-select when there is only one option —
+            // so clearing unconditionally only destroyed still-valid values,
+            // including the ones an integration draft arrives with.
             setField('paymentTypeId', e.target.value, setPaymentTypeId);
-            // Reset downstream selections — they depend on the payment type.
-            setField('legalEntityId', '', setLegalEntityId);
-            setField('currencyId', '', setCurrencyId);
           }} />
         {errors.paymentTypeId && <p className="text-xs text-destructive">{errors.paymentTypeId.message}</p>}
       </div>

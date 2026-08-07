@@ -238,13 +238,31 @@ ANNUAL_SUBS_TRADING_SMC            MOVIE_COMPANY_PAYMENTS     TRADE_IRON_ORE_RWC
 
 ## Who gets notified
 
-Every active user who is a configured Maker on at least one live payment type —
-the same rule as `/payment-types?mine=true`. They receive an in-app notification
-(`PAYMENT_REQUEST_DRAFT_PENDING`) and can see the draft in the payment requests
-list under the **Awaiting classification** filter.
+The **initiators for the invoice's own legal entity**: active users configured
+as Maker on a live `Trade Payments` payment type belonging to that entity. They
+receive an in-app notification (`PAYMENT_REQUEST_DRAFT_PENDING`) and see the
+draft in the payment requests list under **Awaiting classification**.
 
-No email is sent: the audience is large, and an email per invoice would train
-people to ignore it.
+A payment type is bound to a single legal entity, so a maker for another entity
+could not classify the request anyway — notifying them would be pure noise. The
+same rule drives three things, which are deliberately kept identical:
+
+| | Rule |
+|---|---|
+| Who is notified | initiator for the request's legal entity |
+| Who can see the draft | same |
+| Which payment types the dropdown offers | user ∩ legal entity ∩ category |
+
+Change one and the other two must change with it — otherwise people are told
+about work they cannot see, or see work they cannot action.
+
+No email is sent: an email per invoice to a standing group trains people to
+ignore it.
+
+**If no initiator exists for the entity**, nobody could classify the draft, so
+platform admins get an `INTEGRATION_NO_INITIATOR` notification instead, naming
+the entity. The fix is master data — a payment type for that entity, or a maker
+role assigned to someone — not a redelivery.
 
 When an invoice cannot be resolved at all, platform admins instead receive
 `INTEGRATION_INVOICE_UNRESOLVED`, deduplicated per invoice so a retrying sender
@@ -410,10 +428,14 @@ draft, select a payment type, save, and submit.
 - **The endpoint is unauthenticated.** The approval matrix, not this endpoint,
   authorises payment — but anyone who discovers the URL can inject drafts into
   the queue. Adding a shared-secret header is confined to the controller.
-- **Notification volume.** Every maker on any payment type is notified for every
-  invoice, which gives no single owner. Worth revisiting with a dedicated triage
-  role; it is one predicate to change in the notification query and the matching
-  visibility clause.
+- **Notification volume.** Alerts go to every initiator for the entity, which is
+  a group rather than a named owner — currently 16–19 people for the larger
+  entities. A dedicated triage role would narrow it further; it is one predicate
+  in the notification query, the visibility clause and the dropdown filter.
+- **Legal entities without payment types.** Most of the 49 entities have none,
+  so an invoice naming one produces a draft nobody can classify. It is reported
+  to admins rather than failing at the boundary — consider rejecting such
+  invoices with a `422` so they bounce back to the sender instead.
 - **`@mention` on an unclassified draft** returns no matrix approvers, because
   the lookup joins on payment type. It resolves itself once classified.
 - **Reference data is shared manually.** There is no lookup API for the sending

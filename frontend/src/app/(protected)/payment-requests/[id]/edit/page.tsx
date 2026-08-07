@@ -149,6 +149,12 @@ export default function EditPaymentRequestPage(): React.ReactElement {
           // Invoices from the upstream system are trade spend only, so the
           // dropdown offers just those types. The backend enforces it too.
           restrictToCategory={isUnclaimedIntegrationDraft ? INTEGRATION_CATEGORY : undefined}
+          // The invoice already states which entity is billed, and each payment
+          // type is bound to one entity — so offer only that entity's types
+          // rather than letting a choice here silently re-attribute the request.
+          restrictToLegalEntityId={
+            isUnclaimedIntegrationDraft ? (pr.legalEntityId ?? undefined) : undefined
+          }
         />
       </Card>
     </div>

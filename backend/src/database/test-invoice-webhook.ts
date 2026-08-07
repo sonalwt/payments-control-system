@@ -48,6 +48,11 @@ interface Seeded {
   offCategoryMaker: { username: string; paymentTypeId: string } | null;
   /** Any live type outside the integration's category, maker rights aside. */
   anyOffCategoryTypeId: string | null;
+  /**
+   * An active legal entity with no payment type anyone can initiate — used to
+   * prove an unclassifiable draft escalates to admins instead of going quiet.
+   */
+  orphanLegalEntityName: string | null;
 }
 
 interface HttpResult {
@@ -166,27 +171,30 @@ async function seed(db: DataSource): Promise<Seeded> {
   const live = `pt.is_active AND pt.deleted_at IS NULL
       AND pt.effective_from <= CURRENT_DATE
       AND (pt.effective_to IS NULL OR pt.effective_to >= CURRENT_DATE)`;
-  const makers: Array<{ id: string; username: string; trade_type: string; off_type: string | null }> =
-    await db.query(
-      `SELECT * FROM (
-         SELECT u.id, u.username,
-           (SELECT pt.id FROM payment_types pt
-              JOIN payment_categories pc ON pc.id = pt.payment_category_id AND pc.name = $1
-             WHERE ${live} AND ${eligible} LIMIT 1) AS trade_type,
-           (SELECT pt.id FROM payment_types pt
-              LEFT JOIN payment_categories pc ON pc.id = pt.payment_category_id
-             WHERE ${live} AND pc.name IS DISTINCT FROM $1 AND ${eligible} LIMIT 1) AS off_type
-           FROM users u
-          WHERE u.is_active AND u.deleted_at IS NULL
-       ) x
-       WHERE x.trade_type IS NOT NULL
-       ORDER BY (x.off_type IS NULL), x.username
-       LIMIT 1`,
-      [INTEGRATION_CATEGORY],
-    );
+  // The payment type drives everything: it fixes the legal entity the payload
+  // must name (a type is bound to one entity) and therefore who the initiators
+  // are. So pick the type + its entity + an eligible maker as one triple, rather
+  // than picking an entity independently and hoping someone can act on it.
+  const makers: Array<{
+    id: string;
+    username: string;
+    trade_type: string;
+    legal_entity_name: string;
+  }> = await db.query(
+    `SELECT u.id, u.username, pt.id AS trade_type, le.name AS legal_entity_name
+       FROM payment_types pt
+       JOIN payment_categories pc ON pc.id = pt.payment_category_id AND pc.name = $1
+       JOIN legal_entities le ON le.id = pt.legal_entity_id
+        AND le.is_active AND le.deleted_at IS NULL
+       JOIN users u ON u.is_active AND u.deleted_at IS NULL AND ${eligible}
+      WHERE ${live}
+      ORDER BY u.username, pt.code
+      LIMIT 1`,
+    [INTEGRATION_CATEGORY],
+  );
   if (makers.length === 0) {
     throw new Error(
-      `No active user is a maker on any "${INTEGRATION_CATEGORY}" payment type — cannot test classification.`,
+      `No active user is a maker on any "${INTEGRATION_CATEGORY}" payment type tied to a legal entity — cannot test classification.`,
     );
   }
 
@@ -203,6 +211,21 @@ async function seed(db: DataSource): Promise<Seeded> {
      ) x
      WHERE x.off_type IS NOT NULL
      ORDER BY x.username LIMIT 1`,
+    [INTEGRATION_CATEGORY],
+  );
+
+  // A legal entity nobody can initiate for: no live payment type in the
+  // integration's category belongs to it.
+  const orphanEntity: Array<{ name: string }> = await db.query(
+    `SELECT le.name FROM legal_entities le
+      WHERE le.is_active AND le.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM payment_types pt
+          JOIN payment_categories pc ON pc.id = pt.payment_category_id AND pc.name = $1
+          WHERE pt.is_active AND pt.deleted_at IS NULL
+            AND (pt.legal_entity_id = le.id OR le.id = ANY(pt.legal_entity_ids))
+        )
+      ORDER BY le.name LIMIT 1`,
     [INTEGRATION_CATEGORY],
   );
 
@@ -271,7 +294,9 @@ async function seed(db: DataSource): Promise<Seeded> {
   }
 
   return {
-    legalEntityName: legalEntity[0].name,
+    // The entity the chosen payment type belongs to — the payload must name it,
+    // or nobody would be an initiator for the resulting draft.
+    legalEntityName: makers[0].legal_entity_name,
     currencyCode: currency[0].code,
     maker: {
       id: makers[0].id,
@@ -283,6 +308,7 @@ async function seed(db: DataSource): Promise<Seeded> {
       ? { username: offMakers[0].username, paymentTypeId: offMakers[0].off_type }
       : null,
     anyOffCategoryTypeId: anyOffCategory[0]?.id ?? null,
+    orphanLegalEntityName: orphanEntity[0]?.name ?? null,
   };
 }
 
@@ -311,8 +337,10 @@ async function cleanup(db: DataSource): Promise<void> {
     await em.query(`DELETE FROM counterparties WHERE code = $1`, [TEST_CP_CODE]);
     await em.query(
       `DELETE FROM notifications
-        WHERE (type = 'INTEGRATION_INVOICE_UNRESOLVED' AND metadata ->> 'externalSystem' = $1)
-           OR (type = 'PAYMENT_REQUEST_DRAFT_PENDING' AND metadata ->> 'externalSystem' = $1)`,
+        WHERE type IN ('INTEGRATION_INVOICE_UNRESOLVED',
+                       'PAYMENT_REQUEST_DRAFT_PENDING',
+                       'INTEGRATION_NO_INITIATOR')
+          AND metadata ->> 'externalSystem' = $1`,
       [TEST_SOURCE],
     );
     console.log(`\nCleaned up ${ids.length} payment request(s) and the test vendor.`);
@@ -366,21 +394,37 @@ async function run(): Promise<void> {
         WHERE type = 'PAYMENT_REQUEST_DRAFT_PENDING' AND metadata ->> 'paymentRequestId' = $1`,
       [prId],
     );
+    // The audience is the initiators for THIS request's legal entity, not every
+    // maker in the company — the same set the visibility clause and the payment
+    // type dropdown use.
     const eligible: Array<{ n: string }> = await db.query(
       `SELECT count(DISTINCT u.id) n FROM users u
         WHERE u.is_active AND u.deleted_at IS NULL
           AND EXISTS (SELECT 1 FROM payment_types pt
+                       LEFT JOIN payment_categories pc ON pc.id = pt.payment_category_id
                        WHERE pt.is_active AND pt.deleted_at IS NULL
+                         AND pc.name = $1
+                         AND (pt.legal_entity_id = (SELECT legal_entity_id FROM payment_requests WHERE id = $2)
+                              OR (SELECT legal_entity_id FROM payment_requests WHERE id = $2) = ANY(pt.legal_entity_ids))
                          AND (pt.maker_user_id = u.id
                               OR EXISTS (SELECT 1 FROM user_roles ur
                                           WHERE ur.user_id = u.id
                                             AND (ur.role_id = ANY(pt.maker_role_ids)
                                                  OR ur.role_id = pt.maker_role_id))))`,
+      [INTEGRATION_CATEGORY, prId],
+    );
+    const everyone: Array<{ n: string }> = await db.query(
+      `SELECT count(*) n FROM users WHERE is_active AND deleted_at IS NULL`,
     );
     check(
-      `every eligible maker notified (${notified[0].n}/${eligible[0].n})`,
+      `initiators for the entity notified (${notified[0].n}/${eligible[0].n})`,
       notified[0].n === eligible[0].n && Number(notified[0].n) > 0,
       { notified: notified[0].n, eligible: eligible[0].n },
+    );
+    check(
+      'and not simply everyone',
+      Number(notified[0].n) < Number(everyone[0].n),
+      { notified: notified[0].n, activeUsers: everyone[0].n },
     );
 
     // 3 — redelivery must not raise a second payment, nor re-notify.
@@ -474,7 +518,51 @@ async function run(): Promise<void> {
       { total: byDeal.json?.total },
     );
 
-    // 6 — payload validation.
+    // 6 — an entity nobody initiates for: the draft is still captured, but no
+    //     maker can act on it, so admins are told rather than it going quiet.
+    if (seeded.orphanLegalEntityName) {
+      console.log('\nLegal entity with no initiator');
+      const orphan = validPayload(seeded, id('J')) as any;
+      orphan.legalEntityName = seeded.orphanLegalEntityName;
+      const orphanRes = await post(orphan);
+      check('invoice still captured', orphanRes.json?.outcome === 'CREATED', orphanRes.json);
+      const orphanId = orphanRes.json?.paymentRequestId;
+
+      const toMakers: Array<{ n: string }> = await db.query(
+        `SELECT count(*) n FROM notifications
+          WHERE type = 'PAYMENT_REQUEST_DRAFT_PENDING' AND metadata ->> 'paymentRequestId' = $1`,
+        [orphanId],
+      );
+      check('no maker was notified (there are none)', toMakers[0].n === '0', toMakers[0]);
+
+      const toAdmins: Array<{ n: string }> = await db.query(
+        `SELECT count(*) n FROM notifications
+          WHERE type = 'INTEGRATION_NO_INITIATOR' AND metadata ->> 'paymentRequestId' = $1`,
+        [orphanId],
+      );
+      const admins: Array<{ n: string }> = await db.query(
+        `SELECT count(*) n FROM users WHERE is_platform_admin AND is_active AND deleted_at IS NULL`,
+      );
+      check(
+        `admins notified instead (${toAdmins[0].n}/${admins[0].n})`,
+        toAdmins[0].n === admins[0].n && Number(toAdmins[0].n) > 0,
+        { admins: toAdmins[0].n, expected: admins[0].n },
+      );
+      const msg: Array<{ message: string }> = await db.query(
+        `SELECT message FROM notifications
+          WHERE type = 'INTEGRATION_NO_INITIATOR' AND metadata ->> 'paymentRequestId' = $1 LIMIT 1`,
+        [orphanId],
+      );
+      check(
+        'and the alert names the legal entity',
+        msg[0]?.message?.includes(seeded.orphanLegalEntityName) ?? false,
+        msg[0],
+      );
+    } else {
+      console.log('\n(every legal entity has an initiator — orphan check skipped)');
+    }
+
+    // 7 — payload validation.
     console.log('\nRejecting malformed payloads');
     const withType = { ...validPayload(seeded, id('C')), paymentTypeName: 'Anything' };
     const withTypeRes = await post(withType);
