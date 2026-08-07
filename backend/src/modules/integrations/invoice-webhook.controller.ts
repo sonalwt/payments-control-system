@@ -8,11 +8,15 @@ import { InvoiceWebhookService } from './invoice-webhook.service';
 /**
  * Inbound webhook for the invoicing application.
  *
+ * One endpoint: POST /api/v1/webhooks/invoices (the api/v1 prefix is applied
+ * globally in main.ts). There is no status-poll route.
+ *
  * Currently **open** (no authentication) by design decision — the approval
- * matrix, not this endpoint, is what authorises money leaving. Requests land
- * as DRAFT unless the caller sets autoSubmit. When this is exposed beyond a
- * trusted network, add a shared-secret header check here; nothing downstream
- * needs to change.
+ * matrix, not this endpoint, is what authorises money leaving. Invoices always
+ * land as an unclassified DRAFT; a maker chooses the payment type and submits,
+ * so nothing here can reach the approval chain on its own. When this is exposed
+ * beyond a trusted network, add a shared-secret header check here; nothing
+ * downstream needs to change.
  */
 @ApiTags('Integrations — Invoicing Webhook')
 @Controller('webhooks/invoices')
@@ -33,5 +37,4 @@ export class InvoiceWebhookController {
   create(@Body() dto: InvoiceWebhookDto) {
     return this.service.handleInvoice(dto);
   }
-
 }

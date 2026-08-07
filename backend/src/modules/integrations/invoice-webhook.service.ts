@@ -13,8 +13,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentRequest } from '../payment-requests/payment-request.entity';
 import { PaymentRequestsService } from '../payment-requests/payment-requests.service';
 import { User } from '../users/user.entity';
+import { Currency } from '../currencies/currency.entity';
 import { InvoiceWebhookDto } from './dto/invoice-webhook.dto';
 import { InvoiceNameResolver, ResolutionIssue } from './invoice-name-resolver.service';
+import { CounterpartyProvisioner, ProvisionResult } from './counterparty-provisioner.service';
 
 /** Notification type raised when an inbound invoice cannot be mapped. */
 const UNRESOLVED_NOTIFICATION = 'INTEGRATION_INVOICE_UNRESOLVED';
@@ -24,6 +26,9 @@ const DRAFT_NOTIFICATION = 'PAYMENT_REQUEST_DRAFT_PENDING';
 
 /** Raised to admins when no initiator exists for the invoice's legal entity. */
 const NO_INITIATOR_NOTIFICATION = 'INTEGRATION_NO_INITIATOR';
+
+/** Raised to the KYC team when a supplier was created from an invoice. */
+const PROVISIONED_NOTIFICATION = 'INTEGRATION_SUPPLIER_PROVISIONED';
 
 export interface InvoiceWebhookResult {
   /** CREATED — raised now. DUPLICATE — this invoice was already delivered. */
@@ -59,6 +64,9 @@ export class InvoiceWebhookService {
 
   constructor(
     private readonly resolver: InvoiceNameResolver,
+    private readonly provisioner: CounterpartyProvisioner,
+    @InjectRepository(Currency)
+    private readonly currencies: Repository<Currency>,
     private readonly paymentRequests: PaymentRequestsService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
@@ -83,7 +91,26 @@ export class InvoiceWebhookService {
     }
 
     // 2. Resolve every name against the PCS masters.
-    const { resolved, issues } = await this.resolver.resolve(dto);
+    let { resolved, issues } = await this.resolver.resolve(dto);
+
+    // 2a. A supplier PCS has never seen is provisioned rather than refused, so
+    //     a genuine new vendor does not bounce back to the sender. Only when
+    //     the counterparty is the SOLE unresolved name and nothing in the
+    //     master resembles it — a near miss is a human's call, since a
+    //     lookalike of an approved vendor with different bank details is how
+    //     invoice fraud works. Everything created is PENDING and unpayable.
+    if (!resolved && this.isNewSupplierOnly(issues)) {
+      const provisioned = await this.provisionSupplier(dto);
+      if (provisioned) {
+        ({ resolved, issues } = await this.resolver.resolve(dto));
+        // Why no account was created (unknown bank, or one already on file for
+        // another supplier) belongs in the response too, not only in the alert.
+        if (resolved && provisioned.accountSkippedReason) {
+          resolved.warnings.push(provisioned.accountSkippedReason);
+        }
+      }
+    }
+
     if (!resolved) {
       // The invoice is rejected, so nothing lands in the payment tables — but
       // an admin has to know a supplier's invoice is stuck on missing master
@@ -148,6 +175,95 @@ export class InvoiceWebhookService {
       matched: resolved.matched,
       warnings: resolved.warnings.length > 0 ? resolved.warnings : undefined,
     };
+  }
+
+  /**
+   * True when the only thing PCS could not resolve is the supplier, and nothing
+   * in the counterparty master resembles the name. Any other unresolved field —
+   * or a near miss on the supplier — must still be refused.
+   */
+  private isNewSupplierOnly(issues: ResolutionIssue[]): boolean {
+    return (
+      issues.length === 1 &&
+      issues[0].field === 'counterpartyName' &&
+      issues[0].autoCreatable === true
+    );
+  }
+
+  /**
+   * Create the supplier (and its account, where the bank is known) so the
+   * invoice can be captured. Returns false if provisioning itself fails, in
+   * which case the caller falls through to the normal 422.
+   */
+  private async provisionSupplier(dto: InvoiceWebhookDto): Promise<ProvisionResult | null> {
+    // The account needs the request currency; if that did not resolve we would
+    // not be here, since it would have been a second issue.
+    const currency = await this.currencies.findOne({
+      where: [{ code: dto.currency.trim().toUpperCase() }, { name: dto.currency.trim() }],
+      select: ['id'],
+    });
+    if (!currency) return null;
+
+    try {
+      const result = await this.provisioner.provision(dto, currency.id);
+      await this.notifyOfProvisionedSupplier(dto, result);
+      return result;
+    } catch (err) {
+      this.logger.error(
+        `Could not provision supplier "${dto.counterpartyName}" from ${dto.externalSystem} invoice ${dto.externalInvoiceId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      return null;
+    }
+  }
+
+  /**
+   * A supplier and bank details entered PCS without a person typing them, so
+   * say so loudly: to the KYC team who must verify them, and to admins.
+   * Never throws — alerting must not fail an accepted invoice.
+   */
+  private async notifyOfProvisionedSupplier(
+    dto: InvoiceWebhookDto,
+    result: ProvisionResult,
+  ): Promise<void> {
+    try {
+      const recipients: Array<{ id: string }> = await this.prRepo.manager.query(
+        `SELECT DISTINCT u.id FROM users u
+          WHERE u.is_active AND u.deleted_at IS NULL
+            AND (u.is_platform_admin
+                 OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                             WHERE ur.user_id = u.id AND r.code = 'KYC_TEAM'))`,
+      );
+      const account = result.beneficiaryAccountId
+        ? 'Its bank account was created as PENDING ACTIVATION with a cooling-off window.'
+        : (result.accountSkippedReason ?? 'No bank account was created.');
+      const message =
+        `${dto.externalSystem} invoice ${dto.externalInvoiceId} named a supplier PCS did not hold, ` +
+        `so "${result.counterpartyName}" (${result.counterpartyCode}) was created with KYC PENDING.\n\n` +
+        `${account}\n\n` +
+        'Nothing can be paid to it until KYC is approved and the account activated. ' +
+        'Verify the supplier and its bank details from a source other than the invoice before approving.';
+      for (const r of recipients) {
+        await this.notifications.create(
+          r.id,
+          PROVISIONED_NOTIFICATION,
+          `New supplier "${result.counterpartyName}" awaiting KYC`.slice(0, 200),
+          message,
+          {
+            externalSystem: dto.externalSystem.toUpperCase(),
+            externalInvoiceId: dto.externalInvoiceId,
+            counterpartyCode: result.counterpartyCode,
+            counterpartyName: result.counterpartyName,
+            beneficiaryAccountId: result.beneficiaryAccountId,
+          },
+        );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to announce provisioned supplier for ${dto.externalInvoiceId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
   }
 
   /**
