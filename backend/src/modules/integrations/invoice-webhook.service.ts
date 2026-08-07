@@ -22,6 +22,9 @@ const UNRESOLVED_NOTIFICATION = 'INTEGRATION_INVOICE_UNRESOLVED';
 /** Notification type raised when a draft is waiting for a maker to classify it. */
 const DRAFT_NOTIFICATION = 'PAYMENT_REQUEST_DRAFT_PENDING';
 
+/** Raised to admins when no initiator exists for the invoice's legal entity. */
+const NO_INITIATOR_NOTIFICATION = 'INTEGRATION_NO_INITIATOR';
+
 export interface InvoiceWebhookResult {
   /** CREATED — raised now. DUPLICATE — this invoice was already delivered. */
   outcome: 'CREATED' | 'DUPLICATE';
@@ -185,14 +188,21 @@ export class InvoiceWebhookService {
   }
 
   /**
-   * Tell everyone entitled to classify an integration draft that one is
-   * waiting. "Entitled" is the same test as /payment-types?mine=true: a maker
-   * on at least one live payment type. The audience matches the visibility
-   * clause in PaymentRequestsService.findAll(), so nobody is told about work
-   * they cannot see.
+   * Tell the people who can actually classify this draft that one is waiting.
    *
-   * In-app only. This audience is large, and an email per invoice to all of
-   * them would train people to ignore it.
+   * That is the initiators for the invoice's own legal entity: users configured
+   * as Maker on a live payment type in the integration's category that belongs
+   * to that entity. Notifying every maker in the company instead would reach
+   * people who cannot act on it — a payment type is bound to a single legal
+   * entity, so someone who makes only for another entity has nothing to pick.
+   *
+   * The audience deliberately mirrors both the visibility clause in
+   * PaymentRequestsService.findAll() and the payment type dropdown, so the set
+   * of people told, the set who can see it, and the set who can act are one and
+   * the same. Change one, change the others.
+   *
+   * In-app only: an email per invoice to a standing group trains people to
+   * ignore it.
    *
    * Never throws — a failed notification must not fail an accepted invoice.
    */
@@ -202,23 +212,32 @@ export class InvoiceWebhookService {
     warnings: string[],
   ): Promise<void> {
     try {
+      const category = this.config.get<string>('app.integrationPaymentCategory') ?? '';
       const makers: Array<{ id: string }> = await this.prRepo.manager.query(
         `SELECT u.id FROM users u
           WHERE u.is_active AND u.deleted_at IS NULL
             AND EXISTS (
               SELECT 1 FROM payment_types pt
+              LEFT JOIN payment_categories pc ON pc.id = pt.payment_category_id
               WHERE pt.is_active AND pt.deleted_at IS NULL
+                AND ($1::text = '' OR pc.name = $1)
+                AND ($2::uuid IS NULL
+                     OR pt.legal_entity_id = $2::uuid
+                     OR $2::uuid = ANY(pt.legal_entity_ids))
                 AND (pt.maker_user_id = u.id
                      OR EXISTS (SELECT 1 FROM user_roles ur
                                  WHERE ur.user_id = u.id
                                    AND (ur.role_id = ANY(pt.maker_role_ids)
                                         OR ur.role_id = pt.maker_role_id)))
             )`,
+        [category, pr.legalEntityId ?? null],
       );
       if (makers.length === 0) {
+        // Nobody can classify this. Silence would strand the invoice, so escalate.
         this.logger.warn(
-          `${pr.requestNumber} awaits classification but no active user is a maker on any payment type.`,
+          `${pr.requestNumber} awaits classification but no initiator is configured for its legal entity.`,
         );
+        await this.notifyAdminsOfNoInitiator(pr, dto);
         return;
       }
 
@@ -251,6 +270,43 @@ export class InvoiceWebhookService {
       this.logger.error(
         `Failed to notify makers about ${pr.requestNumber}`,
         err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
+  /**
+   * The invoice resolved, but no user is an initiator for its legal entity, so
+   * nobody can classify the draft. Tell the admins rather than let it sit in a
+   * queue no one is watching — the fix is master data (a payment type for that
+   * entity, or a maker role on one), not a redelivery.
+   */
+  private async notifyAdminsOfNoInitiator(
+    pr: PaymentRequest,
+    dto: InvoiceWebhookDto,
+  ): Promise<void> {
+    const admins = await this.users.find({
+      where: { isPlatformAdmin: true, isActive: true },
+      select: ['id'],
+    });
+    const message =
+      `${pr.requestNumber} (invoice ${dto.invoiceNumber} from ${dto.counterpartyName}, ` +
+      `${dto.currency} ${dto.amount}) was received for ${dto.legalEntityName}, but no user is ` +
+      'configured as an initiator for that legal entity, so nobody can select a payment type.\n\n' +
+      'Configure a payment type for the entity, or assign the maker role to someone, then the ' +
+      'draft can be picked up.';
+    for (const admin of admins) {
+      await this.notifications.create(
+        admin.id,
+        NO_INITIATOR_NOTIFICATION,
+        `${pr.requestNumber} has no initiator for ${dto.legalEntityName}`.slice(0, 200),
+        message,
+        {
+          paymentRequestId: pr.id,
+          requestNumber: pr.requestNumber,
+          externalSystem: dto.externalSystem.toUpperCase(),
+          externalInvoiceId: dto.externalInvoiceId,
+          legalEntityName: dto.legalEntityName,
+        },
       );
     }
   }

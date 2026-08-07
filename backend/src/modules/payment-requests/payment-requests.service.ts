@@ -476,17 +476,33 @@ export class PaymentRequestsService {
       // (2c) Integration drafts awaiting classification. These are owned by the
       //      integration service account, so clause (1) hides them from every
       //      human, and they have no approval rows yet (those appear at submit),
-      //      so clause (2) cannot reach them either. Anyone configured as a
-      //      Maker on at least one live payment type may pick one up — the same
-      //      eligibility test used by /payment-types?mine=true. The clause stops
-      //      matching once a maker classifies the draft, because claiming it
-      //      transfers created_by to them and clause (1) takes over.
+      //      so clause (2) cannot reach them either.
+      //
+      //      Visible to the initiators for the request's OWN legal entity: users
+      //      configured as Maker on a live payment type in the integration's
+      //      category that belongs to that entity. A payment type is bound to a
+      //      single entity, so a maker for a different entity could not classify
+      //      it anyway — showing it to them would just be noise.
+      //
+      //      This mirrors InvoiceWebhookService.notifyMakersOfDraft() and the
+      //      payment type dropdown, so notified / can-see / can-act are the same
+      //      set of people. Change one, change the others.
+      //
+      //      Stops matching once classified: claiming transfers created_by to
+      //      the maker and clause (1) takes over.
       orClauses.push(`(
         pr.payment_type_id IS NULL
         AND pr.external_source IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM payment_types ptm
+          LEFT JOIN payment_categories pcm ON pcm.id = ptm.payment_category_id
           WHERE ptm.is_active AND ptm.deleted_at IS NULL
+            AND (:integrationCategory = '' OR pcm.name = :integrationCategory)
+            AND (
+              pr.legal_entity_id IS NULL
+              OR ptm.legal_entity_id = pr.legal_entity_id
+              OR pr.legal_entity_id = ANY(ptm.legal_entity_ids)
+            )
             AND (
               ptm.maker_user_id = :viewerId
               OR EXISTS (
@@ -497,6 +513,8 @@ export class PaymentRequestsService {
             )
         )
       )`);
+      params.integrationCategory =
+        this.config.get<string>('app.integrationPaymentCategory') ?? '';
 
       // (3) Treasury visibility: a treasury maker / checker / authoriser sees
       //     the requests currently awaiting their stage (the maker stage is
