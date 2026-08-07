@@ -46,11 +46,12 @@ no status-polling API.
 
 ## Request fields
 
-Every field is required **except `dueDate` and `purposeDescription`**.
+Every field is required **except `externalInvoiceId`, `dueDate` and
+`purposeDescription`**.
 
 | Field | Type | Notes |
 |---|---|---|
-| `externalInvoiceId` | string | The invoicing app's own invoice id. **Must be stable** — this is the duplicate key |
+| `externalInvoiceId` | string | *Optional.* Your own id for the invoice, used as the duplicate key. **Defaults to `invoiceNumber`** — send it only if your record id differs from the number printed on the invoice. Must be stable |
 | `externalSystem` | string | Name of the sending system, e.g. `"invoicing"` |
 | `dealId` | string | Trade deal this invoice settles. Recorded on the request so makers and approvers can tie the payment back to the deal |
 | `currency` | string | Code or name, e.g. `"AED"` |
@@ -94,7 +95,6 @@ Every field is required **except `dueDate` and `purposeDescription`**.
 curl -X POST https://<pcs-host>/api/v1/webhooks/invoices \
   -H 'Content-Type: application/json' \
   -d '{
-    "externalInvoiceId": "INV-2026-0501",
     "externalSystem": "invoicing",
     "dealId": "DL-2026-0042",
     "currency": "AED",
@@ -152,9 +152,10 @@ attention but did not block creation.
 | `200` `outcome: CREATED` | Draft raised | Store `requestNumber`. Done |
 | `200` `outcome: DUPLICATE` | This `externalInvoiceId` was already delivered | Treat as success. **Re-sending with changed data does not update the original** |
 | `400` | Malformed payload — unknown field, bad amount, missing required field | A bug in the sender. **Do not retry unchanged** |
-| `422` | A name did not match PCS master data | **Do not retry in a loop.** PCS admins are notified automatically. Retry once the master data is corrected |
-| `503` | The integration is not configured in PCS | Retry with backoff; raise with PCS operations |
+| `422` | A currency, legal entity or ambiguous supplier name could not be resolved | **Do not retry in a loop.** PCS admins are notified automatically. Retry once the master data is corrected |
 | `5xx` / timeout | Transient | Safe to retry — the API is idempotent |
+
+An **unknown supplier is not a `422`.** See Matching rules.
 
 ### `422` body
 
@@ -163,10 +164,10 @@ Every unresolved field is reported at once, with near matches where PCS has them
 ```json
 {
   "issues": [
-    { "field": "counterpartyName",
-      "value": "Globex Suplies LLC",
-      "message": "\"Globex Suplies LLC\" does not match any active record in PCS.",
-      "candidates": ["Globex Supplies"] }
+    { "field": "legalEntityName",
+      "value": "Radiant Wrold Corporation",
+      "message": "\"Radiant Wrold Corporation\" does not match any active record in PCS.",
+      "candidates": ["Radiant World Corporation Pte Ltd"] }
   ],
   "statusCode": 422,
   "message": "One or more names on the invoice could not be resolved in PCS.",
@@ -176,20 +177,40 @@ Every unresolved field is reported at once, with near matches where PCS has them
 
 ## Matching rules
 
-**Names** are matched case-insensitively, ignoring extra whitespace. If that
-fails, a second pass ignores punctuation, dashes and corporate suffixes (`Ltd`,
-`L.L.C.`, `Pte`, `FZE`, …) — so `Globex Supplies L.L.C.` finds `Globex Supplies`.
-**A name that matches two records is an error, not a coin flip.**
+**The supplier is matched EXACTLY** on its name, legal name or code — only case
+and stray whitespace are ignored. `"  ACME   TRADING  "` finds `Acme Trading`;
+`Acme Trading LLC` does not. Send the name exactly as PCS registers it.
 
-**Bank accounts** are matched only on `accountNumber` or `iban`, never on name.
-If the account is not already on the PCS beneficiary master, the draft is still
-created but has no beneficiary attached, a warning is returned, and the supplied
-details are recorded on the request for the PCS maker. **PCS never creates a
-beneficiary account from an invoice** — new accounts go through the normal KYC
-and cooling-off process.
+**An unknown supplier is created, not rejected.** PCS adds it with **KYC
+PENDING**, and its bank account with **PENDING ACTIVATION** plus a cooling-off
+window. The invoice is captured and the response is `200`, but **nothing can be
+paid** until PCS staff verify and approve both. The KYC team is alerted. Expect
+warnings on the response saying so.
 
-**Duplicates** are keyed on `(externalSystem, externalInvoiceId)`. A redelivery
-returns the original request and creates nothing.
+If the invoice's bank is not in the PCS bank master, or the account number is
+already on file for a different supplier, the supplier is still created but the
+account is not — the reason is returned in `warnings`.
+
+**Currency, legal entity and payment category** are matched more forgivingly:
+case, punctuation, dashes and corporate suffixes (`Ltd`, `Pte`, `FZE`, …) are
+ignored. These are never created — an unmatched one is a `422`.
+
+**A name matching two records is an error, not a coin flip** — for any field.
+
+**Bank accounts** are matched on `accountNumber` or `iban`, never on name. An
+account PCS does not hold leaves the draft without a beneficiary, with the
+supplied details recorded for the maker.
+
+**Duplicates** are keyed on `(externalSystem, externalInvoiceId)`, and
+`externalInvoiceId` defaults to `invoiceNumber`. A redelivery returns the
+original request and creates nothing.
+
+The key is the invoice number **exactly as you send it**, not the form PCS
+stores. PCS normalises the stored number (spaces become `-`, `#` is dropped), so
+`INV 2026/01` and `INV-2026/01` end up identical on the request — but they remain
+two distinct invoices to the webhook. That is deliberate: keying on the stored
+form would treat the second as a redelivery of the first and silently skip a
+payment.
 
 **The deal reference** is stored in its own `deal_id` column, shown on the
 request, included in the maker's notification and the CSV export, and both
@@ -202,8 +223,14 @@ The sending system cannot guess PCS names, so these must be kept in step.
 
 **Currencies:** `AED` `CHF` `CNH` `EUR` `GBP` `HKD` `SGD` `USD`
 
-**Counterparties and legal entities:** supplied separately — export from PCS.
-Legal entities accept either the name or the code.
+**Legal entities:** supplied separately — export from PCS. Accepts name or code.
+Only entities that have a `Trade Payments` payment type can be used; an invoice
+naming any other one produces a draft nobody can classify.
+
+**Counterparties:** matched **exactly**, so send the name exactly as PCS holds
+it. Ask for the current export and keep it in step — a name that differs by so
+much as a suffix creates a *new* supplier awaiting KYC rather than matching the
+existing one.
 
 ---
 
@@ -223,6 +250,12 @@ Legal entities accept either the name or the code.
   submit, withdraw and all approval notifications.
 - **Counterparty KYC** must be `APPROVED` before the request can be submitted.
   The webhook warns rather than blocking, so the invoice is never lost.
+- **A supplier PCS has never seen is created, but inert.** Counterparty at KYC
+  `PENDING`, bank account at `PENDING_ACTIVATION` with a cooling-off window, and
+  the counterparty code prefixed `INT-` so provisioned suppliers are obvious in
+  the master and the KYC queue. Both controls must be cleared by a person before
+  anything can be paid. Never creates a bank, and never a second account for one
+  already on file — `(bank, account number)` is unique across the master.
 - **The manual flow is unchanged.** Users create and edit payment requests
   exactly as before; none of the above applies to manually created requests.
 
@@ -268,6 +301,20 @@ When an invoice cannot be resolved at all, platform admins instead receive
 `INTEGRATION_INVOICE_UNRESOLVED`, deduplicated per invoice so a retrying sender
 cannot flood the notification bell.
 
+When a supplier is provisioned from an invoice, the **KYC team** and platform
+admins receive `INTEGRATION_SUPPLIER_PROVISIONED`, telling them a supplier and
+bank details entered PCS without anyone typing them, and to verify from a source
+other than the invoice before approving.
+
+### Notification types raised by this integration
+
+| Type | To whom | When |
+|---|---|---|
+| `PAYMENT_REQUEST_DRAFT_PENDING` | initiators for the entity | a draft needs a payment type |
+| `INTEGRATION_SUPPLIER_PROVISIONED` | KYC team + admins | a supplier was created from an invoice |
+| `INTEGRATION_NO_INITIATOR` | admins | no one can classify the draft |
+| `INTEGRATION_INVOICE_UNRESOLVED` | admins | an invoice was rejected as unresolvable |
+
 ## Configuration
 
 ```ini
@@ -278,14 +325,15 @@ INTEGRATION_PAYMENT_CATEGORY=Trade Payments
 
 | Variable | Purpose |
 |---|---|
-| `INTEGRATION_MAKER_EMAIL` | Service account that integration-created requests are attributed to until a maker claims one. Must be an **active** user; needs no maker role. Empty → the webhook returns `503` |
+| `INTEGRATION_MAKER_EMAIL` | **Optional.** Service account integration-created requests are attributed to until a maker claims one; needs no maker role. Empty → `created_by` stays null until claimed, which is a supported state — origin is recorded in `external_source`/`external_reference` either way |
 | `INTEGRATION_PAYMENT_CATEGORY` | Category a maker may classify these drafts into. Matched on `payment_categories.name`. Empty disables the restriction |
 
-Verify both resolve:
+Verify the category exists — a mismatch here blocks every classification. The
+maker email only needs checking if you chose to set it.
 
 ```sql
-SELECT id, username, is_active FROM users WHERE email = '<INTEGRATION_MAKER_EMAIL>';
 SELECT id, name FROM payment_categories WHERE name = 'Trade Payments';
+SELECT id, username, is_active FROM users WHERE email = '<INTEGRATION_MAKER_EMAIL>';
 ```
 
 ## Database changes
@@ -414,10 +462,11 @@ npm run test:webhook   # terminal 2
 ```
 
 `backend/src/database/test-invoice-webhook.ts` seeds a throwaway vendor, runs
-the full flow — creation, idempotency, validation, unknown vendor, unknown bank
-account, maker classification, submission, and the untouched manual flow — then
-deletes everything it created. Non-zero exit on failure, so it can gate a
-deploy. Pass `--keep` to leave the data in place and inspect it in the UI.
+the full flow — creation, idempotency, validation, supplier provisioning and its
+PENDING controls, unknown bank account, maker classification, submission, and the
+untouched manual flow — then deletes everything it created. 63 checks; non-zero
+exit on failure, so it can gate a deploy. Pass `--keep` to leave the data in
+place and inspect it in the UI.
 
 Manual UI pass: log in as a maker, confirm the notification bell shows the
 alert, filter the payment requests list by **Awaiting classification**, open the
@@ -425,9 +474,18 @@ draft, select a payment type, save, and submit.
 
 ## Known limitations
 
-- **The endpoint is unauthenticated.** The approval matrix, not this endpoint,
-  authorises payment — but anyone who discovers the URL can inject drafts into
-  the queue. Adding a shared-secret header is confined to the controller.
+- **The endpoint is unauthenticated, and it can now create master data.** The
+  approval matrix, KYC approval and account activation all still stand between
+  an inbound invoice and a payment — but an unauthenticated caller can put a
+  supplier and bank details into the master in a pending state, leaving the KYC
+  reviewer as the control that matters. A shared-secret header, or an IP
+  allowlist at the proxy, is strongly advised before this is publicly reachable.
+  The check is confined to the controller.
+- **Exact supplier matching admits duplicates.** `Acme Trading` and
+  `Acme Trading L.L.C.` are different suppliers, and both would await KYC. Worse,
+  a provisioned name that collides with an existing supplier's *legal* name makes
+  that name permanently ambiguous for the webhook (`422`). Merging or renaming
+  duplicates in the KYC queue is the remedy.
 - **Notification volume.** Alerts go to every initiator for the entity, which is
   a group rather than a named owner — currently 16–19 people for the larger
   entities. A dedicated triage role would narrow it further; it is one predicate

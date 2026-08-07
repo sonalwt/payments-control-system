@@ -122,15 +122,19 @@ export class SupplierBankAccountDto {
  */
 export class InvoiceWebhookDto {
   // ── Idempotency ────────────────────────────────────────────────────
-  @ApiProperty({
+  @ApiPropertyOptional({
     description:
-      'The invoicing app\'s own id for this invoice. Replaying the same id returns the request already created instead of raising a duplicate payment.',
+      "Optional. The invoicing app's own id for this invoice, used to make delivery " +
+      'idempotent — replaying it returns the request already created instead of raising a ' +
+      'duplicate payment. Defaults to invoiceNumber, so send it only when your record id ' +
+      'differs from the number printed on the invoice.',
     example: 'INV-2026-0442',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @Length(1, 200)
-  externalInvoiceId!: string;
+  externalInvoiceId?: string;
 
   @ApiProperty({
     description: 'Name of the sending system. Scopes the idempotency key.',
