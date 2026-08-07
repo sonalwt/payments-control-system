@@ -38,6 +38,8 @@ const extraCounterpartyIds: string[] = [];
 interface Seeded {
   legalEntityName: string;
   currencyCode: string;
+  /** Configured service account, or null when INTEGRATION_MAKER_EMAIL is unset. */
+  serviceAccountId: string | null;
   /** A maker who can classify drafts, and one of the types they may pick. */
   maker: { id: string; username: string; paymentTypeId: string };
   /** A payment type that same maker is NOT eligible for, if one exists. */
@@ -148,19 +150,14 @@ function validPayload(seed: Seeded, invoiceId: string): Record<string, unknown> 
  * can exercise the human half of the workflow (classify → submit).
  */
 async function seed(db: DataSource): Promise<Seeded> {
+  // The service account is optional: unset means created_by stays null until a
+  // maker claims the draft. Resolve it only so the run can assert whichever
+  // behaviour this environment is configured for.
   const serviceAccount = process.env.INTEGRATION_MAKER_EMAIL ?? '';
-  if (!serviceAccount) {
-    throw new Error(
-      'INTEGRATION_MAKER_EMAIL is not set in .env — the webhook cannot create requests.',
-    );
-  }
-  const svc: Array<{ id: string }> = await db.query(
-    `SELECT id FROM users WHERE email = $1 AND is_active`,
-    [serviceAccount],
-  );
-  if (svc.length === 0) {
-    throw new Error(`INTEGRATION_MAKER_EMAIL (${serviceAccount}) is not an active PCS user.`);
-  }
+  const svc: Array<{ id: string }> = serviceAccount
+    ? await db.query(`SELECT id FROM users WHERE email = $1 AND is_active`, [serviceAccount])
+    : [];
+  const serviceAccountId = svc[0]?.id ?? null;
 
   // A maker who can classify an integration draft: eligible on a live payment
   // type inside the integration's category. Prefer one who ALSO makes for a
@@ -295,11 +292,30 @@ async function seed(db: DataSource): Promise<Seeded> {
     );
   }
 
+  // Payloads address the fixture vendor by this name, and counterparty matching
+  // is exact — so if anything else in the master answers to it (a leftover
+  // provisioned supplier, say) every scenario fails with a confusing ambiguity
+  // error. Fail once, clearly, instead.
+  const clashes: Array<{ code: string }> = await db.query(
+    `SELECT code FROM counterparties
+      WHERE is_active AND deleted_at IS NULL
+        AND (LOWER(TRIM(name)) = $1 OR LOWER(TRIM(legal_name)) = $1 OR LOWER(TRIM(code)) = $1)`,
+    ['acme trading l.l.c.'],
+  );
+  if (clashes.length > 1) {
+    throw new Error(
+      `The fixture vendor name is ambiguous — ${clashes.map((r) => r.code).join(', ')} all match ` +
+        '"Acme Trading L.L.C.". Remove the stale counterparties (likely INT-… rows left by an ' +
+        'earlier run) and try again.',
+    );
+  }
+
   return {
     // The entity the chosen payment type belongs to — the payload must name it,
     // or nobody would be an initiator for the resulting draft.
     legalEntityName: makers[0].legal_entity_name,
     currencyCode: currency[0].code,
+    serviceAccountId,
     maker: {
       id: makers[0].id,
       username: makers[0].username,
@@ -394,6 +410,15 @@ async function run(): Promise<void> {
       );
     check('stored with no payment type', stored[0]?.payment_type_id === null, stored[0]);
     check('deal reference stored', stored[0]?.deal_id === `DL-${id('A')}`, stored[0]);
+    // The service account is optional; null is a supported state, and either
+    // way the maker who classifies the draft takes ownership of it later.
+    check(
+      seeded.serviceAccountId
+        ? 'attributed to the configured service account'
+        : 'created_by left null (no service account configured)',
+      (stored[0]?.created_by ?? null) === seeded.serviceAccountId,
+      { createdBy: stored[0]?.created_by, expected: seeded.serviceAccountId },
+    );
 
     // 2 — every eligible maker is told there is a draft to classify.
     const notified: Array<{ n: string }> = await db.query(

@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  ServiceUnavailableException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
@@ -523,28 +518,36 @@ export class InvoiceWebhookService {
   }
 
   /**
-   * The service account integration-created requests are attributed to until a
-   * maker claims one. It needs no maker rights — there is no payment type to
-   * check against at this point — but created_by must reference a real user for
-   * the audit trail. A missing/unknown configuration is an operator error, so
-   * it fails loudly rather than silently creating orphaned requests.
+   * Optional service account that integration-created requests are attributed
+   * to until a maker claims one. Returns null when unset, and that is a
+   * supported state rather than a failure:
+   *
+   *   - created_by is nullable, and the employee portal already leaves it null
+   *     for the same reason — the row was not created by a PCS user;
+   *   - external_source / external_reference already record the true origin,
+   *     which is better audit evidence than a human's name on a request they
+   *     did not raise;
+   *   - claiming the draft sets created_by to the maker who classifies it, so
+   *     the gap only spans the period when no person is responsible for it.
+   *
+   * A value that is set but does not resolve is an operator mistake, so it is
+   * logged loudly — but it still does not reject the invoice. Capturing the
+   * invoice matters more than attributing it.
    */
-  private async integrationMakerId(): Promise<string> {
+  private async integrationMakerId(): Promise<string | null> {
     const email = this.config.get<string>('app.integrationMakerEmail') ?? '';
-    if (!email) {
-      throw new ServiceUnavailableException(
-        'The invoice integration is not configured: set INTEGRATION_MAKER_EMAIL to the PCS user ' +
-          'that integration-created payment requests should be raised by.',
-      );
-    }
+    if (!email) return null;
+
     const user = await this.users.findOne({
       where: { email },
       select: ['id', 'isActive'],
     });
     if (!user || !user.isActive) {
-      throw new ServiceUnavailableException(
-        `The invoice integration user (${email}) does not exist in PCS or is inactive.`,
+      this.logger.error(
+        `INTEGRATION_MAKER_EMAIL is set to "${email}", which is not an active PCS user. ` +
+          'Integration requests will be recorded with no creator until this is corrected.',
       );
+      return null;
     }
     return user.id;
   }
