@@ -32,6 +32,8 @@ const KEEP = process.argv.includes('--keep');
 
 /** Requests created outside the webhook (the manual-flow check), for cleanup. */
 const extraCleanupIds: string[] = [];
+/** Counterparties the webhook provisioned during the run, for cleanup. */
+const extraCounterpartyIds: string[] = [];
 
 interface Seeded {
   legalEntityName: string;
@@ -335,6 +337,11 @@ async function cleanup(db: DataSource): Promise<void> {
       [TEST_CP_CODE],
     );
     await em.query(`DELETE FROM counterparties WHERE code = $1`, [TEST_CP_CODE]);
+    // Suppliers the webhook provisioned mid-run, plus their accounts.
+    await em.query(`DELETE FROM beneficiary_accounts WHERE counterparty_id = ANY($1::uuid[])`, [
+      extraCounterpartyIds,
+    ]);
+    await em.query(`DELETE FROM counterparties WHERE id = ANY($1::uuid[])`, [extraCounterpartyIds]);
     await em.query(
       `DELETE FROM notifications
         WHERE type IN ('INTEGRATION_INVOICE_UNRESOLVED',
@@ -518,6 +525,73 @@ async function run(): Promise<void> {
       { total: byDeal.json?.total },
     );
 
+    // 5b — a supplier PCS has never seen is provisioned, but born unpayable.
+    console.log('\nUnknown supplier is provisioned, PENDING');
+    const newVendor = validPayload(seeded, id('K')) as any;
+    const vendorName = `Zephyr Metals Trading ${stamp}`;
+    newVendor.counterpartyName = vendorName;
+    newVendor.supplierBankAccount = {
+      accountName: vendorName,
+      accountNumber: `77${stamp}`,
+      swiftBic: 'EBILAEAD',
+      bankName: 'Emirates NBD Bank',
+      countryCode: 'AE',
+    };
+    const newVendorRes = await post(newVendor);
+    check('invoice accepted', newVendorRes.json?.outcome === 'CREATED', newVendorRes.json);
+
+    const cp: Array<{ id: string; code: string; kyc_status: string }> = await db.query(
+      `SELECT id, code, kyc_status FROM counterparties WHERE name = $1`,
+      [vendorName],
+    );
+    check('counterparty created', cp.length === 1, cp);
+    check('created PENDING KYC (not payable)', cp[0]?.kyc_status === 'PENDING', cp[0]);
+    check('code marks it as integration-provisioned', cp[0]?.code?.startsWith('INT-') ?? false, cp[0]);
+
+    const acct: Array<{ id: string; status: string; cooling_off_until: Date | null }> =
+      await db.query(
+        `SELECT id, status, cooling_off_until FROM beneficiary_accounts WHERE counterparty_id = $1`,
+        [cp[0]?.id],
+      );
+    check('bank account created', acct.length === 1, acct);
+    check('created PENDING_ACTIVATION', acct[0]?.status === 'PENDING_ACTIVATION', acct[0]);
+    check('and held by cooling-off', !!acct[0]?.cooling_off_until, acct[0]);
+
+    if (cp[0]?.id) extraCounterpartyIds.push(cp[0].id);
+
+    // The whole point: none of this can result in a payment without a human.
+    const provisionToken = await login(seeded.maker.username);
+    if (provisionToken) {
+      const newPrId = newVendorRes.json?.paymentRequestId;
+      await asUser(provisionToken, 'PUT', `/payment-requests/${newPrId}`, {
+        paymentTypeId: seeded.maker.paymentTypeId,
+      });
+      const blocked = await asUser(provisionToken, 'POST', `/payment-requests/${newPrId}/submit`);
+      check('submit is refused while KYC is pending', blocked.status === 400, blocked.json);
+      check(
+        'and says why',
+        JSON.stringify(blocked.json?.message ?? '').toLowerCase().includes('kyc'),
+        blocked.json,
+      );
+    }
+
+    // Matching is exact, but insensitive to case and stray whitespace, so an
+    // existing supplier is reused rather than duplicated.
+    console.log('\nExact supplier match reuses the existing record');
+    const sameVendor = validPayload(seeded, id('L')) as any;
+    sameVendor.counterpartyName = '  ACME   TRADING  ';
+    const sameVendorRes = await post(sameVendor);
+    check('invoice accepted', sameVendorRes.json?.outcome === 'CREATED', sameVendorRes.json);
+    check(
+      'resolved to the existing supplier',
+      (sameVendorRes.json?.matched?.counterparty ?? '').includes(TEST_CP_CODE),
+      sameVendorRes.json?.matched,
+    );
+    const dupes: Array<{ n: string }> = await db.query(
+      `SELECT count(*) n FROM counterparties WHERE name ILIKE 'Acme Trading%'`,
+    );
+    check('no duplicate supplier created', dupes[0].n === '1', dupes[0]);
+
     // 6 — an entity nobody initiates for: the draft is still captured, but no
     //     maker can act on it, so admins are told rather than it going quiet.
     if (seeded.orphanLegalEntityName) {
@@ -579,11 +653,21 @@ async function run(): Promise<void> {
     const badAmount = { ...validPayload(seeded, id('F')), amount: '12,500.00' };
     check('amount with a comma -> 400', (await post(badAmount)).status === 400);
 
-    // 6 — an unknown vendor is still refused outright and admins are told.
-    console.log('\nRejecting an unknown vendor');
-    const unknownVendor = { ...validPayload(seeded, id('G')), counterpartyName: 'No Such Vendor Ltd' };
-    const unknownVendorRes = await post(unknownVendor);
-    check('returns 422', unknownVendorRes.status === 422, unknownVendorRes.json);
+    // 6 — a name PCS cannot resolve AND cannot provision (only suppliers are
+    //     ever provisioned) is still refused outright, with admins told.
+    console.log('\nRejecting an unresolvable legal entity');
+    const unknownEntity = {
+      ...validPayload(seeded, id('G')),
+      legalEntityName: 'No Such Legal Entity Anywhere',
+    };
+    const unknownEntityRes = await post(unknownEntity);
+    check('returns 422', unknownEntityRes.status === 422, unknownEntityRes.json);
+    check(
+      'blames legalEntityName',
+      Array.isArray(unknownEntityRes.json?.issues) &&
+        unknownEntityRes.json.issues.some((i: { field: string }) => i.field === 'legalEntityName'),
+      unknownEntityRes.json,
+    );
     const notStored: Array<{ n: string }> = await db.query(
       `SELECT count(*) n FROM payment_requests WHERE external_reference = $1`,
       [id('G')],

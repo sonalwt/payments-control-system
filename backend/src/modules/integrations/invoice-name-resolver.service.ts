@@ -15,6 +15,13 @@ export interface ResolutionIssue {
   message: string;
   /** Near matches, so the integrator can see what PCS actually holds. */
   candidates?: string[];
+  /**
+   * True only when NOTHING in the master resembles the name — no exact match,
+   * no loose match, and no near miss to show. Callers may then provision the
+   * record. A near miss deliberately clears this: a lookalike of an approved
+   * vendor is exactly the case a human must adjudicate, not one to auto-create.
+   */
+  autoCreatable?: boolean;
 }
 
 export interface ResolvedInvoiceTargets {
@@ -164,25 +171,49 @@ export class InvoiceNameResolver {
     );
   }
 
+  /**
+   * Counterparties are matched EXACTLY — on name, legal name or code, ignoring
+   * only case and surrounding/repeated whitespace. No loose pass here, unlike
+   * the other masters: an unmatched supplier is provisioned rather than
+   * rejected, and a fuzzy match would decide, silently, whether an invoice
+   * joins an existing supplier or creates a new one. Exact is predictable and
+   * the sender controls it.
+   */
   private async resolveCounterparty(
     name: string,
     issues: ResolutionIssue[],
   ): Promise<Counterparty | null> {
-    const rows = await this.candidates(
-      this.counterparties,
-      'cp',
-      ['cp.name', 'cp.legalName', 'cp.code'],
-      name,
-      (qb) => qb.andWhere('cp.isActive = true'),
-    );
-    return this.pick(
-      'counterpartyName',
-      name,
-      rows,
-      (r) => [r.name, r.legalName, r.code],
-      issues,
-      (r) => r.name,
-    );
+    const rows = await this.counterparties
+      .createQueryBuilder('cp')
+      .where('cp.isActive = true')
+      .andWhere(
+        `(LOWER(TRIM(cp.name)) = :exact
+          OR LOWER(TRIM(cp.legalName)) = :exact
+          OR LOWER(TRIM(cp.code)) = :exact)`,
+        { exact: norm(name) },
+      )
+      .take(5)
+      .getMany();
+
+    if (rows.length === 1) return rows[0];
+
+    if (rows.length > 1) {
+      issues.push({
+        field: 'counterpartyName',
+        value: name,
+        message: `"${name}" matches more than one counterparty in PCS. Send the registered code instead.`,
+        candidates: rows.map((r) => r.name),
+      });
+      return null;
+    }
+
+    issues.push({
+      field: 'counterpartyName',
+      value: name,
+      message: `"${name}" does not match any active counterparty in PCS.`,
+      autoCreatable: true,
+    });
+    return null;
   }
 
   private async resolveLegalEntity(
@@ -345,6 +376,7 @@ export class InvoiceNameResolver {
       value: term,
       message: `"${term}" does not match any active record in PCS.`,
       candidates: outcome.candidates.length > 0 ? outcome.candidates.map(label) : undefined,
+      autoCreatable: outcome.candidates.length === 0,
     });
     return null;
   }

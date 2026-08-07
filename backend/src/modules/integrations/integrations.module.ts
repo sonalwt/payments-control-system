@@ -12,9 +12,13 @@ import { User } from '../users/user.entity';
 import { Notification } from '../notifications/notification.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 
+import { Bank } from '../banks/bank.entity';
+import { Country } from '../countries/country.entity';
+
 import { InvoiceWebhookController } from './invoice-webhook.controller';
 import { InvoiceWebhookService } from './invoice-webhook.service';
 import { InvoiceNameResolver } from './invoice-name-resolver.service';
+import { CounterpartyProvisioner } from './counterparty-provisioner.service';
 
 /** Inbound integrations with upstream systems (currently: the invoicing app). */
 @Module({
@@ -28,12 +32,14 @@ import { InvoiceNameResolver } from './invoice-name-resolver.service';
       BeneficiaryAccount,
       User,
       Notification,
+      Bank,
+      Country,
     ]),
     PaymentRequestsModule,
     NotificationsModule,
   ],
   controllers: [InvoiceWebhookController],
-  providers: [InvoiceWebhookService, InvoiceNameResolver],
+  providers: [InvoiceWebhookService, InvoiceNameResolver, CounterpartyProvisioner],
   exports: [InvoiceWebhookService],
 })
 export class IntegrationsModule {}
