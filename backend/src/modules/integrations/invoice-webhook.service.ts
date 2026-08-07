@@ -13,6 +13,12 @@ import { InvoiceWebhookDto } from './dto/invoice-webhook.dto';
 import { InvoiceNameResolver, ResolutionIssue } from './invoice-name-resolver.service';
 import { CounterpartyProvisioner, ProvisionResult } from './counterparty-provisioner.service';
 
+/**
+ * The payload once its idempotency key is settled, so nothing downstream has to
+ * care whether the sender supplied one.
+ */
+export type NormalisedInvoice = InvoiceWebhookDto & { externalInvoiceId: string };
+
 /** Notification type raised when an inbound invoice cannot be mapped. */
 const UNRESOLVED_NOTIFICATION = 'INTEGRATION_INVOICE_UNRESOLVED';
 
@@ -73,7 +79,17 @@ export class InvoiceWebhookService {
     private readonly notificationRepo: Repository<Notification>,
   ) {}
 
-  async handleInvoice(dto: InvoiceWebhookDto): Promise<InvoiceWebhookResult> {
+  async handleInvoice(raw: InvoiceWebhookDto): Promise<InvoiceWebhookResult> {
+    // externalInvoiceId is optional and defaults to the invoice number, since
+    // for most senders they are the same value. Deliberately the number AS SENT,
+    // not the normalised form stored on the request: sanitiseInvoiceNumber() is
+    // lossy — "INV 2026/01" and "INV-2026/01" both become "INV-2026/01" — so
+    // keying on the stored form would make one invoice look like a redelivery of
+    // another and silently skip a payment.
+    const dto: NormalisedInvoice = {
+      ...raw,
+      externalInvoiceId: raw.externalInvoiceId?.trim() || raw.invoiceNumber.trim(),
+    };
     const source = dto.externalSystem.toUpperCase();
 
     // 1. Idempotency — a redelivered invoice must not raise a second payment.
@@ -190,7 +206,7 @@ export class InvoiceWebhookService {
    * invoice can be captured. Returns false if provisioning itself fails, in
    * which case the caller falls through to the normal 422.
    */
-  private async provisionSupplier(dto: InvoiceWebhookDto): Promise<ProvisionResult | null> {
+  private async provisionSupplier(dto: NormalisedInvoice): Promise<ProvisionResult | null> {
     // The account needs the request currency; if that did not resolve we would
     // not be here, since it would have been a second issue.
     const currency = await this.currencies.findOne({
@@ -218,7 +234,7 @@ export class InvoiceWebhookService {
    * Never throws — alerting must not fail an accepted invoice.
    */
   private async notifyOfProvisionedSupplier(
-    dto: InvoiceWebhookDto,
+    dto: NormalisedInvoice,
     result: ProvisionResult,
   ): Promise<void> {
     try {
@@ -271,7 +287,7 @@ export class InvoiceWebhookService {
    * check them against the master and raise the account properly if needed.
    */
   private buildPurpose(
-    dto: InvoiceWebhookDto,
+    dto: NormalisedInvoice,
     beneficiaryMatched: boolean,
   ): string | undefined {
     // The deal reference has its own column, so the purpose stays free text.
@@ -319,7 +335,7 @@ export class InvoiceWebhookService {
    */
   private async notifyMakersOfDraft(
     pr: PaymentRequest,
-    dto: InvoiceWebhookDto,
+    dto: NormalisedInvoice,
     warnings: string[],
   ): Promise<void> {
     try {
@@ -393,7 +409,7 @@ export class InvoiceWebhookService {
    */
   private async notifyAdminsOfNoInitiator(
     pr: PaymentRequest,
-    dto: InvoiceWebhookDto,
+    dto: NormalisedInvoice,
   ): Promise<void> {
     const admins = await this.users.find({
       where: { isPlatformAdmin: true, isActive: true },
@@ -434,7 +450,7 @@ export class InvoiceWebhookService {
    * Never throws — an alerting failure must not turn a clean 422 into a 500.
    */
   private async notifyAdminsOfUnresolved(
-    dto: InvoiceWebhookDto,
+    dto: NormalisedInvoice,
     source: string,
     issues: ResolutionIssue[],
   ): Promise<void> {

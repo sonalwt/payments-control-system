@@ -536,6 +536,46 @@ async function run(): Promise<void> {
     delete noDeal.dealId;
     check('missing dealId -> 400', (await post(noDeal)).status === 400);
 
+    // externalInvoiceId is optional and falls back to the invoice number.
+    const noExternalId = validPayload(seeded, id('M')) as any;
+    delete noExternalId.externalInvoiceId;
+    noExternalId.invoiceNumber = `RAW ${stamp}/01`;
+    const noExtRes = await post(noExternalId);
+    check('creates without externalInvoiceId', noExtRes.json?.outcome === 'CREATED', noExtRes.json);
+    check(
+      'keyed on the invoice number as sent',
+      noExtRes.json?.externalInvoiceId === `RAW ${stamp}/01`,
+      noExtRes.json,
+    );
+    check(
+      'redelivery of it is still a duplicate',
+      (await post(noExternalId)).json?.outcome === 'DUPLICATE',
+    );
+
+    // The key is the RAW number, not the one stored on the request. These two
+    // differ only by a character the stored form normalises away, so keying on
+    // the stored value would make the second look like a redelivery of the
+    // first and silently drop a payment.
+    const twin = validPayload(seeded, id('N')) as any;
+    delete twin.externalInvoiceId;
+    twin.invoiceNumber = `RAW-${stamp}/01`;
+    const twinRes = await post(twin);
+    check(
+      'a number that normalises to the same value is NOT a duplicate',
+      twinRes.json?.outcome === 'CREATED' &&
+        twinRes.json?.paymentRequestId !== noExtRes.json?.paymentRequestId,
+      { first: noExtRes.json?.requestNumber, second: twinRes.json?.requestNumber },
+    );
+    const stored2: Array<{ invoice_number: string }> = await db.query(
+      `SELECT invoice_number FROM payment_requests WHERE id = ANY($1::uuid[])`,
+      [[noExtRes.json?.paymentRequestId, twinRes.json?.paymentRequestId]],
+    );
+    check(
+      'even though both store the same invoice number',
+      stored2.length === 2 && stored2[0].invoice_number === stored2[1].invoice_number,
+      stored2,
+    );
+
     // The whole point of a column: the deal is queryable.
     const byDeal = await asUser(
       (await login(seeded.maker.username)) ?? '',

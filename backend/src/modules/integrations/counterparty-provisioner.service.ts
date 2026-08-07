@@ -6,7 +6,7 @@ import { Bank } from '../banks/bank.entity';
 import { BeneficiaryAccount } from '../beneficiary-accounts/beneficiary-account.entity';
 import { Counterparty } from '../counterparties/counterparty.entity';
 import { Country } from '../countries/country.entity';
-import { InvoiceWebhookDto } from './dto/invoice-webhook.dto';
+import { NormalisedInvoice } from './invoice-webhook.service';
 
 /**
  * New accounts are unusable for this long after creation, matching the window
@@ -49,7 +49,7 @@ export class CounterpartyProvisioner {
     private readonly dataSource: DataSource,
   ) {}
 
-  async provision(dto: InvoiceWebhookDto, currencyId: string): Promise<ProvisionResult> {
+  async provision(dto: NormalisedInvoice, currencyId: string): Promise<ProvisionResult> {
     const supplied = dto.supplierBankAccount;
     // Resolved before the transaction: a bank PCS does not hold is a reason to
     // skip the account, never a reason to invent a bank.
